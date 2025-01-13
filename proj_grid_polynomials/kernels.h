@@ -3,9 +3,12 @@
 #include "cuda.h"
 #include <random>
 
+#include <stdexcept>
 #include <thrust/detail/raw_pointer_cast.h>
 #include <thrust/host_vector.h>
 #include <thrust/device_vector.h>
+
+#define MAX_COEFFS 32 // this is only used in the constant memory implementation
 
 /**
  * @brief Device-side function that computes the polynomial for a given
@@ -216,3 +219,93 @@ public:
     );
   };
 };
+
+// =============================================================================
+
+template <typename T>
+struct constCoeffsStruct{
+  T c_coeffs[MAX_COEFFS];
+};
+
+/**
+ * @brief Identical to naiveGridStridePolynomial, but stores coefficients in constant
+ *        memory instead. Since the number of coefficients is much less than the
+ *        maximum parameter size limit (4096 bytes, and 32764 bytes in CUDA 12.1!),
+ *        we can just pass the entire thing as a struct directly.
+ *
+ *        https://developer.nvidia.com/blog/cuda-12-1-supports-large-kernel-parameters/
+ *
+ *        Doing this automatically caches it into constant memory (as do all
+ *        kernel arguments).
+ *
+ * @tparam T Input/output/coefficients type (either float or double)
+ * @param d_coeffs Device pointer to coefficients
+ * @param numCoeffs Number of coefficients
+ * @param in Input array pointer
+ * @param in_length Number of elements in input array
+ * @param out Output array pointer
+ * @return 
+ */
+template <typename T>
+__global__ void
+constantCoeffsGridStridePolynomial(constCoeffsStruct<T> coeffStruct, const size_t numCoeffs,
+                                   const T *const in, const size_t in_length, T *out) {
+  // Compute polynomial
+  int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  T tmp;
+  computePolynomialForValue(coeffStruct.c_coeffs, numCoeffs, in[idx], tmp);
+  // Coalesced global write
+  out[idx] = tmp;
+}
+
+template <typename T>
+class ConstantCoeffGridPolynom : public GridPolynom<T>
+{
+public:
+  ConstantCoeffGridPolynom(size_t numCoeffs) : GridPolynom<T>(numCoeffs) {
+    // Check if coefficients exceed constant mem allocation
+    if (this->m_h_coeffs.size() > MAX_COEFFS)
+      throw std::invalid_argument("MAX_COEFFS exceeded for constant memory!");
+
+    // We copy additionally to the struct
+    for (int i = 0; i < this->m_h_coeffs.size(); ++i)
+      this->m_coeffStruct.c_coeffs[i] = this->m_h_coeffs[i];
+
+  };
+  ConstantCoeffGridPolynom(const thrust::host_vector<T>& coeffs) : GridPolynom<T>(coeffs) {
+    // Check if coefficients exceed constant mem allocation
+    if (this->m_h_coeffs.size() > MAX_COEFFS)
+      throw std::invalid_argument("MAX_COEFFS exceeded for constant memory!");
+
+    // We copy additionally to the struct
+    for (int i = 0; i < this->m_h_coeffs.size(); ++i)
+      this->m_coeffStruct.c_coeffs[i] = this->m_h_coeffs[i];
+  };
+
+  void h_run(const thrust::host_vector<T>& h_in, thrust::host_vector<T>& h_out) {
+    h_out.resize(h_in.size());
+    for (size_t i = 0; i < h_in.size(); ++i)
+    {
+      h_out[i] = h_in[i]; // TODO: complete this
+
+    }
+  };
+
+  void d_run(const thrust::device_vector<T>& d_in, thrust::device_vector<T>& d_out) {
+    // Extract raw device pointers for kernel
+    int THREADS_PER_BLK = 128;
+    int numBlks = static_cast<int>(d_in.size() / THREADS_PER_BLK) + 1;
+
+    constantCoeffsGridStridePolynomial<<<numBlks, THREADS_PER_BLK>>>(
+      this->m_coeffStruct,
+      this->m_h_coeffs.size(),
+      thrust::raw_pointer_cast(d_in.data()),
+      d_in.size(),
+      thrust::raw_pointer_cast(d_out.data())
+    );
+  };
+
+private:
+  constCoeffsStruct<T> m_coeffStruct;
+};
+

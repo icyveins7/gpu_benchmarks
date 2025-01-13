@@ -18,7 +18,7 @@ int main() {
 
   // Repeat each kernel a few times for good measure
   const int repeats = 3;
-  const size_t numCoeffs = 10;
+  const size_t numCoeffs = 12;
   // ============ Naive kernel test ================
   NaiveGridPolynom<float> gp(numCoeffs);
   // See some of the parameters
@@ -34,6 +34,11 @@ int main() {
 
   for (int i = 0; i < repeats; ++i)
     scp.d_run(d_in, d_out);
+  // ============ Constant mem coeffs kernel test ================
+  ConstantCoeffGridPolynom<float> ccp(numCoeffs);
+
+  for (int i = 0; i < repeats; ++i)
+    ccp.d_run(d_in, d_out);
 
   return 0;
 }
