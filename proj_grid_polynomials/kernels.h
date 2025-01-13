@@ -7,6 +7,17 @@
 #include <thrust/host_vector.h>
 #include <thrust/device_vector.h>
 
+/**
+ * @brief Device-side function that computes the polynomial for a given
+ *        set of coefficients. Assumes a single-thread approach.
+ *
+ * @tparam T Type of coefficients, input and output
+ * @param coeffs Pointer to coefficients
+ * @param numCoeffs Number of coefficients
+ * @param in Pointer to input
+ * @param out Pointer to output
+ * @return 
+ */
 template <typename T>
 __device__ void computePolynomialForValue(const T *const coeffs,
                                           const int numCoeffs, const T in,
@@ -25,6 +36,16 @@ __device__ void computePolynomialForValue(const T *const coeffs,
 
 
 
+/**
+ * @brief Base class to hold polynomial coefficients.
+ *        Also contains empty runner methods for host and device;
+ *        these are to be re-implemented in derived classes based
+ *        on custom kernels and their intended use-cases.
+ *
+ * @tparam T Type of coefficients, input and output.
+ * @param numCoeffs Total number of coefficients
+ * @return 
+ */
 template <typename T>
 class GridPolynom
 {
@@ -137,3 +158,61 @@ public:
 
 };
 
+// =============================================================================
+
+/**
+ * @brief Identical to naiveGridStridePolynomial, but stores coefficients in shared
+ *        memory first. Measured to have no noticeable difference (and may be slightly
+ *        slower in fact).
+ *
+ * @tparam T Input/output/coefficients type (either float or double)
+ * @param d_coeffs Device pointer to coefficients
+ * @param numCoeffs Number of coefficients
+ * @param in Input array pointer
+ * @param in_length Number of elements in input array
+ * @param out Output array pointer
+ * @return 
+ */
+template <typename T>
+__global__ void
+sharedCoeffsGridStridePolynomial(const T *const d_coeffs, const size_t numCoeffs,
+                                 const T *const in, const size_t in_length, T *out) {
+  // Allocate shared memory for the coefficients
+  extern __shared__ float s[];
+  float *s_coeffs = s;
+
+  // Read coeffs into shared memory
+  for (int t = threadIdx.x; t < numCoeffs; ++t)
+    s_coeffs[t] = d_coeffs[t];
+
+  __syncthreads();
+
+  // Compute polynomial
+  int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  T tmp;
+  computePolynomialForValue(s_coeffs, numCoeffs, in[idx], tmp);
+  // Coalesced global write
+  out[idx] = tmp;
+}
+
+template <typename T>
+class SharedCoeffGridPolynom : public GridPolynom<T>
+{
+public:
+  SharedCoeffGridPolynom(size_t numCoeffs) : GridPolynom<T>(numCoeffs) {};
+  SharedCoeffGridPolynom(const thrust::host_vector<T>& coeffs) : GridPolynom<T>(coeffs) {};
+
+  void d_run(const thrust::device_vector<T>& d_in, thrust::device_vector<T>& d_out) {
+    // Extract raw device pointers for kernel
+    int THREADS_PER_BLK = 128;
+    int numBlks = static_cast<int>(d_in.size() / THREADS_PER_BLK) + 1;
+
+    sharedCoeffsGridStridePolynomial<<<numBlks, THREADS_PER_BLK, sizeof(T)*this->m_d_coeffs.size()>>>(
+      thrust::raw_pointer_cast(this->m_d_coeffs.data()),
+      this->m_d_coeffs.size(),
+      thrust::raw_pointer_cast(d_in.data()),
+      d_in.size(),
+      thrust::raw_pointer_cast(d_out.data())
+    );
+  };
+};
