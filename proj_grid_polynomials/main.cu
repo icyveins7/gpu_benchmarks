@@ -3,7 +3,7 @@
 
 int main() {
   // Initialize some input/output
-  const size_t length = 40000000;
+  const size_t length = 15000000; // 40000000;
   // Randomize some input on host
   thrust::host_vector<float> h_in(length);
   std::random_device rd;

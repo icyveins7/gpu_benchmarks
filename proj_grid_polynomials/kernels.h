@@ -248,7 +248,7 @@ struct constCoeffsStruct{
  */
 template <typename T>
 __global__ void
-constantCoeffsGridStridePolynomial(constCoeffsStruct<T> coeffStruct, const size_t numCoeffs,
+constantCoeffsGridStridePolynomial(const constCoeffsStruct<T> coeffStruct, const size_t numCoeffs,
                                    const T *const in, const size_t in_length, T *out) {
   // Compute polynomial
   int idx = blockIdx.x * blockDim.x + threadIdx.x;

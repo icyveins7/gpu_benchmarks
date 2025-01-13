@@ -1,8 +1,5 @@
 cmake_minimum_required(VERSION 3.18)
 
-# Do i need this?
-# set(ROUTINE 1d_r2c_c2r)
-
 project(
   "gpu_benchmarks"
   DESCRIPTION "A bunch of personal task-specific tests to measure GPU speedups"
@@ -18,6 +15,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 if("${CMAKE_BUILD_TYPE}" STREQUAL "")
   set(CMAKE_BUILD_TYPE Release)
+  message("CMAKE_BUILD_TYPE set to ${CMAKE_BUILD_TYPE}")
 endif()
 
 if(CMAKE_CUDA_ARCHITECTURES LESS 60)
