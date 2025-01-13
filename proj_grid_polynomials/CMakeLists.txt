@@ -14,7 +14,9 @@ target_include_directories(grid_polynomials
                            PRIVATE ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
                            )
 
-target_sources(grid_polynomials
-               PRIVATE ${PROJECT_SOURCE_DIR}/main.cu)
+target_sources(
+  grid_polynomials PRIVATE
+  ${PROJECT_SOURCE_DIR}/main.cu
+)
 
 # target_link_libraries(1d_r2c_c2r_example PRIVATE CUDA::cufft CUDA::cudart)
