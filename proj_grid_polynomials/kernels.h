@@ -227,6 +227,9 @@ struct constCoeffsStruct{
   T c_coeffs[MAX_COEFFS];
 };
 
+// We use double since it's enough for both double and float
+static __constant__ double c_coeffs[MAX_COEFFS];
+
 /**
  * @brief Identical to naiveGridStridePolynomial, but stores coefficients in constant
  *        memory instead. Since the number of coefficients is much less than the
@@ -248,12 +251,14 @@ struct constCoeffsStruct{
  */
 template <typename T>
 __global__ void
-constantCoeffsGridStridePolynomial(const constCoeffsStruct<T> coeffStruct, const size_t numCoeffs,
+// constantCoeffsGridStridePolynomial(const constCoeffsStruct<T> coeffStruct, const size_t numCoeffs,
+//                                    const T *const in, const size_t in_length, T *out) {
+constantCoeffsGridStridePolynomial(const size_t numCoeffs,
                                    const T *const in, const size_t in_length, T *out) {
   // Compute polynomial
   int idx = blockIdx.x * blockDim.x + threadIdx.x;
   T tmp;
-  computePolynomialForValue(coeffStruct.c_coeffs, numCoeffs, in[idx], tmp);
+  computePolynomialForValue(reinterpret_cast<const T*>(c_coeffs), numCoeffs, in[idx], tmp);
   // Coalesced global write
   out[idx] = tmp;
 }
@@ -271,6 +276,11 @@ public:
     for (int i = 0; i < this->m_h_coeffs.size(); ++i)
       this->m_coeffStruct.c_coeffs[i] = this->m_h_coeffs[i];
 
+    // And copy the symbol manually too
+    cudaMemcpyToSymbol(c_coeffs,
+                       thrust::raw_pointer_cast(this->m_h_coeffs.data()),
+                       sizeof(T)*this->m_h_coeffs.size());
+
   };
   ConstantCoeffGridPolynom(const thrust::host_vector<T>& coeffs) : GridPolynom<T>(coeffs) {
     // Check if coefficients exceed constant mem allocation
@@ -280,6 +290,11 @@ public:
     // We copy additionally to the struct
     for (int i = 0; i < this->m_h_coeffs.size(); ++i)
       this->m_coeffStruct.c_coeffs[i] = this->m_h_coeffs[i];
+
+    // And copy the symbol manually too
+    cudaMemcpyToSymbol(c_coeffs,
+                       thrust::raw_pointer_cast(this->m_h_coeffs.data()),
+                       sizeof(T)*this->m_h_coeffs.size());
   };
 
   void h_run(const thrust::host_vector<T>& h_in, thrust::host_vector<T>& h_out) {
@@ -297,7 +312,7 @@ public:
     int numBlks = static_cast<int>(d_in.size() / THREADS_PER_BLK) + 1;
 
     constantCoeffsGridStridePolynomial<<<numBlks, THREADS_PER_BLK>>>(
-      this->m_coeffStruct,
+      // this->m_coeffStruct,
       this->m_h_coeffs.size(),
       thrust::raw_pointer_cast(d_in.data()),
       d_in.size(),
