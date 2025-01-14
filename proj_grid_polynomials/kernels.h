@@ -169,6 +169,8 @@ public:
   inline const thrust::host_vector<T>& h_coeffs() const { return m_h_coeffs; }
   inline const thrust::device_vector<T>& d_coeffs() const { return m_d_coeffs; }
 
+  void set_tpb(const int THREADS_PER_BLK) { m_THREADS_PER_BLK = THREADS_PER_BLK; }
+
   // Placeholders for actual computations to do in child classes
   void h_run(const thrust::host_vector<T>& h_in, thrust::host_vector<T>& h_out) {};
   void d_run(const thrust::device_vector<T>& d_in, thrust::device_vector<T>& d_out) {};
@@ -177,6 +179,7 @@ protected:
   // All coefficients should be order 0 to order N
   thrust::host_vector<T> m_h_coeffs;
   thrust::device_vector<T> m_d_coeffs;
+  int m_THREADS_PER_BLK = 128;
 };
 
 // =============================================================================
@@ -226,10 +229,9 @@ public:
 
   void d_run(const thrust::device_vector<T>& d_in, thrust::device_vector<T>& d_out) {
     // Extract raw device pointers for kernel
-    int THREADS_PER_BLK = 128;
-    int numBlks = static_cast<int>(d_in.size() / THREADS_PER_BLK) + 1;
+    int numBlks = static_cast<int>(d_in.size() / this->m_THREADS_PER_BLK) + 1;
 
-    naiveGridStridePolynomial<<<numBlks, THREADS_PER_BLK>>>(
+    naiveGridStridePolynomial<<<numBlks, this->m_THREADS_PER_BLK>>>(
       thrust::raw_pointer_cast(this->m_d_coeffs.data()),
       this->m_d_coeffs.size(),
       thrust::raw_pointer_cast(d_in.data()),
@@ -286,10 +288,9 @@ public:
 
   void d_run(const thrust::device_vector<T>& d_in, thrust::device_vector<T>& d_out) {
     // Extract raw device pointers for kernel
-    int THREADS_PER_BLK = 128;
-    int numBlks = static_cast<int>(d_in.size() / THREADS_PER_BLK) + 1;
+    int numBlks = static_cast<int>(d_in.size() / this->m_THREADS_PER_BLK) + 1;
 
-    sharedCoeffsGridStridePolynomial<<<numBlks, THREADS_PER_BLK, sizeof(T)*this->m_d_coeffs.size()>>>(
+    sharedCoeffsGridStridePolynomial<<<numBlks, this->m_THREADS_PER_BLK, sizeof(T)*this->m_d_coeffs.size()>>>(
       thrust::raw_pointer_cast(this->m_d_coeffs.data()),
       this->m_d_coeffs.size(),
       thrust::raw_pointer_cast(d_in.data()),
@@ -387,10 +388,9 @@ public:
 
   void d_run(const thrust::device_vector<T>& d_in, thrust::device_vector<T>& d_out) {
     // Extract raw device pointers for kernel
-    int THREADS_PER_BLK = 128;
-    int numBlks = static_cast<int>(d_in.size() / THREADS_PER_BLK) + 1;
+    int numBlks = static_cast<int>(d_in.size() / this->m_THREADS_PER_BLK) + 1;
 
-    constantCoeffsGridStridePolynomial<<<numBlks, THREADS_PER_BLK>>>(
+    constantCoeffsGridStridePolynomial<<<numBlks, this->m_THREADS_PER_BLK>>>(
       // this->m_coeffStruct,
       this->m_h_coeffs.size(),
       thrust::raw_pointer_cast(d_in.data()),
@@ -460,6 +460,8 @@ public:
   inline const thrust::host_vector<T>& h_thetaCoeffs() const { return m_h_thetaCoeffs; }
   inline const thrust::device_vector<T>& d_thetaCoeffs() const { return m_d_thetaCoeffs; }
 
+  void set_tpb(const int THREADS_PER_BLK) { m_THREADS_PER_BLK = THREADS_PER_BLK; }
+
   // Placeholders for actual computations to do in child classes
   void h_run(const thrust::host_vector<T>& h_in, thrust::host_vector<T>& h_out) {};
   void d_run(const thrust::device_vector<T>& d_in, thrust::device_vector<T>& d_out) {};
@@ -470,6 +472,8 @@ protected:
   thrust::device_vector<T> m_d_ampCoeffs;
   thrust::host_vector<T> m_h_thetaCoeffs;
   thrust::device_vector<T> m_d_thetaCoeffs;
+
+  int m_THREADS_PER_BLK = 128;
 };
 
 // =============================================================================
@@ -506,10 +510,9 @@ public:
 
   void d_run(const thrust::device_vector<T>& d_in, thrust::device_vector<T>& d_out) {
     // Extract raw device pointers for kernel
-    int THREADS_PER_BLK = 128;
-    int numBlks = static_cast<int>(d_in.size() / THREADS_PER_BLK) + 1;
+    int numBlks = static_cast<int>(d_in.size() / this->m_THREADS_PER_BLK) + 1;
 
-    naiveSinSeriesSum<<<numBlks, THREADS_PER_BLK>>>(
+    naiveSinSeriesSum<<<numBlks, this->m_THREADS_PER_BLK>>>(
       thrust::raw_pointer_cast(this->m_d_ampCoeffs.data()),
       thrust::raw_pointer_cast(this->m_d_thetaCoeffs.data()),
       this->m_d_ampCoeffs.size(),
@@ -568,10 +571,9 @@ public:
 
   void d_run(const thrust::device_vector<T>& d_in, thrust::device_vector<T>& d_out) {
     // Extract raw device pointers for kernel
-    int THREADS_PER_BLK = 128;
-    int numBlks = static_cast<int>(d_in.size() / THREADS_PER_BLK) + 1;
+    int numBlks = static_cast<int>(d_in.size() / this->m_THREADS_PER_BLK) + 1;
 
-    intrinsicSinSeriesSum<<<numBlks, THREADS_PER_BLK>>>(
+    intrinsicSinSeriesSum<<<numBlks, this->m_THREADS_PER_BLK>>>(
       thrust::raw_pointer_cast(this->m_d_ampCoeffs.data()),
       thrust::raw_pointer_cast(this->m_d_thetaCoeffs.data()),
       this->m_d_ampCoeffs.size(),
