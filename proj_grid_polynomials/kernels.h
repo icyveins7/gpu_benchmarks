@@ -3,6 +3,7 @@
 #include "cuda.h"
 #include <cmath>
 #include <random>
+#include "../include/sharedmem.cuh"
 
 #include <stdexcept>
 #include <thrust/detail/raw_pointer_cast.h>
@@ -37,6 +38,33 @@ __device__ void computePolynomialForValue(const T *const coeffs,
     inp = inp * in;
   }
 }
+
+/**
+ * @brief Host-side function equivalent of computePolynomialForValue.
+ *
+ * @tparam T Type of coefficients, input and output
+ * @param coeffs Pointer to coefficients
+ * @param numCoeffs Number of coefficients
+ * @param in Pointer to input
+ * @param out Pointer to output
+ * @return 
+ */
+template <typename T>
+void equivalentComputePolynomialForValue(const T *const coeffs,
+                                         const int numCoeffs, const T in,
+                                         T &out) {
+  // Add 0-order term
+  out = coeffs[0];
+  // Start at power 1
+  T inp = in;
+  for (size_t i = 1; i < numCoeffs; ++i) {
+    // Add next term
+    out += inp * coeffs[i];
+    // Increment power
+    inp = inp * in;
+  }
+}
+
 
 /**
  * @brief Device-side function that computes a sin() polynomial-like
@@ -172,7 +200,18 @@ public:
   void set_tpb(const int THREADS_PER_BLK) { m_THREADS_PER_BLK = THREADS_PER_BLK; }
 
   // Placeholders for actual computations to do in child classes
-  void h_run(const thrust::host_vector<T>& h_in, thrust::host_vector<T>& h_out) {};
+  void h_run(const thrust::host_vector<T>& h_in, thrust::host_vector<T>& h_out) {
+    // This is defined since all of the derived classes should be doing equivalent to this
+    h_out.resize(h_in.size());
+    // run the equivalent function
+    for (size_t i = 0; i < h_in.size(); ++i)
+      equivalentComputePolynomialForValue(
+        thrust::raw_pointer_cast<T*>(this->m_h_coeffs.data()),
+        this->m_h_coeffs.size(),
+        h_in[i],
+        h_out[i]
+      );
+  };
   void d_run(const thrust::device_vector<T>& d_in, thrust::device_vector<T>& d_out) {};
 
 protected:
@@ -220,15 +259,6 @@ public:
   NaiveGridPolynom(size_t numCoeffs) : GridPolynom<T>(numCoeffs) {};
   NaiveGridPolynom(const thrust::host_vector<T>& coeffs) : GridPolynom<T>(coeffs) {};
 
-  void h_run(const thrust::host_vector<T>& h_in, thrust::host_vector<T>& h_out) {
-    h_out.resize(h_in.size());
-    for (size_t i = 0; i < h_in.size(); ++i)
-    {
-      h_out[i] = h_in[i]; // TODO: complete this
-
-    }
-  };
-
   void d_run(const thrust::device_vector<T>& d_in, thrust::device_vector<T>& d_out) {
     // Extract raw device pointers for kernel
     int numBlks = static_cast<int>(d_in.size() / this->m_THREADS_PER_BLK) + 1;
@@ -264,8 +294,8 @@ __global__ void
 sharedCoeffsGridStridePolynomial(const T *const d_coeffs, const size_t numCoeffs,
                                  const T *const in, const size_t in_length, T *out) {
   // Allocate shared memory for the coefficients
-  extern __shared__ float s[];
-  float *s_coeffs = s;
+  SharedMemory<T> s;
+  T *s_coeffs = s.getPointer();
 
   // Read coeffs into shared memory
   for (int t = threadIdx.x; t < numCoeffs; ++t)
@@ -383,15 +413,6 @@ public:
     cudaMemcpyToSymbol(c_coeffs,
                        thrust::raw_pointer_cast(this->m_h_coeffs.data()),
                        sizeof(T)*this->m_h_coeffs.size());
-  };
-
-  void h_run(const thrust::host_vector<T>& h_in, thrust::host_vector<T>& h_out) {
-    h_out.resize(h_in.size());
-    for (size_t i = 0; i < h_in.size(); ++i)
-    {
-      h_out[i] = h_in[i]; // TODO: complete this
-
-    }
   };
 
   void d_run(const thrust::device_vector<T>& d_in, thrust::device_vector<T>& d_out) {

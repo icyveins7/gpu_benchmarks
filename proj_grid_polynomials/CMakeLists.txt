@@ -20,3 +20,12 @@ target_sources(
 )
 
 # target_link_libraries(1d_r2c_c2r_example PRIVATE CUDA::cufft CUDA::cudart)
+# -------------------- Tests
+if (GTEST_FOUND)
+  message("Enabling tests for proj_grid_polynomials")
+
+  # --------------------
+  add_executable(test_basic test_basic.cu)
+  target_link_libraries(test_basic GTest::gtest_main)
+  gtest_discover_tests(test_basic)
+endif()

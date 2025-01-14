@@ -22,6 +22,19 @@ if(CMAKE_CUDA_ARCHITECTURES LESS 60)
   set(CMAKE_CUDA_ARCHITECTURES 60 70 75 80 86)
 endif()
 
+# -------------------- Add check for GoogleTest to see if it exists
+find_package(GTest)
+# If GTest found then enable tests, otherwise disable them
+if(GTEST_FOUND)
+  include(GoogleTest)
+  enable_testing()
+  message(STATUS "GoogleTest found, enabling tests")
+  include_directories(${GTEST_INCLUDE_DIRS})
+else()
+  message(STATUS "GoogleTest not found, disabling tests")
+endif()
+
+
 # -------------------- Include individual project directories
 add_subdirectory(proj_grid_polynomials)
 
