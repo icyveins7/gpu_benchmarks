@@ -22,7 +22,7 @@ int main() {
   // ============ Naive kernel test ================
   NaiveGridPolynom<float> gp(numCoeffs);
   // See some of the parameters
-  printf("Coefficients: ");
+  printf("Coefficients: \n");
   for (auto coeff : gp.h_coeffs()) {
     printf("%f\n", coeff);
   }
@@ -39,6 +39,23 @@ int main() {
 
   for (int i = 0; i < repeats; ++i)
     ccp.d_run(d_in, d_out);
+
+  // ===================================================
+  // ============ Sin Series Tests =====================
+  // ===================================================
+  const size_t sinNumCoeffs = 5;
+
+  // ============ Naive kernel test ================
+  NaiveGridSinSeries<float> ss(sinNumCoeffs);
+
+  for (int i = 0; i < repeats; ++i)
+    ss.d_run(d_in, d_out);
+
+  // ============ Intrinsics kernel test ================
+  IntrinsicGridSinSeries<float> is(sinNumCoeffs);
+
+  for (int i = 0; i < repeats; ++i)
+    is.d_run(d_in, d_out);
 
   return 0;
 }

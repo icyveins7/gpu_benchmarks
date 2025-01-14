@@ -1,6 +1,7 @@
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
 #include "cuda.h"
+#include <cmath>
 #include <random>
 
 #include <stdexcept>
@@ -37,7 +38,85 @@ __device__ void computePolynomialForValue(const T *const coeffs,
   }
 }
 
+/**
+ * @brief Device-side function that computes a sin() polynomial-like
+ *        sum. This is to simulate multiple trigonometric calls in a series,
+ *        which do not share the same angle argument.
+ *        Again, this assume a single-thread approach.
+ *
+ * @tparam T Type of coefficients, input and output
+ * @param ampCoeffs Amplitude coefficients for the sin() terms. First term is the constant.
+ * @param thetaCoeffs Theta coefficients for the sin() arguments. First term is ignored.
+ * @param numCoeffs Number of coefficients
+ * @param in Pointer to input
+ * @param out Pointer to output
+ * @return 
+ */
+template <typename T>
+__device__ void computeSinSeriesForValue(const T* const ampCoeffs,
+                                         const T* const thetaCoeffs,
+                                         const int numCoeffs,
+                                         const T in,
+                                         T& out)
+{
+  // Add 0-order term
+  out = in + ampCoeffs[0];
+  // Iterate over the sin calls
+  for (size_t i = 1; i < numCoeffs; ++i){
+    // Add next term
+    out += ampCoeffs[i] * sin(static_cast<T>(i) * in + thetaCoeffs[i]);
+  }
+}
 
+/**
+ * @brief Identical to above, but uses intrinsics directly, removing the need for
+ *        compiler flags like -use_fast_math
+ *
+ * @tparam T Type of coefficients, input and output
+ * @param ampCoeffs Amplitude coefficients for the sin() terms. First term is the constant.
+ * @param thetaCoeffs Theta coefficients for the sin() arguments. First term is ignored.
+ * @param numCoeffs Number of coefficients
+ * @param in Pointer to input
+ * @param out Pointer to output
+ * @return 
+ */
+template <typename T>
+__device__ void computeSinIntrinsicsSeriesForValue(const T* const ampCoeffs,
+                                                   const T* const thetaCoeffs,
+                                                   const int numCoeffs,
+                                                   const T in,
+                                                   T& out)
+{
+  // Add 0-order term
+  out = in + ampCoeffs[0];
+  // Iterate over the sin calls
+  for (size_t i = 1; i < numCoeffs; ++i){
+    // Add next term
+    out += ampCoeffs[i] * sin(static_cast<T>(i) * in + thetaCoeffs[i]);
+  }
+}
+
+
+// Specialization for single-precision only to use intrinsics, since
+// double precision does not have them
+template <>
+inline __device__ void computeSinIntrinsicsSeriesForValue(const float* const ampCoeffs,
+                                                          const float* const thetaCoeffs,
+                                                          const int numCoeffs,
+                                                          const float in,
+                                                          float& out)
+{
+  // Add 0-order term
+  out = in + ampCoeffs[0];
+  // Iterate over the sin calls
+  for (size_t i = 1; i < numCoeffs; ++i){
+    // Add next term
+    out += ampCoeffs[i] * __sinf(static_cast<float>(i) * in + thetaCoeffs[i]);
+  }
+}
+
+
+// =============================================================================
 
 /**
  * @brief Base class to hold polynomial coefficients.
@@ -324,3 +403,182 @@ private:
   constCoeffsStruct<T> m_coeffStruct;
 };
 
+// =============================================================================
+// ================== Sin()-like Series Sum classes ============================
+// =============================================================================
+template <typename T>
+class GridSinSeries
+{
+public:
+  /**
+   * @brief Constructor to randomize coefficients
+   *
+   * @param numCoeffs Number of coefficients to use
+   */
+  GridSinSeries(size_t numCoeffs){
+    // Randomize number of coeffs on host
+    m_h_ampCoeffs.resize(numCoeffs);
+    m_h_thetaCoeffs.resize(numCoeffs);
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_real_distribution<T> dis(0.0, 1.0);
+    for (T &coeff : m_h_ampCoeffs) {
+      coeff = dis(gen);
+    }
+
+    std::uniform_real_distribution<T> tdis(0.0, 2*M_PI);
+    for (T &coeff : m_h_thetaCoeffs) {
+      coeff = tdis(gen);
+    }
+
+    // Transfer immediately to device
+    // No need for async shenanigans
+    m_d_ampCoeffs = m_h_ampCoeffs;
+    m_d_thetaCoeffs = m_h_thetaCoeffs;
+  }
+
+  /**
+   * @brief Constructor that sets the amplitude and theta coefficients.
+   *
+   * @param ampCoeffs Amplitude coefficients
+   * @param thetaCoeffs Theta coefficients
+   */
+  GridSinSeries(const thrust::host_vector<T>& ampCoeffs, const thrust::host_vector<T>& thetaCoeffs)
+    : m_h_ampCoeffs(ampCoeffs), m_h_thetaCoeffs(thetaCoeffs)
+  {
+    if (ampCoeffs.size() != thetaCoeffs.size())
+      throw std::invalid_argument("Must have equal length of theta and amplitude coeffs.");
+    // Transfer immediately to device
+    // No need for async shenanigans
+    m_d_ampCoeffs = m_h_ampCoeffs;
+    m_d_thetaCoeffs = m_h_thetaCoeffs;
+  };
+
+  // Primarily for checking
+  inline const thrust::host_vector<T>& h_ampCoeffs() const { return m_h_ampCoeffs; }
+  inline const thrust::device_vector<T>& d_ampCoeffs() const { return m_d_ampCoeffs; }
+  inline const thrust::host_vector<T>& h_thetaCoeffs() const { return m_h_thetaCoeffs; }
+  inline const thrust::device_vector<T>& d_thetaCoeffs() const { return m_d_thetaCoeffs; }
+
+  // Placeholders for actual computations to do in child classes
+  void h_run(const thrust::host_vector<T>& h_in, thrust::host_vector<T>& h_out) {};
+  void d_run(const thrust::device_vector<T>& d_in, thrust::device_vector<T>& d_out) {};
+
+protected:
+  // All coefficients should be order 0 to order N
+  thrust::host_vector<T> m_h_ampCoeffs;
+  thrust::device_vector<T> m_d_ampCoeffs;
+  thrust::host_vector<T> m_h_thetaCoeffs;
+  thrust::device_vector<T> m_d_thetaCoeffs;
+};
+
+// =============================================================================
+
+template <typename T>
+__global__ void
+naiveSinSeriesSum(const T *const d_ampCoeffs,
+                  const T *const d_thetaCoeffs,
+                  const size_t numCoeffs,
+                  const T *const in, const size_t in_length, T *out) {
+  // Simply execute 1 thread -> 1 value
+  int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+  // Assume enough threads spawned to cover, no need to stride
+  T tmp;
+  computeSinSeriesForValue(d_ampCoeffs, d_thetaCoeffs, numCoeffs, in[idx], tmp);
+  // Coalesced global write
+  out[idx] = tmp;
+}
+
+template <typename T>
+class NaiveGridSinSeries : public GridSinSeries<T>
+{
+public:
+  NaiveGridSinSeries(size_t numCoeffs) : GridSinSeries<T>(numCoeffs) {};
+  NaiveGridSinSeries(
+    const thrust::host_vector<T>& ampCoeffs,
+    const thrust::host_vector<T>& thetaCoeffs
+  ) : GridSinSeries<T>(ampCoeffs, thetaCoeffs) {};
+
+  void h_run(const thrust::host_vector<T>& h_in, thrust::host_vector<T>& h_out) {
+    // TODO: complete this
+  };
+
+  void d_run(const thrust::device_vector<T>& d_in, thrust::device_vector<T>& d_out) {
+    // Extract raw device pointers for kernel
+    int THREADS_PER_BLK = 128;
+    int numBlks = static_cast<int>(d_in.size() / THREADS_PER_BLK) + 1;
+
+    naiveSinSeriesSum<<<numBlks, THREADS_PER_BLK>>>(
+      thrust::raw_pointer_cast(this->m_d_ampCoeffs.data()),
+      thrust::raw_pointer_cast(this->m_d_thetaCoeffs.data()),
+      this->m_d_ampCoeffs.size(),
+      thrust::raw_pointer_cast(d_in.data()),
+      d_in.size(),
+      thrust::raw_pointer_cast(d_out.data())
+    );
+  };
+
+};
+
+// =============================================================================
+
+/**
+ * @brief Identical to the naive kernel, but calls the intrinsics device function,
+ *        which uses intrinsics for single precision.
+ *
+ * @tparam T 
+ * @param d_ampCoeffs 
+ * @param d_thetaCoeffs 
+ * @param numCoeffs 
+ * @param in 
+ * @param in_length 
+ * @param out 
+ * @return 
+ */
+template <typename T>
+__global__ void
+intrinsicSinSeriesSum(const T *const d_ampCoeffs,
+                      const T *const d_thetaCoeffs,
+                      const size_t numCoeffs,
+                      const T *const in, const size_t in_length, T *out) {
+  // Simply execute 1 thread -> 1 value
+  int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+  // Assume enough threads spawned to cover, no need to stride
+  T tmp;
+  computeSinIntrinsicsSeriesForValue(d_ampCoeffs, d_thetaCoeffs, numCoeffs, in[idx], tmp);
+  // Coalesced global write
+  out[idx] = tmp;
+}
+
+template <typename T>
+class IntrinsicGridSinSeries : public GridSinSeries<T>
+{
+public:
+  IntrinsicGridSinSeries(size_t numCoeffs) : GridSinSeries<T>(numCoeffs) {};
+  IntrinsicGridSinSeries(
+    const thrust::host_vector<T>& ampCoeffs,
+    const thrust::host_vector<T>& thetaCoeffs
+  ) : GridSinSeries<T>(ampCoeffs, thetaCoeffs) {};
+
+  void h_run(const thrust::host_vector<T>& h_in, thrust::host_vector<T>& h_out) {
+    // TODO: complete this
+  };
+
+  void d_run(const thrust::device_vector<T>& d_in, thrust::device_vector<T>& d_out) {
+    // Extract raw device pointers for kernel
+    int THREADS_PER_BLK = 128;
+    int numBlks = static_cast<int>(d_in.size() / THREADS_PER_BLK) + 1;
+
+    intrinsicSinSeriesSum<<<numBlks, THREADS_PER_BLK>>>(
+      thrust::raw_pointer_cast(this->m_d_ampCoeffs.data()),
+      thrust::raw_pointer_cast(this->m_d_thetaCoeffs.data()),
+      this->m_d_ampCoeffs.size(),
+      thrust::raw_pointer_cast(d_in.data()),
+      d_in.size(),
+      thrust::raw_pointer_cast(d_out.data())
+    );
+  };
+
+};
