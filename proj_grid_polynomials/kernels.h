@@ -203,6 +203,8 @@ naiveGridStridePolynomial(const T *const d_coeffs, const size_t numCoeffs,
                           const T *const in, const size_t in_length, T *out) {
   // Simply execute 1 thread -> 1 value
   int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (idx >= in_length)
+    return;
 
   // Assume enough threads spawned to cover, no need to stride
   T tmp;
@@ -273,6 +275,9 @@ sharedCoeffsGridStridePolynomial(const T *const d_coeffs, const size_t numCoeffs
 
   // Compute polynomial
   int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (idx >= in_length)
+    return;
+
   T tmp;
   computePolynomialForValue(s_coeffs, numCoeffs, in[idx], tmp);
   // Coalesced global write
@@ -337,6 +342,9 @@ constantCoeffsGridStridePolynomial(const size_t numCoeffs,
                                    const T *const in, const size_t in_length, T *out) {
   // Compute polynomial
   int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (idx >= in_length)
+    return;
+
   T tmp;
   computePolynomialForValue(reinterpret_cast<const T*>(c_coeffs), numCoeffs, in[idx], tmp);
   // Coalesced global write
@@ -486,6 +494,8 @@ naiveSinSeriesSum(const T *const d_ampCoeffs,
                   const T *const in, const size_t in_length, T *out) {
   // Simply execute 1 thread -> 1 value
   int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (idx >= in_length)
+    return;
 
   // Assume enough threads spawned to cover, no need to stride
   T tmp;
@@ -547,6 +557,8 @@ intrinsicSinSeriesSum(const T *const d_ampCoeffs,
                       const T *const in, const size_t in_length, T *out) {
   // Simply execute 1 thread -> 1 value
   int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (idx >= in_length)
+    return;
 
   // Assume enough threads spawned to cover, no need to stride
   T tmp;
