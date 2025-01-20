@@ -11,8 +11,14 @@ int main(int argc, char *argv[]) {
     THREADS_PER_BLK = 128;
   printf("Using THREADS_PER_BLK = %ld\n", THREADS_PER_BLK);
 
+  size_t length;
+  if (argc > 2)
+    length = strtol(argv[2], &p, 10);
+  else
+    length = 15000000;
+  printf("Using length = %ld\n", length);
+
   // Initialize some input/output
-  const size_t length = 15000000; // 40000000;
   // Randomize some input on host
   thrust::host_vector<float> h_in(length);
   std::random_device rd;
