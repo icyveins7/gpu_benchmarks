@@ -25,7 +25,7 @@ if (GTEST_FOUND)
   message("Enabling tests for proj_grid_polynomials")
 
   # --------------------
-  add_executable(test_basic test_basic.cu)
-  target_link_libraries(test_basic GTest::gtest_main)
-  gtest_discover_tests(test_basic)
+  add_executable(test_gridpolynom test_gridpolynom.cu)
+  target_link_libraries(test_gridpolynom GTest::gtest_main)
+  gtest_discover_tests(test_gridpolynom)
 endif()
