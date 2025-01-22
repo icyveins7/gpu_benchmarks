@@ -37,4 +37,5 @@ endif()
 
 # -------------------- Include individual project directories
 add_subdirectory(proj_grid_polynomials)
+add_subdirectory(proj_remap)
 
