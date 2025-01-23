@@ -127,10 +127,24 @@ __global__ void naiveRemap(
   }
 }
 
+/**
+ * @brief Parent class for remapping. Should not be instantiated directly.
+ *
+ * @tparam T Type of source and output images
+ * @param height Source image height in pixels
+ * @param width Source image width in pixels
+ * @return 
+ */
 template <typename T>
 class Remap
 {
 public:
+  /**
+   * @brief Parent class constructor to generate a sequence of values as the source image.
+   *
+   * @param height Source image height in pixels
+   * @param width Source image width in pixels
+   */
   Remap(const size_t height, const size_t width) : m_srcHeight(height), m_srcWidth(width) {
     printf("Filling device src values..\n");
     // Generate incremental values
@@ -139,10 +153,15 @@ public:
     thrust::sequence(m_d_src.begin(), m_d_src.end(), 0);
     printf("Copying to host..\n");
     m_h_src = m_d_src;
-
-    // quickView(m_h_src, width, height);
-
   }
+
+  /**
+   * @brief Parent class constructor to copy an existing host vector as the source image.
+   *
+   * @param h_src Existing thrust::host_vector to use as source image
+   * @param height Source image height in pixels
+   * @param width Source image width in pixels
+   */
   Remap(const thrust::host_vector<T>& h_src, const size_t height, const size_t width)
     : m_h_src(h_src), m_srcHeight(height), m_srcWidth(width)
   {
@@ -151,13 +170,29 @@ public:
     m_d_src = m_h_src;
   }
 
+  /**
+   * @brief Sets the threads per block (per dimension) for kernel calls.
+   *        Kernel calls are assumed to use 2D blocks of (TPB, TPB)
+   *
+   * @param THREADS_PER_BLK 
+   */
   void set_tpb(const int THREADS_PER_BLK) { m_THREADS_PER_BLK = THREADS_PER_BLK; }
 
   // Getters
-  const thrust::device_vector<T>& get_d_src() { return m_d_src; }
-  const thrust::host_vector<T>& get_h_src() { return m_h_src; }
+  thrust::device_vector<T>& get_d_src() { return m_d_src; }
+  thrust::host_vector<T>& get_h_src() { return m_h_src; }
 
   // Placeholders for actual computations to do in child classes
+
+  /**
+   * @brief Host-side runner to perform remapping. This is primarily used to validate the kernel.
+   *
+   * @param h_x Host vector of requested x locations
+   * @param h_y Host vector of requested y locations
+   * @param reqWidth Requested locations width in pixels
+   * @param reqHeight Requested locations height in pixels
+   * @param h_out Output host vector
+   */
   void h_run(const thrust::host_vector<float>& h_x,
              const thrust::host_vector<float>& h_y,
              const size_t reqWidth, const size_t reqHeight,
@@ -205,6 +240,15 @@ public:
     }
   };
 
+  /**
+   * @brief Placeholder device-side runner to perform remapping.
+   *
+   * @param d_x Device vector of requested x locations
+   * @param d_y Device vector of requested y locations
+   * @param reqWidth Requested locations width in pixels
+   * @param reqHeight Requested locations height in pixels
+   * @param d_out Output device vector
+   */
   void d_run(const thrust::device_vector<T>& d_x,
              const thrust::device_vector<T>& d_y,
              const size_t reqWidth, const size_t reqHeight,
