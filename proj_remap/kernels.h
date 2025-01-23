@@ -52,6 +52,12 @@ inline T equivalentBilinearInterpolate(
  * @brief A naive bilinear interpolation kernel.
  *        Assumes both source and output pixels are the same type.
  *        Interpolation is assumed to be done using single-precision floats.
+ *        Assumes source and output images are contiguous in memory; that means
+ *        there is no extra padding at the end of rows (they are both effectively 1D
+ *        long arrays).
+ *
+ *        Explicit checks are made to read/write to the requested input/output pixel addresses,
+ *        as well as the source image addresses.
  *
  * @tparam T Underlying type of source pixels and output pixels.
  * @param d_src Source image pointer. Assumes contiguous memory (no padding in a row).
@@ -77,14 +83,16 @@ __global__ void naiveRemap(
 ){
   const int xt = threadIdx.x + blockDim.x * blockIdx.x;
   const int yt = threadIdx.y + blockDim.y * blockIdx.y;
+  // This index is used for the requested x, y and the output
   const int idx = reqWidth * yt + xt;
 
+  // Explicit check for out of bounds for x, y and output
   if (idx < reqWidth * reqHeight) {
     // Retrieve the requested pixel locations
     const float x = d_x[idx];
     const float y = d_y[idx];
 
-    // Ignore if the requested point itself is outside
+    // Ignore if the requested point itself is outside source
     // NOTE: the -1 is important!
     if (x < 0 || x > srcWidth - 1 || y < 0 || y > srcHeight - 1)
       return;
@@ -95,12 +103,13 @@ __global__ void naiveRemap(
     const size_t iBtmLeft = iTopLeft + srcWidth;
     const size_t iBtmRight = iTopRight + srcWidth;
 
-    // End if any of them are out of bounds
+    // End if any of them are out of bounds of source
+    size_t srcSize = srcWidth * srcHeight;
     if (
-      iTopLeft >= srcWidth * srcHeight ||
-      iTopRight >= srcWidth * srcHeight ||
-      iBtmLeft >= srcWidth * srcHeight ||
-      iBtmRight >= srcWidth * srcHeight
+      iTopLeft >= srcSize || // it should be sufficient to only check top left and btm right
+      // iTopRight >= srcSize ||
+      // iBtmLeft >= srcSize ||
+      iBtmRight >= srcSize
     )
       return;
 
