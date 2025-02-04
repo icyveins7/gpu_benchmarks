@@ -48,6 +48,41 @@ inline T equivalentBilinearInterpolate(
   return result;
 }
 
+
+/**
+ * @brief Retrieves the pixel index while performing bounds checking.
+ *        This prevents pixels outside the image bounds from being accessed.
+ *
+ * @param xIdx Column index
+ * @param yIdx Row index
+ * @param srcWidth Number of columns in pixels
+ * @param srcHeight Number of rows in pixels
+ * @param idx1d Output 1D index, only to be used if return value is true
+ * @return True if the pixel is within bounds
+ */
+inline __device__ static bool getPixelIdxAsIf1D(
+  const size_t xIdx, const size_t yIdx,
+  const size_t srcWidth, const size_t srcHeight,
+  size_t& idx1d
+){
+  if (xIdx > srcWidth || yIdx >= srcHeight)
+    return false;
+  idx1d = yIdx * srcWidth + xIdx;
+  return true;
+}
+
+inline static bool getPixelIdxAsIf1D_host(
+  const size_t xIdx, const size_t yIdx,
+  const size_t srcWidth, const size_t srcHeight,
+  size_t& idx1d
+){
+  // This is identical to above, just for use in host-side checking.
+  if (xIdx > srcWidth || yIdx >= srcHeight)
+    return false;
+  idx1d = yIdx * srcWidth + xIdx;
+  return true;
+};
+
 /**
  * @brief A naive bilinear interpolation kernel.
  *        Assumes both source and output pixels are the same type.
@@ -58,6 +93,13 @@ inline T equivalentBilinearInterpolate(
  *
  *        Explicit checks are made to read/write to the requested input/output pixel addresses,
  *        as well as the source image addresses.
+ *
+ *        Concretely, this kernel outputs a value only when the following conditions are met:
+ *        1) x is within [0, srcWidth - 1], including the edge itself
+ *        2) y is within [0, srcHeight - 1], including the edge itself
+ *
+ *        In any other scenario, the kernel should not write an output for the pixel i.e.
+ *        output pixel memory is untouched.
  *
  * @tparam T Underlying type of source pixels and output pixels.
  * @param d_src Source image pointer. Assumes contiguous memory (no padding in a row).
@@ -98,26 +140,40 @@ __global__ void naiveRemap(
       return;
 
     // Get the 4 corner indices
-    const size_t iTopLeft = (size_t)floorf(y) * srcWidth + (size_t)floorf(x);
-    const size_t iTopRight = iTopLeft + 1;
-    const size_t iBtmLeft = iTopLeft + srcWidth;
-    const size_t iBtmRight = iTopRight + srcWidth;
+    const size_t xiTopLeft = static_cast<size_t>(floorf(x));
+    const size_t yiTopLeft = static_cast<size_t>(floorf(y));
 
-    // End if any of them are out of bounds of source
-    size_t srcSize = srcWidth * srcHeight;
-    if (
-      iTopLeft >= srcSize || // it should be sufficient to only check top left and btm right
-      // iTopRight >= srcSize ||
-      // iBtmLeft >= srcSize ||
-      iBtmRight >= srcSize
-    )
-      return;
+    size_t iTopLeft, iTopRight, iBtmLeft, iBtmRight;
 
-    // Retrieve the 4 corner values and cast to floating point
-    const float topLeft = d_src[iTopLeft];
-    const float topRight = d_src[iTopRight];
-    const float btmLeft = d_src[iBtmLeft];
-    const float btmRight = d_src[iBtmRight];
+    // Allocate values for the 4 corners
+    float topLeft, topRight, btmLeft, btmRight;
+
+    // NOTE: In the following cases, we can always set the value of the corner pixel to be 0
+    // whenever it is an invalid index. The reason why we can do this is because we have already
+    // taken care of the cases where the requested pixel is out of bounds. Hence the following
+    // section of code only executes for those in-bounds (including pixels collinear with the edges).
+    // We now write values of 0 for these 'invalid' pixels so that the processing of pixels
+    // collinear with the edges will be correct.
+
+    if (!getPixelIdxAsIf1D(xiTopLeft, yiTopLeft, srcWidth, srcHeight, iTopLeft))
+      topLeft = 0;
+    else
+      topLeft = d_src[iTopLeft];
+
+    if (!getPixelIdxAsIf1D(xiTopLeft + 1, yiTopLeft, srcWidth, srcHeight, iTopRight))
+      topRight = 0;
+    else
+      topRight = d_src[iTopRight];
+
+    if (!getPixelIdxAsIf1D(xiTopLeft, yiTopLeft + 1, srcWidth, srcHeight, iBtmLeft))
+      btmLeft = 0;
+    else
+      btmLeft = d_src[iBtmLeft];
+
+    if (!getPixelIdxAsIf1D(xiTopLeft + 1, yiTopLeft + 1, srcWidth, srcHeight, iBtmRight))
+      btmRight = 0;
+    else
+      btmRight = d_src[iBtmRight];
 
     // Interpolate values
     const float result = bilinearInterpolate(topLeft, topRight, btmLeft, btmRight, x, y);
@@ -212,25 +268,41 @@ public:
         if (x < 0 || x > this->m_srcWidth - 1 || y < 0 || y > this->m_srcHeight - 1)
           continue;
 
-        // Retrieve the surrounding pixels
-        const size_t iTopLeft = (size_t)floorf(y) * this->m_srcWidth + (size_t)floorf(x);
-        const size_t iTopRight = iTopLeft + 1;
-        const size_t iBtmLeft = iTopLeft + this->m_srcWidth;
-        const size_t iBtmRight = iTopRight + this->m_srcWidth;
+        // Get the 4 corner indices
+        const size_t xiTopLeft = static_cast<size_t>(floorf(x));
+        const size_t yiTopLeft = static_cast<size_t>(floorf(y));
 
-        if (
-          iTopLeft >= m_h_src.size() ||
-          iTopRight >= m_h_src.size() ||
-          iBtmLeft >= m_h_src.size() ||
-          iBtmRight >= m_h_src.size()
-        )
-          continue;
+        size_t iTopLeft, iTopRight, iBtmLeft, iBtmRight;
 
-        const float topLeft = m_h_src[iTopLeft];
-        const float topRight = m_h_src[iTopRight];
-        const float btmLeft = m_h_src[iBtmLeft];
-        const float btmRight = m_h_src[iBtmRight];
+        // Allocate values for the 4 corners
+        float topLeft, topRight, btmLeft, btmRight;
 
+        // NOTE: In the following cases, we can always set the value of the corner pixel to be 0
+        // whenever it is an invalid index. The reason why we can do this is because we have already
+        // taken care of the cases where the requested pixel is out of bounds. Hence the following
+        // section of code only executes for those in-bounds (including pixels collinear with the edges).
+        // We now write values of 0 for these 'invalid' pixels so that the processing of pixels
+        // collinear with the edges will be correct.
+
+        if (!getPixelIdxAsIf1D_host(xiTopLeft, yiTopLeft, this->m_srcWidth, this->m_srcHeight, iTopLeft))
+          topLeft = 0;
+        else
+          topLeft = m_h_src[iTopLeft];
+
+        if (!getPixelIdxAsIf1D_host(xiTopLeft + 1, yiTopLeft, this->m_srcWidth, this->m_srcHeight, iTopRight))
+          topRight = 0;
+        else
+          topRight = m_h_src[iTopRight];
+
+        if (!getPixelIdxAsIf1D_host(xiTopLeft, yiTopLeft + 1, this->m_srcWidth, this->m_srcHeight, iBtmLeft))
+          btmLeft = 0;
+        else
+          btmLeft = m_h_src[iBtmLeft];
+
+        if (!getPixelIdxAsIf1D_host(xiTopLeft + 1, yiTopLeft + 1, this->m_srcWidth, this->m_srcHeight, iBtmRight))
+          btmRight = 0;
+        else
+          btmRight = m_h_src[iBtmRight];
 
         // Interpolate values
         const float result = equivalentBilinearInterpolate(topLeft, topRight, btmLeft, btmRight, x, y);
@@ -267,7 +339,7 @@ class NaiveRemap : public Remap<T>
 {
 public:
   NaiveRemap(const size_t height, const size_t width) : Remap<T>(height, width) {}
-  NaiveRemap(const thrust::host_vector<T>& h_src, const size_t height, const size_t width) : Remap<T>(h_src) {}
+  NaiveRemap(const thrust::host_vector<T>& h_src, const size_t height, const size_t width) : Remap<T>(h_src, height, width) {}
 
   void d_run(const thrust::device_vector<float>& d_x,
              const thrust::device_vector<float>& d_y,
