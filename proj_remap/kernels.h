@@ -365,3 +365,137 @@ public:
     );
   }
 };
+
+// TODO: complete
+//
+// __device__
+// inline static bool getWraparoundPixels(
+//   const float xIdx, const float yIdx,
+//   const size_t srcWidth, const size_t srcHeight,
+//   size_t& iTopLeft, size_t& iTopRight, size_t& iBtmLeft, size_t& iBtmRight
+// ){
+//   if (yIdx >= srcHeight) // we now allow xIdx to exceed the right edge
+//     return false;
+//
+//   const size_t xWrapIdx = xIdx % srcWidth;
+//   const size_t yWrapIdx = yIdx + xIdx / srcWidth;
+//   idx1d = yIdx * srcWidth + xIdx;
+//   return true;
+// }
+
+/**
+ * @brief This is similar to the naiveRemap kernel, but out-of-bounds accesses
+ *        now wrap-around and produce valid output, as long as the requested pixel
+ *        is still within the unwrapped length of the image.
+ *
+ *        Concretely, this expands valid requests to 'right' of the source image, with
+ *        certain caveats.
+ *
+ *        Example with source pixels A-F:
+ *
+ *        A    B
+ *               * -> this request is ok, and will use the square BCED
+ *        C    D
+ *               * -> this request is not ok as the bottom right does not exist
+ *        E    F
+ *
+ *        The first request treats the image as if it were like this:
+ *
+ *        A    B    C
+ *               *
+ *        C    D    E ...
+ *
+ *        Hence the only requirement becomes that of existence of the wrapped-around
+ *        corner pixels; it cannot be too far as to extend beyond the end of the image data.
+ *
+ *        Extra care must be taken to handle the bottom edge case that occurred in the
+ *        original naive kernel, as these pixels would have 2 'invalid' corners but
+ *        should still be processed:
+ *
+ *        A    B
+ *
+ *        C  * D
+ *           |
+ *           -> this request is still ok!
+ *
+ * @tparam T Underlying type of source pixels and output pixels.
+ * @param d_src Source image pointer. Assumes contiguous memory (no padding in a row).
+ * @param srcWidth Source width in pixels i.e. number of columns
+ * @param srcHeight Source height in pixels i.e. number of rows
+ * @param d_x Requested x pixel locations pointer (has dimensions reqWidth x reqHeight)
+ * @param d_y Requested y pixel locations pointer (has dimensions reqWidth x reqHeight)
+ * @param reqWidth Requested output image width in pixels i.e. number of columns
+ * @param reqHeight Requested output image height in pixels i.e. number of rows
+ * @param d_out Output image pointer.
+ * @return 
+ */
+template <typename T>
+__global__ void naiveRemapWraparound(
+  const T* __restrict__ d_src,
+  const size_t srcWidth,
+  const size_t srcHeight,
+  const float* __restrict__ d_x,
+  const float* __restrict__ d_y,
+  const size_t reqWidth,
+  const size_t reqHeight,
+  T* __restrict__ d_out
+){
+  const int xt = threadIdx.x + blockDim.x * blockIdx.x;
+  const int yt = threadIdx.y + blockDim.y * blockIdx.y;
+  // This index is used for the requested x, y and the output
+  const int idx = reqWidth * yt + xt;
+
+  // Explicit check for out of bounds for x, y and output
+  if (idx < reqWidth * reqHeight) {
+    // Retrieve the requested pixel locations
+    const float x = d_x[idx];
+    const float y = d_y[idx];
+
+    // Ignore if the requested point itself is outside source
+    // NOTE: the -1 is important!
+    if (x < 0 || y < 0 || y > srcHeight - 1) // we now allow x > srcWidth - 1
+      return;
+
+    // Get the 4 corner indices
+    const size_t xiTopLeft = static_cast<size_t>(floorf(x));
+    const size_t yiTopLeft = static_cast<size_t>(floorf(y));
+
+    size_t iTopLeft, iTopRight, iBtmLeft, iBtmRight;
+
+    // Allocate values for the 4 corners
+    float topLeft, topRight, btmLeft, btmRight;
+
+    // NOTE: In the following cases, we can always set the value of the corner pixel to be 0
+    // whenever it is an invalid index. The reason why we can do this is because we have already
+    // taken care of the cases where the requested pixel is out of bounds. Hence the following
+    // section of code only executes for those in-bounds (including pixels collinear with the edges).
+    // We now write values of 0 for these 'invalid' pixels so that the processing of pixels
+    // collinear with the edges will be correct.
+
+    if (!getPixelIdxAsIf1D(xiTopLeft, yiTopLeft, srcWidth, srcHeight, iTopLeft))
+      topLeft = 0;
+    else
+      topLeft = d_src[iTopLeft];
+
+    if (!getPixelIdxAsIf1D(xiTopLeft + 1, yiTopLeft, srcWidth, srcHeight, iTopRight))
+      topRight = 0;
+    else
+      topRight = d_src[iTopRight];
+
+    if (!getPixelIdxAsIf1D(xiTopLeft, yiTopLeft + 1, srcWidth, srcHeight, iBtmLeft))
+      btmLeft = 0;
+    else
+      btmLeft = d_src[iBtmLeft];
+
+    if (!getPixelIdxAsIf1D(xiTopLeft + 1, yiTopLeft + 1, srcWidth, srcHeight, iBtmRight))
+      btmRight = 0;
+    else
+      btmRight = d_src[iBtmRight];
+
+    // Interpolate values
+    const float result = bilinearInterpolate(topLeft, topRight, btmLeft, btmRight, x, y);
+
+    // Write result as destination type
+    d_out[idx] = (T)result;
+  }
+}
