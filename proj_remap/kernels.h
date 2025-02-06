@@ -366,22 +366,30 @@ public:
   }
 };
 
-// TODO: complete
-//
-// __device__
-// inline static bool getWraparoundPixels(
-//   const float xIdx, const float yIdx,
-//   const size_t srcWidth, const size_t srcHeight,
-//   size_t& iTopLeft, size_t& iTopRight, size_t& iBtmLeft, size_t& iBtmRight
-// ){
-//   if (yIdx >= srcHeight) // we now allow xIdx to exceed the right edge
-//     return false;
-//
-//   const size_t xWrapIdx = xIdx % srcWidth;
-//   const size_t yWrapIdx = yIdx + xIdx / srcWidth;
-//   idx1d = yIdx * srcWidth + xIdx;
-//   return true;
-// }
+
+/**
+ * @brief Retrieves the pixel index while performing bounds checking.
+ *        This is slightly different as it simply checks if the access is within
+ *        the unwrapped 1-D data bounds, instead of the image width and height
+ *        individually.
+ *
+ * @param xIdx Column index
+ * @param yIdx Row index
+ * @param srcWidth Number of columns in pixels
+ * @param srcHeight Number of rows in pixels
+ * @param idx1d Output 1D index, only to be used if return value is true
+ * @return True if the pixel is within bounds
+ */
+inline __device__ static bool getUnwrappedPixelIdxAsIf1D(
+  const size_t xUnwrapIdx, const size_t yUnwrapIdx,
+  const size_t srcWidth, const size_t srcHeight,
+  size_t& idx1d
+){
+  idx1d = yUnwrapIdx * srcWidth + xUnwrapIdx;
+  if (idx1d >= srcWidth * srcHeight)
+    return false;
+  return true;
+}
 
 /**
  * @brief This is similar to the naiveRemap kernel, but out-of-bounds accesses
@@ -451,26 +459,52 @@ __global__ void naiveRemapWraparound(
     const float x = d_x[idx];
     const float y = d_y[idx];
 
-    // Ignore if the requested point itself is outside source
-    // NOTE: the -1 is important!
-    if (x < 0 || y < 0 || y > srcHeight - 1) // we now allow x > srcWidth - 1
+    // The boundary requirements are now based on the unwrapped position
+    // Assume that width = M - 1, height = N - 1
+    // First, we unwrap x by checking how far it is over the edge M (NOTE: not M - 1)
+    int yIncrements = 0;
+    const float xUnwrap = remquof(x, srcWidth, &yIncrements);
+    const float yUnwrap = y + static_cast<float>(yIncrements);
+
+    // The source image can now effectively be treated as an (M+1)x(N) image,
+    // where the last column has only N-1 pixels. That is, the last column has the same values
+    // as the first column, with one row shifted up:
+    //
+    //         0    1    2  .... M-1  M
+    //      |  ------------------------
+    //   0  |  A    B    C  .... D    E
+    //   1  |  E    F    G  .... H    I
+    //      |  .......................
+    // N-2  |  P    Q    R  .... S    T
+    // N-1  |  T    U    V  .... W    ?
+    //
+    // All the previous rules for validity of requested pixels now apply to the unwrapped values
+    // in the same way they would have for the original naiveRemap, except that the image is now
+    // (M+1)x(N) like this.
+    // The only special case is the square at the bottom right, which lacks a valid value;
+    // we can simply check that unwrapped pixel coordinates in this square are not processed.
+    // NOTE: the final column is technically non-inclusive i.e. [0, M)
+
+    // Check 1. Within the (M+1)x(N)
+    if (yUnwrap < 0 || yUnwrap > srcHeight - 1 || xUnwrap < 0 || xUnwrap >= srcWidth) // now x is not -1!
       return;
 
-    // Get the 4 corner indices
-    const size_t xiTopLeft = static_cast<size_t>(floorf(x));
-    const size_t yiTopLeft = static_cast<size_t>(floorf(y));
+    // Check 2. Exclude the final square (need to include the top and left edge itself)
+    if (xUnwrap > srcWidth - 1 && yUnwrap > srcHeight - 2)
+      return;
+
+    // If we reach here, then we are safe to evaluate all 4 corner pixels;
+    // any pixel that is unreachable in memory can just be set to 0, the math will take care of the rest,
+    // same as in naiveRemap
+
+    // Get the 4 corner indices using unwrapped coordinates now
+    const size_t xiTopLeft = static_cast<size_t>(xUnwrap);
+    const size_t yiTopLeft = static_cast<size_t>(yUnwrap);
 
     size_t iTopLeft, iTopRight, iBtmLeft, iBtmRight;
 
     // Allocate values for the 4 corners
     float topLeft, topRight, btmLeft, btmRight;
-
-    // NOTE: In the following cases, we can always set the value of the corner pixel to be 0
-    // whenever it is an invalid index. The reason why we can do this is because we have already
-    // taken care of the cases where the requested pixel is out of bounds. Hence the following
-    // section of code only executes for those in-bounds (including pixels collinear with the edges).
-    // We now write values of 0 for these 'invalid' pixels so that the processing of pixels
-    // collinear with the edges will be correct.
 
     if (!getPixelIdxAsIf1D(xiTopLeft, yiTopLeft, srcWidth, srcHeight, iTopLeft))
       topLeft = 0;
