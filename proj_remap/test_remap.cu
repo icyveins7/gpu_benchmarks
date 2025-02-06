@@ -27,11 +27,11 @@ void test_remap(const size_t height, const size_t width, const size_t srcHeight,
     in = dis(gen) * srcHeight;
   }
   // We specifically go out of bounds on the last few elements
-  h_inX[width * height - 1] = srcWidth;
+  h_inX[width * height - 1] = srcWidth + 2.0f;
   h_inY[width * height - 1] = 0;
 
   h_inX[width * height - 2] = 0;
-  h_inY[width * height - 2] = srcHeight;
+  h_inY[width * height - 2] = srcHeight + 2.0f;
 
   // Copy to device vectors
   thrust::device_vector<float> d_inX(width * height);
@@ -68,6 +68,110 @@ void test_remap(const size_t height, const size_t width, const size_t srcHeight,
 }
 
 template <typename T, template <class> class U> void test_remap_edgecases() {
+  // We make a very simple 2x2 source
+  thrust::host_vector<T> h_src(4);
+  h_src[0] = 1.0;
+  h_src[1] = 2.0;
+  h_src[2] = 3.0;
+  h_src[3] = 4.0;
+  U<T> remap(h_src, 2, 2);
+
+  /*
+  For the destination we specifically create a 5x5 grid, where 4 of the points
+  coincide with the original 4 pixels, and 4 other points are midpoint along the
+  edges.
+
+  X X X X X
+  X @ . @ X
+  X . . . X
+  X @ . @ X
+  X X X X X
+
+  X : points outside the src, expect no output
+  @ : points coinciding with src pixels, expect same value
+  . : points on the edge of or inside the src, expect valid interpolation
+
+  */
+
+  thrust::device_vector<T> d_dest(25);
+  thrust::fill(d_dest.begin(), d_dest.end(), std::numeric_limits<T>::max());
+
+  // Write the exact requested pixel coordinates so we can be sure
+  thrust::host_vector<float> h_inX(25);
+  thrust::host_vector<float> h_inY(25);
+  // clang-format off
+  h_inX[0] = -0.5f; h_inX[1] = 0.0f; h_inX[2] = 0.5f; h_inX[3] = 1.0f; h_inX[4] = 1.5f;
+  h_inX[5] = -0.5f; h_inX[6] = 0.0f; h_inX[7] = 0.5f; h_inX[8] = 1.0f; h_inX[9] = 1.5f;
+  h_inX[10] = -0.5f; h_inX[11] = 0.0f; h_inX[12] = 0.5f; h_inX[13] = 1.0f; h_inX[14] = 1.5f;
+  h_inX[15] = -0.5f; h_inX[16] = 0.0f; h_inX[17] = 0.5f; h_inX[18] = 1.0f; h_inX[19] = 1.5f;
+  h_inX[20] = -0.5f; h_inX[21] = 0.0f; h_inX[22] = 0.5f; h_inX[23] = 1.0f; h_inX[24] = 1.5f;
+
+
+  h_inY[0] = -0.5f; h_inY[1] = -0.5f; h_inY[2] = -0.5f; h_inY[3] = -0.5f; h_inY[4] = -0.5f;
+  h_inY[5] = 0.0f; h_inY[6] = 0.0f; h_inY[7] = 0.0f; h_inY[8] = 0.0f; h_inY[9] = 0.0f;
+  h_inY[10] = 0.5f; h_inY[11] = 0.5f; h_inY[12] = 0.5f; h_inY[13] = 0.5f; h_inY[14] = 0.5f;
+  h_inY[15] = 1.0f; h_inY[16] = 1.0f; h_inY[17] = 1.0f; h_inY[18] = 1.0f; h_inY[19] = 1.0f;
+  h_inY[20] = 1.5f; h_inY[21] = 1.5f; h_inY[22] = 1.5f; h_inY[23] = 1.5f; h_inY[24] = 1.5f;
+
+  thrust::device_vector<float> d_inX(25);
+  thrust::device_vector<float> d_inY(25);
+  d_inX = h_inX;
+  d_inY = h_inY;
+
+  // Run the remap
+  remap.d_run(d_inX, d_inY, 5, 5, d_dest);
+  thrust::host_vector<T> h_dest(25);
+  h_dest = d_dest;
+
+  // Run explicit expectations
+  constexpr T invalid = std::numeric_limits<T>::max();
+
+  thrust::host_vector<float> h_src_float(h_src.size());
+  for (int i = 0; i < h_src.size(); ++i) {
+    h_src_float[i] = static_cast<float>(h_src[i]);
+  }
+
+  // 1st row
+  EXPECT_FLOAT_EQ(h_dest[0], invalid);
+  EXPECT_FLOAT_EQ(h_dest[1], invalid);
+  EXPECT_FLOAT_EQ(h_dest[2], invalid);
+  EXPECT_FLOAT_EQ(h_dest[3], invalid);
+  EXPECT_FLOAT_EQ(h_dest[4], invalid);
+
+  // 2nd row
+  EXPECT_FLOAT_EQ(h_dest[5], invalid);
+  EXPECT_FLOAT_EQ(h_dest[6], static_cast<T>(h_src_float[0]));                  // top left point
+  EXPECT_FLOAT_EQ(h_dest[7], static_cast<T>((h_src_float[0] + h_src_float[1]) / 2)); // top edge mid point
+  EXPECT_FLOAT_EQ(h_dest[8], static_cast<T>(h_src_float[1]));                  // top right point
+  EXPECT_FLOAT_EQ(h_dest[9], invalid);
+
+  // 3rd row
+  EXPECT_FLOAT_EQ(h_dest[10], invalid);
+  EXPECT_FLOAT_EQ(h_dest[11], static_cast<T>((h_src_float[0] + h_src_float[2]) / 2)); // left edge mid point
+  EXPECT_FLOAT_EQ(h_dest[12], static_cast<T>((h_src_float[0] + h_src_float[1] + h_src_float[2] + h_src_float[3]) / 4)); // middle of square
+  EXPECT_FLOAT_EQ(h_dest[13], static_cast<T>((h_src_float[1] + h_src_float[3]) / 2)); // right edge mid point
+  EXPECT_FLOAT_EQ(h_dest[14], invalid);
+
+  // 4th row
+  EXPECT_FLOAT_EQ(h_dest[15], invalid);
+  EXPECT_FLOAT_EQ(h_dest[16], static_cast<T>(h_src_float[2]));                  // btm left point
+  EXPECT_FLOAT_EQ(h_dest[17], static_cast<T>((h_src_float[2] + h_src_float[3]) / 2)); // btm edge mid point
+  EXPECT_FLOAT_EQ(h_dest[18], static_cast<T>(h_src_float[3]));                  // btm right point
+  EXPECT_FLOAT_EQ(h_dest[19], invalid);
+
+  // 5th row
+  EXPECT_FLOAT_EQ(h_dest[20], invalid);
+  EXPECT_FLOAT_EQ(h_dest[21], invalid);
+  EXPECT_FLOAT_EQ(h_dest[22], invalid);
+  EXPECT_FLOAT_EQ(h_dest[23], invalid);
+  EXPECT_FLOAT_EQ(h_dest[24], invalid);
+
+  // clang-format on
+}
+
+template <typename T, template <class> class U>
+void test_remap_wraparound_edgecases() {
+  // TODO: complete
   // We make a very simple 2x2 source
   thrust::host_vector<T> h_src(4);
   h_src[0] = 1.0;
@@ -277,7 +381,7 @@ template <typename T, template <class> class U> void test_remap_edgecases() {
 
 // Run the tests on all classes
 
-// =========== Test on floats
+// =========== Test NaiveRemap on floats
 TEST(NaiveRemap, float_128x128_128x128) {
   test_remap<float, NaiveRemap>(128, 128, 128, 128);
   // test_remap_vs_npp<float, NaiveRemap>(128, 128, 128, 128,
@@ -295,7 +399,7 @@ TEST(NaiveRemap, float_25x25_123x123) {
 
 TEST(NaiveRemap, float_edgecase) { test_remap_edgecases<float, NaiveRemap>(); }
 
-// =========== Test on uint16_t
+// =========== Test NaiveRemap on uint16_t
 TEST(NaiveRemap, uint16_t_128x128_128x128) {
   test_remap<uint16_t, NaiveRemap>(128, 128, 128, 128);
 }
@@ -310,4 +414,32 @@ TEST(NaiveRemap, uint16_t_25x25_123x123) {
 }
 TEST(NaiveRemap, uint16_t_edgecase) {
   test_remap_edgecases<uint16_t, NaiveRemap>();
+}
+
+// =========== Test NaiveRemapWraparound on floats
+TEST(NaiveRemapWraparound, float_128x128_128x128) {
+  test_remap<float, NaiveRemapWraparound>(128, 128, 128, 128);
+}
+TEST(NaiveRemapWraparound, float_32x32_128x128) {
+  test_remap<float, NaiveRemapWraparound>(32, 32, 128, 128);
+}
+TEST(NaiveRemapWraparound, float_32x32_123x123) {
+  test_remap<float, NaiveRemapWraparound>(32, 32, 123, 123);
+}
+TEST(NaiveRemapWraparound, float_25x25_123x123) {
+  test_remap<float, NaiveRemapWraparound>(25, 25, 123, 123);
+}
+
+// =========== Test NaiveRemapWraparound on uint16_ts
+TEST(NaiveRemapWraparound, uint16_t_128x128_128x128) {
+  test_remap<uint16_t, NaiveRemapWraparound>(128, 128, 128, 128);
+}
+TEST(NaiveRemapWraparound, uint16_t_32x32_128x128) {
+  test_remap<uint16_t, NaiveRemapWraparound>(32, 32, 128, 128);
+}
+TEST(NaiveRemapWraparound, uint16_t_32x32_123x123) {
+  test_remap<uint16_t, NaiveRemapWraparound>(32, 32, 123, 123);
+}
+TEST(NaiveRemapWraparound, uint16_t_25x25_123x123) {
+  test_remap<uint16_t, NaiveRemapWraparound>(25, 25, 123, 123);
 }

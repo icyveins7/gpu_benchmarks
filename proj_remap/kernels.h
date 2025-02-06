@@ -391,6 +391,18 @@ inline __device__ static bool getUnwrappedPixelIdxAsIf1D(
   return true;
 }
 
+inline static bool getUnwrappedPixelIdxAsIf1D_host(
+  const size_t xUnwrapIdx, const size_t yUnwrapIdx,
+  const size_t srcWidth, const size_t srcHeight,
+  size_t& idx1d
+){
+  idx1d = yUnwrapIdx * srcWidth + xUnwrapIdx;
+  if (idx1d >= srcWidth * srcHeight)
+    return false;
+  return true;
+};
+
+
 /**
  * @brief This is similar to the naiveRemap kernel, but out-of-bounds accesses
  *        now wrap-around and produce valid output, as long as the requested pixel
@@ -430,8 +442,10 @@ inline __device__ static bool getUnwrappedPixelIdxAsIf1D(
  * @param d_src Source image pointer. Assumes contiguous memory (no padding in a row).
  * @param srcWidth Source width in pixels i.e. number of columns
  * @param srcHeight Source height in pixels i.e. number of rows
- * @param d_x Requested x pixel locations pointer (has dimensions reqWidth x reqHeight)
+ * @param d_x Requested x pixel locations pointer (has dimensions reqWidth x reqHeight).
+ *            Although unwrapping is implemented, negative values are still invalid.
  * @param d_y Requested y pixel locations pointer (has dimensions reqWidth x reqHeight)
+ *            Although unwrapping is implemented, negative values are still invalid.
  * @param reqWidth Requested output image width in pixels i.e. number of columns
  * @param reqHeight Requested output image height in pixels i.e. number of rows
  * @param d_out Output image pointer.
@@ -503,27 +517,19 @@ __global__ void naiveRemapWraparound(
 
     size_t iTopLeft, iTopRight, iBtmLeft, iBtmRight;
 
-    // Allocate values for the 4 corners
-    float topLeft, topRight, btmLeft, btmRight;
+    // Allocate values for the 4 corners, defaulting to 0
+    float topLeft = 0, topRight = 0 , btmLeft = 0, btmRight = 0;
 
-    if (!getPixelIdxAsIf1D(xiTopLeft, yiTopLeft, srcWidth, srcHeight, iTopLeft))
-      topLeft = 0;
-    else
+    if (getUnwrappedPixelIdxAsIf1D(xiTopLeft, yiTopLeft, srcWidth, srcHeight, iTopLeft))
       topLeft = d_src[iTopLeft];
 
-    if (!getPixelIdxAsIf1D(xiTopLeft + 1, yiTopLeft, srcWidth, srcHeight, iTopRight))
-      topRight = 0;
-    else
+    if (getUnwrappedPixelIdxAsIf1D(xiTopLeft + 1, yiTopLeft, srcWidth, srcHeight, iTopRight))
       topRight = d_src[iTopRight];
 
-    if (!getPixelIdxAsIf1D(xiTopLeft, yiTopLeft + 1, srcWidth, srcHeight, iBtmLeft))
-      btmLeft = 0;
-    else
+    if (getUnwrappedPixelIdxAsIf1D(xiTopLeft, yiTopLeft + 1, srcWidth, srcHeight, iBtmLeft))
       btmLeft = d_src[iBtmLeft];
 
-    if (!getPixelIdxAsIf1D(xiTopLeft + 1, yiTopLeft + 1, srcWidth, srcHeight, iBtmRight))
-      btmRight = 0;
-    else
+    if (getUnwrappedPixelIdxAsIf1D(xiTopLeft + 1, yiTopLeft + 1, srcWidth, srcHeight, iBtmRight))
       btmRight = d_src[iBtmRight];
 
     // Interpolate values
@@ -533,3 +539,90 @@ __global__ void naiveRemapWraparound(
     d_out[idx] = (T)result;
   }
 }
+
+template <typename T>
+class NaiveRemapWraparound : public Remap<T>
+{
+public:
+  NaiveRemapWraparound(const size_t height, const size_t width) : Remap<T>(height, width) {}
+  NaiveRemapWraparound(const thrust::host_vector<T>& h_src, const size_t height, const size_t width) : Remap<T>(h_src, height, width) {}
+
+  void d_run(const thrust::device_vector<float>& d_x,
+             const thrust::device_vector<float>& d_y,
+             const size_t reqWidth, const size_t reqHeight,
+             thrust::device_vector<T>& d_out) 
+  {
+    int numBlks_x = static_cast<int>(reqWidth / this->m_THREADS_PER_BLK) + 1;
+    int numBlks_y = static_cast<int>(reqHeight / this->m_THREADS_PER_BLK) + 1;
+    printf("Using grid dims = %d, %d\n", numBlks_x, numBlks_y);
+    dim3 dimGrid(numBlks_x, numBlks_y);
+    printf("Using blk dims = %d, %d\n", this->m_THREADS_PER_BLK, this->m_THREADS_PER_BLK);
+    dim3 dimBlk(this->m_THREADS_PER_BLK, this->m_THREADS_PER_BLK);
+    // Execute kernel
+    naiveRemapWraparound<<<dimGrid, dimBlk>>>(
+      thrust::raw_pointer_cast(this->m_d_src.data()),
+      this->m_srcWidth,
+      this->m_srcHeight,
+      thrust::raw_pointer_cast(d_x.data()),
+      thrust::raw_pointer_cast(d_y.data()),
+      reqWidth,
+      reqHeight,
+      thrust::raw_pointer_cast(d_out.data())
+    );
+  }
+
+  void h_run(const thrust::host_vector<float>& h_x,
+             const thrust::host_vector<float>& h_y,
+             const size_t reqWidth, const size_t reqHeight,
+             thrust::host_vector<T>& h_out) 
+  {
+    for (size_t i = 0; i < reqHeight; ++i)
+    {
+      for (size_t j = 0; j < reqWidth; ++j)
+      {
+        const size_t idx = i * reqWidth + j;
+        // Retrieve the x and y requested pixel locations
+        const float x = h_x[idx];
+        const float y = h_y[idx];
+
+        int yIncrements = 0;
+        const float xUnwrap = remquof(x, this->m_srcWidth, &yIncrements);
+        const float yUnwrap = y + static_cast<float>(yIncrements);
+
+        // Check 1. Within the (M+1)x(N)
+        if (yUnwrap < 0 || yUnwrap > this->m_srcHeight - 1 || xUnwrap < 0 || xUnwrap >= this->m_srcWidth) // now x is not -1!
+          continue;
+
+        // Check 2. Exclude the final square (need to include the top and left edge itself)
+        if (xUnwrap > this->m_srcWidth - 1 && yUnwrap > this->m_srcHeight - 2)
+          continue;
+
+        // Get the 4 corner indices using unwrapped coordinates now
+        size_t xiTopLeft = static_cast<size_t>(xUnwrap);
+        size_t yiTopLeft = static_cast<size_t>(yUnwrap);
+
+        size_t iTopLeft, iTopRight, iBtmLeft, iBtmRight;
+
+        // Allocate values for the 4 corners
+        float topLeft = 0, topRight = 0, btmLeft = 0, btmRight = 0;
+
+        if (getUnwrappedPixelIdxAsIf1D_host(xiTopLeft, yiTopLeft, this->m_srcWidth, this->m_srcHeight, iTopLeft))
+          topLeft = this->m_h_src[iTopLeft];
+
+        if (getUnwrappedPixelIdxAsIf1D_host(xiTopLeft + 1, yiTopLeft, this->m_srcWidth, this->m_srcHeight, iTopRight))
+          topRight = this->m_h_src[iTopRight];
+
+        if (getUnwrappedPixelIdxAsIf1D_host(xiTopLeft, yiTopLeft + 1, this->m_srcWidth, this->m_srcHeight, iBtmLeft))
+          btmLeft = this->m_h_src[iBtmLeft];
+
+        if (getUnwrappedPixelIdxAsIf1D_host(xiTopLeft + 1, yiTopLeft + 1, this->m_srcWidth, this->m_srcHeight, iBtmRight))
+          btmRight = this->m_h_src[iBtmRight];
+
+        // Interpolate values
+        const float result = equivalentBilinearInterpolate(topLeft, topRight, btmLeft, btmRight, x, y);
+
+        h_out[idx] = result;
+      }
+    }
+  }
+};
