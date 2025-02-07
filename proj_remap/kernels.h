@@ -438,14 +438,15 @@ inline static bool getUnwrappedPixelIdxAsIf1D_host(
  *           |
  *           -> this request is still ok!
  *
+ *        Note that in this new setup, negative coordinates can be valid (and must be
+ *        handled appropriately).
+ *
  * @tparam T Underlying type of source pixels and output pixels.
  * @param d_src Source image pointer. Assumes contiguous memory (no padding in a row).
  * @param srcWidth Source width in pixels i.e. number of columns
  * @param srcHeight Source height in pixels i.e. number of rows
  * @param d_x Requested x pixel locations pointer (has dimensions reqWidth x reqHeight).
- *            Although unwrapping is implemented, negative values are still invalid.
  * @param d_y Requested y pixel locations pointer (has dimensions reqWidth x reqHeight)
- *            Although unwrapping is implemented, negative values are still invalid.
  * @param reqWidth Requested output image width in pixels i.e. number of columns
  * @param reqHeight Requested output image height in pixels i.e. number of rows
  * @param d_out Output image pointer.
@@ -477,8 +478,17 @@ __global__ void naiveRemapWraparound(
     // Assume that width = M - 1, height = N - 1
     // First, we unwrap x by checking how far it is over the edge M (NOTE: not M - 1)
     int yIncrements = 0;
-    const float xUnwrap = remquof(x, srcWidth, &yIncrements);
-    const float yUnwrap = y + static_cast<float>(yIncrements);
+    float xUnwrap = remquof(x, static_cast<float>(srcWidth), &yIncrements);
+
+    // Note, remquof can return a negative remainder, even for non-negative inputs
+    // Hence we must check the sign of the remainder and increment it by the divisor
+    // conditionally to get what we actually want
+    if (xUnwrap < 0) {
+      xUnwrap += static_cast<float>(srcWidth);
+      yIncrements--;
+    }
+
+    float yUnwrap = y + static_cast<float>(yIncrements);
 
     // The source image can now effectively be treated as an (M+1)x(N) image,
     // where the last column has only N-1 pixels. That is, the last column has the same values
@@ -586,8 +596,12 @@ public:
         const float y = h_y[idx];
 
         int yIncrements = 0;
-        const float xUnwrap = remquof(x, this->m_srcWidth, &yIncrements);
-        const float yUnwrap = y + static_cast<float>(yIncrements);
+        float xUnwrap = remquof(x, this->m_srcWidth, &yIncrements);
+        if (xUnwrap < 0) {
+          xUnwrap += static_cast<float>(this->m_srcWidth);
+          yIncrements--;
+        }
+        float yUnwrap = y + static_cast<float>(yIncrements);
 
         // Check 1. Within the (M+1)x(N)
         if (yUnwrap < 0 || yUnwrap > this->m_srcHeight - 1 || xUnwrap < 0 || xUnwrap >= this->m_srcWidth) // now x is not -1!
