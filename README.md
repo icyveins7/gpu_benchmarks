@@ -22,3 +22,10 @@ make
 ```
 
 You should then be able to run the executables inside each subdirectory.
+
+# Documentation for subprojects
+
+Sometimes, I may use small python scripts to try to plot illustrations which I find to be helpful in understanding a particular algorithm, or the way a unit test is set up.
+These generally shouldn't require any fancy packages other than `matplotlib` and `numpy`, and I will try to keep these in the `/doc/` subdirectory in each of the project directories.
+
+Also, project-specific documentation will be found in the subdirectory's own `README.md`, so as to not make this file too crowded.
