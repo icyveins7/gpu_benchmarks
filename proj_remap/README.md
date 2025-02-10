@@ -177,3 +177,5 @@ The 3 conditions should be checked in order, since the points in this special bo
 ## Bilinear interpolation is now the same as before
 
 Assuming the 3 conditions are taken care of, we now can proceed with the standard 4 corner pixel extraction like before, setting out-of-bounds corners to 0. This will easily take care of the top and bottom 'edges' of the image (the only real edges are the top and bottom of the tape). The unwrapped coordinates will take care of the rest. The reader is invited to validate this (or believe the unit tests that have been set up).
+
+Note that a beautiful side-effect of the unwrapping is that (assuming it is done correctly), negative requested pixel coordinates are now also valid, and can extend indefinitely (as long as the 3 conditions hold).
