@@ -43,3 +43,4 @@
 # Custom
 build/
 .cache/
+*.nsys-rep
