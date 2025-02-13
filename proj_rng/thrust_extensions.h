@@ -91,7 +91,7 @@ struct Random_generator1d_phase {
     // Hence, increment count by grid size to ensure uniqueness of seed
     count += blockDim.x * gridDim.x;
     thrust::random::default_random_engine rng(seed);
-    thrust::random::uniform_real_distribution<float> distrib;
+    thrust::random::uniform_real_distribution<float> distrib(0, 2 * M_PI);
 
     float phase = distrib(rng);
 
@@ -121,7 +121,7 @@ struct Random_generator1d_phase_cplxMul {
     // Hence, increment count by grid size to ensure uniqueness of seed
     count += blockDim.x * gridDim.x;
     thrust::random::default_random_engine rng(seed);
-    thrust::random::uniform_real_distribution<float> distrib;
+    thrust::random::uniform_real_distribution<float> distrib(0, 2 * M_PI);
 
     float phase = distrib(rng);
 
