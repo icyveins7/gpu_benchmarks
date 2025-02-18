@@ -9,6 +9,7 @@
 
 // The following is adapted from
 // cuda-samples/Samples/3_CUDA_Features/cdpQuadtree/cdpQuadtree.cu
+template <typename Engine = thrust::random::default_random_engine>
 struct Random_generator2d {
 
   int count;
@@ -37,7 +38,7 @@ struct Random_generator2d {
     //
     // #endif
 
-    thrust::random::default_random_engine rng(seed);
+    Engine rng(seed);
     thrust::random::uniform_real_distribution<float> distrib;
 
     return thrust::make_tuple(distrib(rng), distrib(rng));

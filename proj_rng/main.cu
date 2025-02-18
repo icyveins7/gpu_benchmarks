@@ -2,6 +2,7 @@
 #include <iostream>
 #include <thrust/device_vector.h>
 #include <thrust/host_vector.h>
+#include <thrust/random.h>
 #include <thrust/sequence.h>
 
 int main(int argc, char *argv[]) {
@@ -19,10 +20,31 @@ int main(int argc, char *argv[]) {
 
   // Test 2D RNG from example
   {
-    printf("2D RNG\n");
+    printf("2D RNG with default_random_engine\n");
     thrust::device_vector<float> d_x(numPts);
     thrust::device_vector<float> d_y(numPts);
-    Random_generator2d rnd;
+    Random_generator2d<thrust::random::default_random_engine> rnd;
+    for (int i = 0; i < repeats; ++i) {
+      thrust::generate(
+          thrust::make_zip_iterator(
+              thrust::make_tuple(d_x.begin(), d_y.begin())),
+          thrust::make_zip_iterator(thrust::make_tuple(d_x.end(), d_y.end())),
+          rnd);
+    }
+    thrust::host_vector<float> h_x = d_x;
+    thrust::host_vector<float> h_y = d_y;
+
+    for (int i = 0; i < 10; ++i) {
+      printf("%.3f, %.3f\n", h_x[i], h_y[i]);
+    }
+  }
+  printf("====================================\n");
+  // Test 2D RNG from example
+  {
+    printf("2D RNG with ranlux24\n");
+    thrust::device_vector<float> d_x(numPts);
+    thrust::device_vector<float> d_y(numPts);
+    Random_generator2d<thrust::random::ranlux24> rnd;
     for (int i = 0; i < repeats; ++i) {
       thrust::generate(
           thrust::make_zip_iterator(
