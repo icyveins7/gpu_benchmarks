@@ -39,4 +39,5 @@ endif()
 add_subdirectory(proj_grid_polynomials)
 add_subdirectory(proj_remap)
 add_subdirectory(proj_rng)
+add_subdirectory(proj_fftshift)
 
