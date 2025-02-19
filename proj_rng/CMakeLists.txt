@@ -6,16 +6,28 @@ DESCRIPTION "Random number generators"
   LANGUAGES CXX CUDA)
 
 # --------------------
-set_source_files_properties(main.cu PROPERTIES LANGUAGE CUDA)
-add_executable(rng)
+set_source_files_properties(thrustrng.cu PROPERTIES LANGUAGE CUDA)
+add_executable(thrustrng)
 
-target_include_directories(rng
+target_include_directories(thrustrng
                            PRIVATE ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
                            )
 
 target_sources(
-  rng PRIVATE
-  ${PROJECT_SOURCE_DIR}/main.cu
+  thrustrng PRIVATE
+  ${PROJECT_SOURCE_DIR}/thrustrng.cu
+)
+# --------------------
+set_source_files_properties(curandrng.cu PROPERTIES LANGUAGE CUDA)
+add_executable(curandrng)
+
+target_include_directories(curandrng
+                           PRIVATE ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
+                           )
+
+target_sources(
+  curandrng PRIVATE
+  ${PROJECT_SOURCE_DIR}/curandrng.cu
 )
 
 # -------------------- Tests
