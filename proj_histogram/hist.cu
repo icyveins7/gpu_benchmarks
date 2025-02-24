@@ -1,5 +1,7 @@
 #include "hist.cuh"
 
+#include <random>
+
 #include <thrust/device_vector.h>
 #include <thrust/host_vector.h>
 
@@ -29,6 +31,22 @@ int main() {
       printf("%d: Expected: %d, got: %d\n", i, expected[i], h_hist[i]);
     }
   }
+
+  // Test rough timings
+  std::default_random_engine generator;
+  std::uniform_real_distribution<float> distribution(0.0f, 1.0f);
+  thrust::host_vector<float> h_input(1000000);
+
+  for (int i = 0; i < 1000000; i++) {
+    h_input[i] = distribution(generator);
+  }
+
+  thrust::device_vector<float> d_input2(h_input);
+  thrust::device_vector<int> d_hist2(8192, 0);
+
+  histogramKernel<float><<<8192 / 256, 256>>>(
+      d_input2.data().get(), (int)d_input2.size(), d_hist2.data().get(),
+      (int)d_hist2.size(), 1.0f / 8192.0f, 0.0f);
 
   return 0;
 }
