@@ -41,31 +41,31 @@
 # above Disclaimer and U.S. Government End Users Notice.
 cmake_minimum_required(VERSION 3.18)
 
-set(ROUTINE 1d_r2c_c2r)
+# set(ROUTINE 1d_r2c_c2r)
 
 project(
-  "benchmark_cufft"
-  DESCRIPTION "Adapted from NVIDIA's examples of GPU-Accelerated Fast Fourier Transforms"
+  "proj_ffts"
+  DESCRIPTION "Adapted from NVIDIA's examples of GPU-Accelerated Fast Fourier Transforms, and originally at my older repository in benchmark_cuffts"
   HOMEPAGE_URL "https://docs.nvidia.com/cuda/cufft/index.html"
   LANGUAGES CXX CUDA)
 
-find_package(CUDAToolkit REQUIRED)
+# find_package(CUDAToolkit REQUIRED)
 
-# Add compile commands for clangd
-set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+# # Add compile commands for clangd
+# set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+#
+# set(CMAKE_CXX_STANDARD 14)
+# set(CMAKE_CXX_STANDARD_REQUIRED ON)
+#
+# if("${CMAKE_BUILD_TYPE}" STREQUAL "")
+#   set(CMAKE_BUILD_TYPE Release)
+# endif()
+#
+# if(CMAKE_CUDA_ARCHITECTURES LESS 60)
+#   set(CMAKE_CUDA_ARCHITECTURES 60 70 75 80 86)
+# endif()
 
-set(CMAKE_CXX_STANDARD 14)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-
-if("${CMAKE_BUILD_TYPE}" STREQUAL "")
-  set(CMAKE_BUILD_TYPE Release)
-endif()
-
-if(CMAKE_CUDA_ARCHITECTURES LESS 60)
-  set(CMAKE_CUDA_ARCHITECTURES 60 70 75 80 86)
-endif()
-
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+# set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 # --------------------
 set_source_files_properties(src/1d_r2c_c2r_example.cpp PROPERTIES LANGUAGE CUDA)
 add_executable(1d_r2c_c2r_example)
@@ -83,39 +83,39 @@ target_link_libraries(1d_r2c_c2r_example PRIVATE CUDA::cufft CUDA::cudart)
 find_package(IPP REQUIRED)
 if (${IPP_FOUND})
   message("-- Found IPP at " ${IPP_DIR})
-endif()
 
-set_source_files_properties(src/thrust_example.cpp PROPERTIES LANGUAGE CUDA)
-add_executable(thrust_example)
+  set_source_files_properties(src/thrust_example.cpp PROPERTIES LANGUAGE CUDA)
+  add_executable(thrust_example)
 
-target_include_directories(thrust_example
+  target_include_directories(thrust_example
                            PRIVATE 
                            ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
                            include/
-                           ipp_ext/include/
-                         )
+                           ${CMAKE_CURRENT_SOURCE_DIR}/../ipp_ext/include/
+  )
 
-target_sources(thrust_example
+  target_sources(thrust_example
                PRIVATE ${PROJECT_SOURCE_DIR}/src/thrust_example.cpp)
 
-target_link_libraries(thrust_example PRIVATE CUDA::cufft CUDA::cudart)
-target_link_libraries(thrust_example PRIVATE IPP::ippcore IPP::ipps IPP::ippvm IPP::ippi)
-# --------------------
-set_source_files_properties(src/r2c_2d.cpp PROPERTIES LANGUAGE CUDA)
-add_executable(r2c_2d)
+  target_link_libraries(thrust_example PRIVATE CUDA::cufft CUDA::cudart)
+  target_link_libraries(thrust_example PRIVATE IPP::ippcore IPP::ipps IPP::ippvm IPP::ippi)
+  # --------------------
+  set_source_files_properties(src/r2c_2d.cpp PROPERTIES LANGUAGE CUDA)
+  add_executable(r2c_2d)
 
-target_include_directories(r2c_2d
+  target_include_directories(r2c_2d
                            PRIVATE 
                            ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
                            include/
-                           ipp_ext/include/
-                         )
+                           ${CMAKE_CURRENT_SOURCE_DIR}/../ipp_ext/include/
+  )
 
-target_sources(r2c_2d
+  target_sources(r2c_2d
                PRIVATE ${PROJECT_SOURCE_DIR}/src/r2c_2d.cpp)
 
-target_link_libraries(r2c_2d PRIVATE CUDA::cufft CUDA::cudart)
-target_link_libraries(r2c_2d PRIVATE IPP::ippcore IPP::ipps IPP::ippvm IPP::ippi)
+  target_link_libraries(r2c_2d PRIVATE CUDA::cufft CUDA::cudart)
+  target_link_libraries(r2c_2d PRIVATE IPP::ippcore IPP::ipps IPP::ippvm IPP::ippi)
+endif()
 # --------------------
 set_source_files_properties(src/c2c_2d.cpp PROPERTIES LANGUAGE CUDA)
 add_executable(c2c_2d)
@@ -124,11 +124,9 @@ target_include_directories(c2c_2d
                            PRIVATE 
                            ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
                            include/
-                           ipp_ext/include/
                          )
 
 target_sources(c2c_2d
                PRIVATE ${PROJECT_SOURCE_DIR}/src/c2c_2d.cpp)
 
 target_link_libraries(c2c_2d PRIVATE CUDA::cufft CUDA::cudart)
-# target_link_libraries(c2c_2d PRIVATE IPP::ippcore IPP::ipps IPP::ippvm IPP::ippi)

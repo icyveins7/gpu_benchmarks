@@ -41,4 +41,4 @@ add_subdirectory(proj_remap)
 add_subdirectory(proj_rng)
 add_subdirectory(proj_fftshift)
 add_subdirectory(proj_sumAndDownsampleMatrix)
-
+add_subdirectory(proj_ffts)
