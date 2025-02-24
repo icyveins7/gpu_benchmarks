@@ -22,6 +22,8 @@ if(CMAKE_CUDA_ARCHITECTURES LESS 60)
   set(CMAKE_CUDA_ARCHITECTURES 60 70 75 80 86)
 endif()
 
+include_directories(include/)
+
 # -------------------- Add check for GoogleTest to see if it exists
 find_package(GTest)
 # If GTest found then enable tests, otherwise disable them
@@ -42,3 +44,4 @@ add_subdirectory(proj_rng)
 add_subdirectory(proj_fftshift)
 add_subdirectory(proj_sumAndDownsampleMatrix)
 add_subdirectory(proj_ffts)
+add_subdirectory(proj_histogram)
