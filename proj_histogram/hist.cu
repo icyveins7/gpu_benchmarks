@@ -17,19 +17,24 @@ int main() {
 
   thrust::device_vector<float> d_input(values, values + 32);
   thrust::device_vector<int> d_hist(32, 0);
+  thrust::device_vector<int> d_binIdxs(d_input.size());
 
   histogramKernel<float><<<1, 32>>>(d_input.data().get(), (int)d_input.size(),
                                     d_hist.data().get(), (int)d_hist.size(),
-                                    0.03f, 0.0f);
+                                    0.03f, 0.0f, d_binIdxs.data().get());
 
   int expected[32] = {2, 1, 1, 1, 1, 3, 0, 0, 1, 1, 2, 0, 0, 1, 1, 0,
                       3, 0, 0, 1, 0, 1, 1, 0, 3, 1, 2, 0, 1, 1, 0, 1};
   thrust::host_vector<int> h_hist = d_hist;
+  thrust::host_vector<int> h_binIdxs = d_binIdxs;
 
   for (int i = 0; i < 32; i++) {
     if (h_hist[i] != expected[i]) {
       printf("%d: Expected: %d, got: %d\n", i, expected[i], h_hist[i]);
     }
+  }
+  for (int i = 0; i < h_binIdxs.size(); ++i) {
+    printf("BinIdx[%d] %f -> %d\n", i, values[i], h_binIdxs[i]);
   }
 
   // Test rough timings
