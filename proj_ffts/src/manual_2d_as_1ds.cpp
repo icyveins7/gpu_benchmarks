@@ -3,6 +3,7 @@
 #include <thrust/device_vector.h>
 #include <thrust/complex.h>
 #include <thrust/sequence.h>
+#include <nvtx3/nvToolsExt.h>
 
 int main()
 {
@@ -78,7 +79,7 @@ int main()
         std::cout << "=======================" << std::endl;
     }
 
-    // Assume col-wise already done, do row-wise on interrim output, in palce
+    // Assume col-wise already done, do row-wise on interrim output, in place
     printf("Col+Row-wise == 2D\n");
     man_fft.execRows(d_z, d_z);
     h_z = d_z;
@@ -94,6 +95,28 @@ int main()
         }
         std::cout << "=======================" << std::endl;
     }
+
+    // Now let's run a big one
+    std::array<int, 2> bigfftSize = {8192, 8192};
+    thrust::host_vector<thrust::complex<float>> h_big(bigfftSize[0] * bigfftSize[1] * batch);
+    thrust::sequence(x.begin(), x.end());
+    thrust::device_vector<thrust::complex<float>> d_big = h_big;
+    thrust::device_vector<thrust::complex<float>> d_bigout(d_big.size());
+
+    // Run default 2D
+    cuFFTWrapper_2D<CUFFT_C2C> def_bigfft(bigfftSize, batch);
+    nvtxRangePush("Default 2D FFT");
+    def_bigfft.exec(d_big, d_bigout);
+    nvtxRangePop();
+
+    // Now run it via the manual batched 1D transforms
+    cuFFTWrapper_2D_as_1Ds<CUFFT_C2C> man_bigfft(bigfftSize, batch);
+    nvtxRangePush("Manual 2D FFT");
+    man_bigfft.execCols(d_big, d_bigout);
+    man_bigfft.execRows(d_bigout, d_bigout);
+    nvtxRangePop();
+
+
 
 
     return 0;
