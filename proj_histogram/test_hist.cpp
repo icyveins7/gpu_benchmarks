@@ -58,7 +58,7 @@ TEST(proj_histogram, testAgainstCuda) {
   thrust::device_vector<int> d_hist(counts.size());
   thrust::device_vector<int> d_binIndices(vec.size());
   thrust::device_vector<double> d_vec(vec.begin(), vec.end());
-  histogramKernel<double><<<vec.size() / 32 + 1, 32>>>(
+  histogramKernel<double, true><<<vec.size() / 32 + 1, 32>>>(
     d_vec.data().get(), (int)d_vec.size(), d_hist.data().get(), (int)d_hist.size(),
     1.0/100.0, 0.0, d_binIndices.data().get());
 
