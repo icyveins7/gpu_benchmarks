@@ -1,16 +1,36 @@
-# benchmark_cufft
+# proj_ffts
 
-This repository is a quick and dirty study to measure GPU acceleration with respect to DFTs, specifically for real-valued inputs (like image data).
+This subdirectory is concerned with FFTs. For now, it has only tested cuFFT, although I intend to look at cuFFTdx.
 
-# Building and running
+Some scenario-specific implementations are noteworthy, and are documented below.
 
-```
-cmake -B build
-cd build
-make
+# Noteworthy Algorithms
 
-./build/bin/{your_executable_here}
-```
+## Padded 2D FFTs
+
+For 1D FFTs, there is no way to improve the computational complexity of a padded output (or at least not one without several caveats).
+
+The 2D padded case, however, offers up to an asymptotic 100% increase in speed (50% reduction in complexity), depending on the ratio of the padding to the input.
+
+Recall that the 2D FFT can be implemented as just a series of 1D FFTs:
+
+1. Take the FFTs down each column.
+2. Take the result of the previous step and FFT each row.
+
+The reverse is also possible (rows then columns).
+As it turns out, this is probably identical (or very close to) cuFFT's internal 2D transform implementation, at least as far as the timings suggest.
+
+The above affords a simple way to optimise the padded FFT. We simply ignore the padding in one of the dimensions!
+
+For example, if we wish to have an $M \times N$ input padded to an $A \times B$ transform:
+
+1. Take the column transforms for the $B$ input columns. The rest would transform to all 0s anyway.
+2. Take the row transforms over all $M$ rows.
+
+With greater padding, this would asymptotically make the column transform complexity negligible.
+In practice, the effect can be even greater; CUDA favours row transforms over column ones, since row data is contiguous.
+Thus, reducing the column-wise complexity can result in a greater than 50% reduction in time.
+
 
 # Available executables
 
