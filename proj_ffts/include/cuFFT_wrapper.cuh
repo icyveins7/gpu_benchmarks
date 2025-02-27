@@ -246,9 +246,20 @@ public:
    */
 
   cuFFTWrapper_2D_as_1Ds(std::array<int, 2> fftSize, int batchSize)
-      : m_fftSize(fftSize), m_batchSize(batchSize) {
+      : m_fftSize(fftSize), m_batchSize(batchSize),
+        m_rowPlanBatch(batchSize * fftSize[0]), // all rows in entire batch
+        m_colPlanBatch(fftSize[1])              // columns only in one image
+  {
     createPlans();
   }
+
+  cuFFTWrapper_2D_as_1Ds(std::array<int, 2> fftSize, int batchSize,
+                         int rowPlanBatch, int colPlanBatch)
+      : m_fftSize(fftSize), m_batchSize(batchSize),
+        m_rowPlanBatch(rowPlanBatch), m_colPlanBatch(colPlanBatch) {
+    createPlans();
+  }
+
   // Make non-copyable (and non-movable by extrapolation)
   cuFFTWrapper_2D_as_1Ds(const cuFFTWrapper_2D_as_1Ds &) = delete;
   cuFFTWrapper_2D_as_1Ds &operator=(const cuFFTWrapper_2D_as_1Ds &) = delete;
@@ -268,31 +279,34 @@ public:
   void execCols(const thrust::device_vector<U> &input,
                 thrust::device_vector<V> &output);
 
-private:
+protected:
   std::array<int, 2> m_fftSize = {0, 0};
   int m_batchSize = 0;
+  int m_rowPlanBatch = 0;
+  int m_colPlanBatch = 0;
 
   cufftHandle m_rowPlan;
   cufftHandle m_colPlan;
 
   void createPlans() {
+    printf("cuFFTWrapper_2D_as_1Ds createPlans\n");
+    printf("rowBatch = %d\n", m_rowPlanBatch);
+    printf("colBatch = %d\n", m_colPlanBatch);
     // We create rows according to the batch * rowPerImg i.e. entire batch at 1
     // go
     int nembedRow[1] = {m_batchSize * m_fftSize[0] *
                         m_fftSize[1]}; // same storage for both input and output
 
-    CUFFT_NO_ERROR(cufftPlanMany(
-        &m_rowPlan, 1, // 1-D transforms for rows
-        &m_fftSize[1], // width (numCols)
-        nembedRow,     // total size of entire batch
-        1,             // row elements are contiguous
-        m_fftSize[1],  // width (numCols)
-        nembedRow,     // same as input
-        1,             // same as input
-        m_fftSize[1],  // same as input
-        T,             // cufftType
-        static_cast<int>(m_batchSize * m_fftSize[0])) // batch * numRows
-    );
+    CUFFT_NO_ERROR(cufftPlanMany(&m_rowPlan, 1, // 1-D transforms for rows
+                                 &m_fftSize[1], // width (numCols)
+                                 nembedRow,     // total size of entire batch
+                                 1,             // row elements are contiguous
+                                 m_fftSize[1],  // width (numCols)
+                                 nembedRow,     // same as input
+                                 1,             // same as input
+                                 m_fftSize[1],  // same as input
+                                 T,             // cufftType
+                                 m_rowPlanBatch));
 
     // We create cols transforms for only a single image at a time, not whole
     // batch
@@ -307,8 +321,7 @@ private:
         m_fftSize[1],  // same as input
         1,             // same as input
         T,             // cufftType
-        static_cast<int>(m_fftSize[1])) // numCols in an image
-    );
+        m_colPlanBatch));
   }
 
   void destroyPlan() {
@@ -349,4 +362,126 @@ inline void cuFFTWrapper_2D_as_1Ds<CUFFT_C2C>::execCols(
                          &output[b * m_fftSize[0] * m_fftSize[1]]),
                      CUFFT_FORWARD));
   }
+}
+
+/**
+ * @brief This class will compute the 2D padded FFT manually via 1D FFTs.
+ * Specifically, we always compute the columns first, and hence cleave
+ * the padding for the columns, reducing the column-wise FFT load.
+ * This is done because the column-wise memory structure is far worse
+ * than the row-wise memory structure for the CUDA kernels, and hence reducing
+ * the number of calls here is usually much better than reducing the calls for
+ * the rows, especially if the padding is around the same in both dimensions. In
+ * the cases where the padding is unequal, this may not be as efficient.
+ *
+ * @param fftSize Dimensions of the output (padded input)
+ * @param origSize Dimensions of the original input
+ * @param batchSize Batch size
+ */
+template <cufftType T>
+class cuFFTWrapper_2DPad_as_1Ds : public cuFFTWrapper_2D_as_1Ds<T> {
+public:
+  cuFFTWrapper_2DPad_as_1Ds(std::array<int, 2> fftSize,
+                            std::array<int, 2> origSize, int batchSize)
+      : cuFFTWrapper_2D_as_1Ds<T>(fftSize, batchSize, batchSize * fftSize[0],
+                                  origSize[1]),
+        m_origSize(origSize) {
+    // For columns, we do this again as a single image, but the input has
+    // rows = outputRows, cols = inputCols
+    // this is because we want to do the following:
+    /*
+    X X 0 0 0 0
+    X X 0 0 0 0
+    0 0 0 0 0 0
+    0 0 0 0 0 0
+    ^ ^
+    do these 2 columns
+    */
+  }
+  // Make non-copyable (and non-movable by extrapolation)
+  cuFFTWrapper_2DPad_as_1Ds(const cuFFTWrapper_2DPad_as_1Ds &) = delete;
+  cuFFTWrapper_2DPad_as_1Ds &
+  operator=(const cuFFTWrapper_2DPad_as_1Ds &) = delete;
+  // Defining copy ctor/assignment stops compiler from emitting default move
+  // semantics
+
+  // Primary runtime methods
+  template <typename U, typename V>
+  void exec(const thrust::device_vector<U> &input,
+            thrust::device_vector<V> &output);
+
+private:
+  std::array<int, 2> m_origSize;
+
+  // void createPlans() {
+  //   // The rows is the same as before; we do ALL the rows at once at the
+  //   output
+  //   // dimensions (NOT the input dimensions)
+  //   int nembedRow[1] = {
+  //       this->m_batchSize * this->m_fftSize[0] *
+  //       this->m_fftSize[1]}; // same storage for both input and output
+  //
+  //   CUFFT_NO_ERROR(
+  //       cufftPlanMany(&this->m_rowPlan, 1, // 1-D transforms for rows
+  //                     &this->m_fftSize[1], // width (numCols)
+  //                     nembedRow,           // total size of entire batch
+  //                     1,                   // row elements are contiguous
+  //                     this->m_fftSize[1],  // width (numCols)
+  //                     nembedRow,           // same as input
+  //                     1,                   // same as input
+  //                     this->m_fftSize[1],  // same as input
+  //                     T,                   // cufftType
+  //                     static_cast<int>(this->m_batchSize *
+  //                                      this->m_fftSize[0])) // batch *
+  //                                      numRows
+  //   );
+  //
+  //   // For columns, we do this again as a single image, but the input has
+  //   // rows = outputRows, cols = inputCols
+  //   // this is because we want to do the following:
+  //   /*
+  //   X X 0 0 0 0
+  //   X X 0 0 0 0
+  //   0 0 0 0 0 0
+  //   0 0 0 0 0 0
+  //   ^ ^
+  //   do these 2 columns
+  //   */
+  //   // nembed is still the output size since it's just the storage dimensions
+  //   int nembedCol[1] = {this->m_fftSize[0] * this->m_fftSize[1]};
+  //   printf("Preparing %d columns plan\n", this->m_origSize[1]);
+  //   CUFFT_NO_ERROR(cufftPlanMany(
+  //       &this->m_colPlan, 1, // 1-D transforms for cols
+  //       &this->m_fftSize[0], // height (numRows) of output i.e. padded length
+  //       nembedCol,           // total size of single input image
+  //       this->m_fftSize[1],  // col elements separated by (width) elements
+  //       1,                   // next column is only 1 element away
+  //       nembedCol,           // same as input
+  //       this->m_fftSize[1],  // same as input
+  //       1,                   // same as input
+  //       T,                   // cufftType
+  //       static_cast<int>(this->m_origSize[1])) // numCols in the input image!
+  //   );
+  // }
+};
+
+template <>
+template <>
+inline void cuFFTWrapper_2DPad_as_1Ds<CUFFT_C2C>::exec(
+    const thrust::device_vector<thrust::complex<float>> &input,
+    thrust::device_vector<thrust::complex<float>> &output) {
+  // Check that input and output are same size
+  if (input.size() != output.size()) {
+    throw std::runtime_error("input and output must be same size");
+  }
+  // Check that they match the FFT size
+  if (input.size() !=
+      this->m_fftSize[0] * this->m_fftSize[1] * this->m_batchSize) {
+    throw std::runtime_error(
+        "input and output must do not match FFT size * batch");
+  }
+
+  // We do columns first, always!
+  this->execCols(input, output);
+  this->execRows(output, output);
 }
