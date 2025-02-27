@@ -5,6 +5,7 @@ This is primarily a testing ground for various GPU (currently just CUDA) benchma
 - Existing GPU library implementations
 - Existing CPU library implementations
 - Some simple CPU side code
+- Some existing Python (usually NumPy) implementations
 
 # Prerequisites and Usage
 
