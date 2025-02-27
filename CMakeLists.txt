@@ -22,6 +22,12 @@ if(CMAKE_CUDA_ARCHITECTURES LESS 60)
   set(CMAKE_CUDA_ARCHITECTURES 60 70 75 80 86)
 endif()
 
+# Fixes for clangd
+set(CMAKE_CUDA_USE_RESPONSE_FILE_FOR_INCLUDES 0)
+set(CMAKE_CUDA_USE_RESPONSE_FILE_FOR_LIBRARIES 0)
+set(CMAKE_CUDA_USE_RESPONSE_FILE_FOR_OBJECTS 0)
+
+# Common includes for all
 include_directories(include/)
 
 # -------------------- Add check for GoogleTest to see if it exists

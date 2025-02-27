@@ -7,11 +7,6 @@ DESCRIPTION "Histograms"
 
 include(${CMAKE_CURRENT_SOURCE_DIR}/../py2cpptest/unittest.cmake)
 
-# Fixes for clangd
-set(CMAKE_CUDA_USE_RESPONSE_FILE_FOR_INCLUDES 0)
-set(CMAKE_CUDA_USE_RESPONSE_FILE_FOR_LIBRARIES 0)
-set(CMAKE_CUDA_USE_RESPONSE_FILE_FOR_OBJECTS 0)
-
 # --------------------
 set_source_files_properties(hist.cu PROPERTIES LANGUAGE CUDA)
 add_executable(hist)
