@@ -24,8 +24,8 @@ The above affords a simple way to optimise the padded FFT. We simply ignore the 
 
 For example, if we wish to have an $M \times N$ input padded to an $A \times B$ transform:
 
-1. Take the column transforms for the $B$ input columns. The rest would transform to all 0s anyway.
-2. Take the row transforms over all $M$ rows.
+1. Take the column transforms for only the $N$ input columns, each with height $A$. The rest of the $B-N$ columns would transform to all 0s anyway.
+2. Take the row transforms over all $A$ rows, each of length $B$.
 
 With greater padding, this would asymptotically make the column transform complexity negligible.
 In practice, the effect can be even greater; CUDA favours row transforms over column ones, since row data is contiguous.
