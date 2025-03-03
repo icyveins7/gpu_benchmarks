@@ -91,6 +91,10 @@ public:
     setup(size);
   }
 
+  void skipahead(const unsigned long long n){
+    return; // TODO: implement
+  }
+
   void rand(thrust::device_vector<T> &out);
 
 protected:
