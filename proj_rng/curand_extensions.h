@@ -22,10 +22,61 @@ static __global__ void rand_kernel(float *out, curandState *state, const size_t 
   }
 }
 
+/**
+ * @brief Generates random numbers in a patch at the start (top-left) of each image,
+ *        in a batch of images.
+ *
+ *        NOTE: to make things simple, the number of initialized curand states is expected
+ *        to be the same total size as (batch size * patch height * patch width). This ensures that
+ *        for a given new batch, every state only needs to be forwarded once and only once, rather
+ *        than some complicated combination.
+ *
+ * @param out 
+ * @param state 
+ * @param batch 
+ * @param oWidth 
+ * @param oHeight 
+ * @param patchWidth 
+ * @param patchHeight 
+ * @return 
+ */
+static __global__ void randPatchInBatch_kernel(
+  float *out, curandState *state, const unsigned int batch,
+  const unsigned int oWidth, const unsigned int oHeight,
+  const unsigned int patchWidth, const unsigned int patchHeight)
+{
+  // Standard grid-stride over the patches
+  unsigned int patchIdx, batchIdx, row, col, outIdx;
+  for (unsigned int t = threadIdx.x + blockIdx.x * blockDim.x; t < batch * patchWidth * patchHeight;
+       t += blockDim.x * gridDim.x)
+  {
+    // Batch index i.e. which patch inside the batch
+    batchIdx = t / (patchWidth * patchHeight);
+    // Patch index i.e. which element inside the patch
+    patchIdx = t % (patchWidth * patchHeight);
+    // Unroll patch index into row and column (assuming trivial contiguous memory layout)
+    col = patchIdx % patchWidth;
+    row = patchIdx / patchWidth;
+
+    // Now calculate the output index (inside the larger image)
+    outIdx = batchIdx * oWidth * oHeight + row * oWidth + col;
+
+    // Otherwise, write to the output
+    out[outIdx] = curand_uniform(&state[t]);
+  }
+}
+
+
 template <typename T>
 class CuRandRNG
 {
 public:
+  /**
+   * @brief Constructs a simple CuRandRNG object which initializes a specified number of states.
+   *
+   * @param seed Initial seed value
+   * @param size Number of curand states
+   */
   CuRandRNG(const unsigned long seed, const size_t size) : m_seed(seed) {
     setup(size);
   }
@@ -57,5 +108,51 @@ inline void CuRandRNG<float>::rand(thrust::device_vector<float> &out) {
     thrust::raw_pointer_cast(out.data()),
     thrust::raw_pointer_cast(m_rngstates.data()),
     out.size()
+  );
+}
+
+// ================================================================================
+template <typename T>
+class CuRandRNGPatchInBatch : public CuRandRNG<T>
+{
+public:
+  CuRandRNGPatchInBatch(const unsigned long seed, const unsigned int batch,
+                        const unsigned int patchWidth, const unsigned int patchHeight)
+    : CuRandRNG<T>(seed, batch * patchWidth * patchHeight),
+      m_batch(batch),
+      m_patchWidth(patchWidth), m_patchHeight(patchHeight)
+  {}
+
+  void rand(thrust::device_vector<T> &out, const unsigned int oWidth, const unsigned int oHeight); 
+
+private:
+  const unsigned int m_batch;
+  const unsigned int m_patchWidth;
+  const unsigned int m_patchHeight;
+
+  // 'remove' original rand() implementation
+  using CuRandRNG<T>::rand;
+};
+
+// specialisation
+template <>
+inline void CuRandRNGPatchInBatch<float>::rand(
+  thrust::device_vector<float> &out, const unsigned int oWidth, const unsigned int oHeight) 
+{
+  // Ensure the vector matches the expected size
+  if (out.size() != m_batch * oWidth * oHeight) {
+    throw std::runtime_error("CuRandRNGPatchInBatch::rand: out and rngstates have different sizes");
+  }
+  // Ensure output dimensions are larger than the patch dimensions
+  if (oWidth < m_patchWidth || oHeight < m_patchHeight) {
+    throw std::runtime_error("CuRandRNGPatchInBatch::rand: output dimensions too small, must be larger than patch dimensions");
+  }
+  const int threadsPerBlk = 256;
+  const int n_blocks = m_rngstates.size() / threadsPerBlk + 1;
+  randPatchInBatch_kernel<<<n_blocks, threadsPerBlk>>>(
+    thrust::raw_pointer_cast(out.data()),
+    thrust::raw_pointer_cast(this->m_rngstates.data()),
+    m_batch, oWidth, oHeight,
+    m_patchWidth, m_patchHeight
   );
 }

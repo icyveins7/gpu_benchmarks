@@ -36,5 +36,33 @@ int main(int argc, char *argv[]) {
     }
   }
 
+  // Test the patch-wise batched cuRAND RNG
+  {
+    printf("Batched cuRAND RNG\n");
+    const unsigned int patchWidth = 2, patchHeight = 2;
+    const unsigned int oWidth = 4, oHeight = 4;
+    const unsigned int batch = 4;
+    thrust::device_vector<float> d_x(oWidth * oHeight * batch);
+
+    CuRandRNGPatchInBatch<float> rng(0, batch, patchWidth, patchHeight);
+
+    for (int i = 0; i < repeats; ++i) {
+      rng.rand(d_x, oWidth, oHeight);
+
+      thrust::host_vector<float> h_x = d_x;
+
+      for (int b = 0; b < batch; ++b) {
+        for (int y = 0; y < oHeight; ++y) {
+          for (int x = 0; x < oWidth; ++x) {
+            printf("%.3f ", h_x[b * oWidth * oHeight + y * oWidth + x]);
+          }
+          printf("\n");
+        }
+        printf("------------------------\n");
+      }
+      printf("====================================\n");
+    }
+  }
+
   return 0;
 }
