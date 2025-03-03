@@ -31,13 +31,23 @@ static __global__ void rand_kernel(float *out, curandState *state, const size_t 
  *        for a given new batch, every state only needs to be forwarded once and only once, rather
  *        than some complicated combination.
  *
- * @param out 
- * @param state 
- * @param batch 
- * @param oWidth 
- * @param oHeight 
- * @param patchWidth 
- * @param patchHeight 
+ * @example
+ *
+ *   X X - -
+ *   X X - -
+ *   - - - -
+ *   - - - -
+ *
+ *   This would have a patch width/height of 2, and output width/height of 4.
+ *   There would be a few of these in 1 batch.
+ *
+ * @param out Output array
+ * @param state cuRAND states array
+ * @param batch Number of patches in the batch
+ * @param oWidth Output image width
+ * @param oHeight Output image height
+ * @param patchWidth Patch width within the image
+ * @param patchHeight Patch height within the image
  * @return 
  */
 static __global__ void randPatchInBatch_kernel(
