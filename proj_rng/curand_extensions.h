@@ -46,20 +46,20 @@ static __global__ void randPatchInBatch_kernel(
   const unsigned int patchWidth, const unsigned int patchHeight)
 {
   // Standard grid-stride over the patches
-  unsigned int patchIdx, batchIdx, row, col, outIdx;
+  unsigned int elemIdx, patchIdx, row, col, outIdx;
   for (unsigned int t = threadIdx.x + blockIdx.x * blockDim.x; t < batch * patchWidth * patchHeight;
        t += blockDim.x * gridDim.x)
   {
-    // Batch index i.e. which patch inside the batch
-    batchIdx = t / (patchWidth * patchHeight);
-    // Patch index i.e. which element inside the patch
-    patchIdx = t % (patchWidth * patchHeight);
+    // Patch index i.e. which patch inside the batch
+    patchIdx = t / (patchWidth * patchHeight);
+    // Element index i.e. which element inside the patch
+    elemIdx = t % (patchWidth * patchHeight);
     // Unroll patch index into row and column (assuming trivial contiguous memory layout)
-    col = patchIdx % patchWidth;
-    row = patchIdx / patchWidth;
+    col = elemIdx % patchWidth;
+    row = elemIdx / patchWidth;
 
     // Now calculate the output index (inside the larger image)
-    outIdx = batchIdx * oWidth * oHeight + row * oWidth + col;
+    outIdx = patchIdx * oWidth * oHeight + row * oWidth + col;
 
     // Otherwise, write to the output
     out[outIdx] = curand_uniform(&state[t]);
