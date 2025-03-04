@@ -90,17 +90,33 @@ class CuRandRNG
 public:
   /**
    * @brief Constructs a simple CuRandRNG object which initializes a specified number of states.
+   *        It is assumed that the number of written output elements per invocation is equal
+   *        to the number of states; this is to facilitate book-keeping and easier fast-forwarding/
+   *        skipahead to track the current state in the sequence.
    *
    * @param seed Initial seed value
-   * @param size Number of curand states
+   * @param size Number of curand states, equivalent to number of output elements later
+   * @param offset Initial offset; this should be equivalent to number of rand() invocations
    */
   CuRandRNG(const unsigned long long seed, const size_t size, const unsigned long long offset = 0)
     : m_seed(seed), m_offset(offset) {
     setup(size);
   }
 
+  /**
+   * @brief Gets the current offset value, accumulated from rand() or skipahead() calls.
+   *
+   * @return Current offset value
+   */
   unsigned long long getOffset() const { return m_offset; }
 
+  /**
+   * @brief Skips-ahead an equivalent offset value for each state.
+   *        Note that the offset is correlated with the compute time i.e.
+   *        larger offset means it will take longer.
+   *
+   * @param n Number of states to skip ahead in the RNG sequence, for each state
+   */
   void skipahead(const unsigned long long n){
     const int threadsPerBlk = 256;
     const int n_blocks = (m_rngstates.size() + threadsPerBlk - 1) / threadsPerBlk;
@@ -109,6 +125,13 @@ public:
     m_offset += n;
   }
 
+
+  /**
+   * @brief Main run-time method to generate random numbers.
+   *        Expects output elements to be same length as the internal states.
+   *
+   * @param out Output vector
+   */
   void rand(thrust::device_vector<T> &out);
 
 protected:
