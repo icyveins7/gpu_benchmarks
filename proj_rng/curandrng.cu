@@ -46,10 +46,12 @@ int main(int argc, char *argv[]) {
 
     CuRandRNGPatchInBatch<float> rng(0, batch, patchWidth, patchHeight);
 
+    thrust::host_vector<float> h_x(d_x.size());
     for (int i = 0; i < repeats; ++i) {
+      printf("Repeat %d\n", i);
       rng.rand(d_x, oWidth, oHeight);
 
-      thrust::host_vector<float> h_x = d_x;
+      h_x = d_x;
 
       for (int b = 0; b < batch; ++b) {
         for (int y = 0; y < oHeight; ++y) {
@@ -62,6 +64,91 @@ int main(int argc, char *argv[]) {
       }
       printf("====================================\n");
     }
+    printf("rng offset is now %llu\n", rng.getOffset());
+
+    // Before we end, we test how skipahead works
+
+    printf("Creating identical RNG to test skipahead\n");
+    CuRandRNGPatchInBatch<float> rng2(0, batch, patchWidth, patchHeight);
+    thrust::device_vector<float> d_x2(d_x.size());
+
+    // Skip ahead to the last one
+    rng2.skipahead(repeats - 1);
+    // next one will be repeats - 1,
+    // which will be the same as the above one
+    rng2.rand(d_x2, oWidth, oHeight);
+
+    thrust::host_vector<float> h_x2 = d_x2;
+    printf("Checking equality with non-skippedahead RNG\n");
+
+    for (int b = 0; b < batch; ++b) {
+      for (int y = 0; y < oHeight; ++y) {
+        bool allOk = true;
+        for (int x = 0; x < oWidth; ++x) {
+          printf("%.3f ", h_x2[b * oWidth * oHeight + y * oWidth + x]);
+          if (h_x[b * oWidth * oHeight + y * oWidth + x] !=
+              h_x2[b * oWidth * oHeight + y * oWidth + x])
+            allOk = false;
+        }
+        if (!allOk)
+          printf(" FAILED CHECK ");
+        printf("\n");
+      }
+      printf("------------------------\n");
+    }
+    printf("====================================\n");
+    printf("rng offset is now %llu\n", rng2.getOffset());
+
+    // we can also instantiate directly at that offset
+    printf("Creating RNG with offset value directly: %llu\n",
+           rng2.getOffset() - 1);
+    CuRandRNGPatchInBatch<float> rng3(0, batch, patchWidth, patchHeight,
+                                      rng2.getOffset() - 1);
+    rng3.rand(d_x2, oWidth, oHeight);
+    h_x2 = d_x2;
+    printf("Checking equality with non-skippedahead RNG\n");
+    for (int b = 0; b < batch; ++b) {
+      for (int y = 0; y < oHeight; ++y) {
+        bool allOk = true;
+        for (int x = 0; x < oWidth; ++x) {
+          printf("%.3f ", h_x2[b * oWidth * oHeight + y * oWidth + x]);
+          if (h_x[b * oWidth * oHeight + y * oWidth + x] !=
+              h_x2[b * oWidth * oHeight + y * oWidth + x])
+            allOk = false;
+        }
+        if (!allOk)
+          printf(" FAILED CHECK ");
+        printf("\n");
+      }
+      printf("------------------------\n");
+    }
+    printf("====================================\n");
+
+    // we can mix and match
+    printf("Creating RNG with offset 1, and then skipping ahead %llu\n",
+           rng2.getOffset() - 1 - 1);
+    CuRandRNGPatchInBatch<float> rng4(0, batch, patchWidth, patchHeight, 1);
+    rng4.skipahead(rng2.getOffset() - 1 - 1);
+    rng4.rand(d_x2, oWidth, oHeight);
+    h_x2 = d_x2;
+
+    printf("Checking equality with non-skippedahead RNG\n");
+    for (int b = 0; b < batch; ++b) {
+      for (int y = 0; y < oHeight; ++y) {
+        bool allOk = true;
+        for (int x = 0; x < oWidth; ++x) {
+          printf("%.3f ", h_x2[b * oWidth * oHeight + y * oWidth + x]);
+          if (h_x[b * oWidth * oHeight + y * oWidth + x] !=
+              h_x2[b * oWidth * oHeight + y * oWidth + x])
+            allOk = false;
+        }
+        if (!allOk)
+          printf(" FAILED CHECK ");
+        printf("\n");
+      }
+      printf("------------------------\n");
+    }
+    printf("====================================\n");
   }
 
   return 0;
