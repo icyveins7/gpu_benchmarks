@@ -24,13 +24,37 @@ void test(const size_t width, const size_t height, const size_t widthDsr,
             (height / heightDsr + block.y - 1) / block.y);
   printf("Grid: %dx%d Block: %dx%d\n", grid.x, grid.y, block.x, block.y);
 
+  // also make a vector to track passed thresholds
+  const float threshold =
+      static_cast<float>(img.size()) / 2.0f; // arbitrary value threshold
+  thrust::device_vector<unsigned int> counter(1, 0);
+
+  printf("Running simple kernel\n");
   sumAndDownsampleMatrix<<<grid, block>>>(
       thrust::raw_pointer_cast(img.data()),
       thrust::raw_pointer_cast(imgDsr.data()), width, height, widthDsr,
       heightDsr);
 
+  printf("Running kernel with threshold with compiler-handled warp aggregated "
+         "atomics\n");
+  sumAndDownsampleMatrixWithThreshold<<<grid, block>>>(
+      thrust::raw_pointer_cast(img.data()),
+      thrust::raw_pointer_cast(imgDsr.data()), width, height, widthDsr,
+      heightDsr, threshold, thrust::raw_pointer_cast(counter.data()));
+
+  // reset counter
+  counter[0] = 0;
+
+  printf("Running kernel with threshold with manual warp aggregated "
+         "atomics\n");
+  sumAndDownsampleMatrixWithThreshold<float, true><<<grid, block>>>(
+      thrust::raw_pointer_cast(img.data()),
+      thrust::raw_pointer_cast(imgDsr.data()), width, height, widthDsr,
+      heightDsr, threshold, thrust::raw_pointer_cast(counter.data()));
+
   thrust::host_vector<float> h_imgDsr = imgDsr;
   thrust::host_vector<float> h_img = img;
+  thrust::host_vector<unsigned int> h_counter = counter;
 
   for (int i = 0; i < height; i++) {
     for (int j = 0; j < width; j++) {
@@ -46,6 +70,9 @@ void test(const size_t width, const size_t height, const size_t widthDsr,
     }
     std::cout << std::endl;
   }
+
+  std::cout << "Threshold: " << threshold << std::endl;
+  printf("Counter: %u / %zd\n", h_counter[0], imgDsr.size());
 
   printf("=======================\n");
 }
