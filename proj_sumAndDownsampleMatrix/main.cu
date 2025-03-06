@@ -56,23 +56,25 @@ void test(const size_t width, const size_t height, const size_t widthDsr,
   thrust::host_vector<float> h_img = img;
   thrust::host_vector<unsigned int> h_counter = counter;
 
-  for (int i = 0; i < height; i++) {
-    for (int j = 0; j < width; j++) {
-      printf("%5.1f ", h_img[i * width + j]);
-    }
-    std::cout << std::endl;
-  }
-  std::cout << "|" << std::endl << "\\/" << std::endl;
-
-  for (int i = 0; i < height / heightDsr; i++) {
-    for (int j = 0; j < width / widthDsr; j++) {
-      printf("%5.1f ", h_imgDsr[i * width / widthDsr + j]);
-    }
-    std::cout << std::endl;
-  }
-
   std::cout << "Threshold: " << threshold << std::endl;
   printf("Counter: %u / %zd\n", h_counter[0], imgDsr.size());
+  if (h_imgDsr.size() < 100000) {
+    // don't print the big matrices
+    for (int i = 0; i < height; i++) {
+      for (int j = 0; j < width; j++) {
+        printf("%5.1f ", h_img[i * width + j]);
+      }
+      std::cout << std::endl;
+    }
+    std::cout << "|" << std::endl << "\\/" << std::endl;
+
+    for (int i = 0; i < height / heightDsr; i++) {
+      for (int j = 0; j < width / widthDsr; j++) {
+        printf("%5.1f ", h_imgDsr[i * width / widthDsr + j]);
+      }
+      std::cout << std::endl;
+    }
+  }
 
   printf("=======================\n");
 }
@@ -100,6 +102,14 @@ int main(int argc, char *argv[]) {
     height = 64;
     widthDsr = 2;
     heightDsr = 2;
+    test(width, height, widthDsr, heightDsr);
+  }
+  {
+    // make really large one
+    width = 8192;
+    height = 8192;
+    widthDsr = 4;
+    heightDsr = 4;
     test(width, height, widthDsr, heightDsr);
   }
 
