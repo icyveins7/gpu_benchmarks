@@ -30,6 +30,13 @@ set(CMAKE_CUDA_USE_RESPONSE_FILE_FOR_OBJECTS 0)
 # Common includes for all
 include_directories(include/)
 
+# Check if MatX projects should be built
+if (BUILD_MATX_PROJECTS)
+  message(STATUS "Building MatX projects")
+else()
+  message(STATUS "Not building MatX projects, enable via -DBUILD_MATX_PROJECTS=ON")
+endif()
+
 # -------------------- Add check for GoogleTest to see if it exists
 find_package(GTest)
 # If GTest found then enable tests, otherwise disable them
@@ -52,3 +59,4 @@ add_subdirectory(proj_sumAndDownsampleMatrix)
 add_subdirectory(proj_ffts)
 add_subdirectory(proj_histogram)
 add_subdirectory(proj_pinnedalloc)
+add_subdirectory(proj_patternMatching)
