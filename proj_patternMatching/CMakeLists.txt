@@ -8,19 +8,31 @@ DESCRIPTION "Pattern matching"
 # include(${CMAKE_CURRENT_SOURCE_DIR}/../py2cpptest/unittest.cmake)
 
 # --------------------
-if (BUILD_MATX_PROJECTS)
-  set_source_files_properties(matcher_matx.cu PROPERTIES LANGUAGE CUDA)
-  add_executable(matcher_matx)
+set_source_files_properties(matching.cu PROPERTIES LANGUAGE CUDA)
+add_executable(matching)
 
-  target_include_directories(matcher_matx
+target_include_directories(matching
     PRIVATE ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
-  )
+)
 
-  target_sources(
-    matcher_matx PRIVATE
-    ${PROJECT_SOURCE_DIR}/matcher_matx.cu
-  )
-endif()
+target_sources(
+    matching PRIVATE
+    ${PROJECT_SOURCE_DIR}/matching.cu
+)
+# --------------------
+# if (BUILD_MATX_PROJECTS)
+#   set_source_files_properties(matcher_matx.cu PROPERTIES LANGUAGE CUDA)
+#   add_executable(matcher_matx)
+#
+#   target_include_directories(matcher_matx
+#     PRIVATE ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
+#   )
+#
+#   target_sources(
+#     matcher_matx PRIVATE
+#     ${PROJECT_SOURCE_DIR}/matcher_matx.cu
+#   )
+# endif()
 
 # # -------------------- Tests
 # if (GTEST_FOUND)

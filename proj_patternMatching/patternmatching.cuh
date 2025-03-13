@@ -56,8 +56,8 @@ naivePatternMatchKernel_LS(const T *d_inputs, // numInputs * length
   U *s_workspace = smem.getPointer(); // assume 1 for each thread
 
   // Otherwise get a pointer to the start of both vectors
-  const T *b_input = d_inputs[iIdx * length];
-  const T *b_pattern = d_patterns[pIdx * length];
+  const T *b_input = &d_inputs[iIdx * length];
+  const T *b_pattern = &d_patterns[pIdx * length];
 
   // Perform the least squares residual calculation on each vector
   U diff;
@@ -74,5 +74,6 @@ naivePatternMatchKernel_LS(const T *d_inputs, // numInputs * length
   U sum = reduce_sum(g, s_workspace, metric);
 
   if (g.thread_rank() == 0)
-    d_metric = sum; // no atomic needed here since 1 block writes 1 val
+    d_metric[iIdx * numPatterns + pIdx] =
+        sum; // no atomic needed here since 1 block writes 1 val
 }
