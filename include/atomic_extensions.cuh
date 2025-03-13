@@ -1,3 +1,4 @@
+#pragma once
 /* This header will contain kernel functions related to threshold checking of
  * data. Since this is usually just a simple check, it is probably not a good
  * idea to make this a __global__ kernel, but do this operation as part of
