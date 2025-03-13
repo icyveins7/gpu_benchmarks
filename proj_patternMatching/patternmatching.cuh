@@ -5,7 +5,17 @@
 
 namespace cg = cooperative_groups;
 
-// Directly copied from https://developer.nvidia.com/blog/cooperative-groups/
+/**
+ * @brief Sums values across a thread group.
+ * Adapted from https://developer.nvidia.com/blog/cooperative-groups/
+ *
+ * @tparam T Type of values
+ * @param g Thread group; usually a block or a warp
+ * @param temp Temporary workspace, usually shared memory, same size as the
+ *             thread group
+ * @param val Value for each thread in the group
+ * @return Sum of values (only in thread 0)
+ */
 template <typename T>
 __device__ T reduce_sum(cg::thread_group g, T *temp, T val) {
   int lane = g.thread_rank();
@@ -134,7 +144,7 @@ tiledPatternMatchKernel_LS(const T *d_inputs, // numInputs * length
       }
 
       // Block reduce to a sum
-      __syncthreads();
+      // __syncthreads(); // TODO: check if need to sync here?
       auto g = cg::this_thread_block();
       U sum = reduce_sum(g, s_workspace, metric);
 
