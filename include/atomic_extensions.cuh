@@ -76,3 +76,26 @@ template <typename T> __device__ int atomicAggInc(T *counter) {
   // unused?)
   return g.shfl(warp_res, 0) + g.thread_rank();
 }
+
+/**
+ * @brief Implements atomicMin for floats, since there isn't one provided by
+ * CUDA. Taken from
+ * https://stackoverflow.com/questions/17399119/how-do-i-use-atomicmax-on-floating-point-values-in-cuda.
+ * NOTE: this does not handle NaNs or inf comparisons correctly
+ *
+ * @param addr Address being atomically compared
+ * @param value Value being atomically compared
+ * @return Old value at address
+ */
+__device__ __forceinline__ float atomicMinFloat(float *addr, float value) {
+  float old;
+  // NOTE: this is doable since reinterpreting bits of a float retains ordering
+  // as an integer, assuming both are positive (first bit is 0 i.e. sign bit)
+  // the ternary below handles cases where one or the other is negative
+  old = !signbit(value)
+            ? __int_as_float(atomicMin((int *)addr, __float_as_int(value)))
+            : __uint_as_float(
+                  atomicMax((unsigned int *)addr, __float_as_uint(value)));
+
+  return old;
+}

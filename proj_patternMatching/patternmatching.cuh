@@ -1,5 +1,6 @@
 #pragma once
 
+#include "atomic_extensions.cuh"
 #include "sharedmem.cuh"
 #include <cooperative_groups.h>
 
@@ -176,6 +177,11 @@ tiledPatternMatchKernel_LS(const T *d_inputs, // numInputs * length
     // We now update the minIdx of the tile to its global value
     minIdx += pIdx0;
     // And then atomically update the global values
+    static_assert(std::is_same<U, float>::value,
+                  "Only float implemented for now");
+    // We only have atomicMinFloat and not double yet
+    U old = atomicMinFloat(&d_minVal[iIdx0 + t], minVal);
+
     // TODO:
   }
 }
