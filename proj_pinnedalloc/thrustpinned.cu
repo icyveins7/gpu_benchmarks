@@ -3,7 +3,7 @@
 #include <thrust/sequence.h>
 
 // my custom header to help keep everything in 1 place
-#include "thrustpinned.cuh"
+#include "pinnedalloc.cuh"
 
 int main() {
   const size_t len = 1000000;

@@ -1,3 +1,9 @@
+#pragma once
+
+// ==========================================================================================
+// NOTE: this entire section is unnecessary in newer CCCL versions (2.7 and
+// above) Since CUDA comes prepackaged with CCCL this somewhat correlates with
+// CUDA 12.7 and above, but verify this for yourself
 #include <thrust/host_vector.h>
 
 #include <thrust/mr/allocator.h>
@@ -18,3 +24,4 @@ namespace thrust {
 template <typename T>
 using pinned_host_vector = thrust::host_vector<T, pinned_allocator<T>>;
 }
+// ==========================================================================================
