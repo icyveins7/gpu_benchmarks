@@ -18,8 +18,20 @@ if("${CMAKE_BUILD_TYPE}" STREQUAL "")
   message("CMAKE_BUILD_TYPE set to ${CMAKE_BUILD_TYPE}")
 endif()
 
-if(CMAKE_CUDA_ARCHITECTURES LESS 60)
-  set(CMAKE_CUDA_ARCHITECTURES 60 70 75 80 86)
+# Default to native architecture alone
+set(CMAKE_CUDA_ARCHITECTURES native)
+message(STATUS "Default to native CMAKE_CUDA_ARCHITECTURES: ${CMAKE_CUDA_ARCHITECTURES}")
+
+# if(CMAKE_CUDA_ARCHITECTURES LESS 60)
+#   set(CMAKE_CUDA_ARCHITECTURES 60 70 75 80 86)
+# endif()
+
+# Enable warnings for GCC and Clang
+if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+  add_compile_options(-Wall -Wextra) # don't use Wpedantic for cuda code or you get tons of useless warnings
+  # Enable warnings for MSVC
+elseif (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
+  add_compile_options(/W4)
 endif()
 
 # Fixes for clangd
