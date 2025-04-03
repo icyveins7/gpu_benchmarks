@@ -9,7 +9,11 @@
 
 #include "cuFFT_wrapper.cuh"
 
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wall"
 #include "ipp_ext.h"
+#pragma GCC diagnostic pop
 
 #include "timer.h"
 

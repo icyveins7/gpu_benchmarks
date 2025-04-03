@@ -60,16 +60,16 @@ void test(const size_t width, const size_t height, const size_t widthDsr,
   printf("Counter: %u / %zd\n", h_counter[0], imgDsr.size());
   if (h_imgDsr.size() < 100000) {
     // don't print the big matrices
-    for (int i = 0; i < height; i++) {
-      for (int j = 0; j < width; j++) {
+    for (size_t i = 0; i < height; i++) {
+      for (size_t j = 0; j < width; j++) {
         printf("%5.1f ", h_img[i * width + j]);
       }
       std::cout << std::endl;
     }
     std::cout << "|" << std::endl << "\\/" << std::endl;
 
-    for (int i = 0; i < height / heightDsr; i++) {
-      for (int j = 0; j < width / widthDsr; j++) {
+    for (size_t i = 0; i < height / heightDsr; i++) {
+      for (size_t j = 0; j < width / widthDsr; j++) {
         printf("%5.1f ", h_imgDsr[i * width / widthDsr + j]);
       }
       std::cout << std::endl;
@@ -79,7 +79,7 @@ void test(const size_t width, const size_t height, const size_t widthDsr,
   printf("=======================\n");
 }
 
-int main(int argc, char *argv[]) {
+int main() {
 
   size_t width, height, widthDsr, heightDsr;
 

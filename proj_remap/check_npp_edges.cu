@@ -6,7 +6,7 @@
 #include <thrust/host_vector.h>
 #include <thrust/sequence.h>
 
-int main(int argc, char *argv[]) {
+int main() {
   // We create a simple 2x2 example
   // The coordinates are expected to be (0,0), (0,1), (1,0), (1,1)
   int srcWidth = 2;
@@ -27,7 +27,7 @@ int main(int argc, char *argv[]) {
   thrust::device_vector<float> d_y(reqLen * reqLen);
 
   // Fill our points for x, which is just the same for every row
-  for (int i = 0; i < reqLen; ++i)
+  for (size_t i = 0; i < reqLen; ++i)
     // Generate 0 to 50
     thrust::sequence(d_x.begin() + i * reqLen, d_x.begin() + (i + 1) * reqLen,
                      0.0f);
@@ -38,7 +38,7 @@ int main(int argc, char *argv[]) {
                     -2.0f + thrust::placeholders::_1);
 
   // Fill our points for y, which is the same for every column
-  for (int i = 0; i < reqLen; ++i)
+  for (size_t i = 0; i < reqLen; ++i)
     thrust::fill(d_y.begin() + i * reqLen, d_y.begin() + (i + 1) * reqLen,
                  (float)(-2.0f + i * step));
 
@@ -47,16 +47,16 @@ int main(int argc, char *argv[]) {
   thrust::host_vector<float> h_y = d_y;
 
   printf("x: \n");
-  for (int i = 0; i < reqLen; ++i) {
-    for (int j = 0; j < reqLen; ++j) {
+  for (size_t i = 0; i < reqLen; ++i) {
+    for (size_t j = 0; j < reqLen; ++j) {
       printf("%.1f, ", h_x[i * reqLen + j]);
     }
     printf("\n");
   }
 
   printf("y: \n");
-  for (int i = 0; i < reqLen; ++i) {
-    for (int j = 0; j < reqLen; ++j) {
+  for (size_t i = 0; i < reqLen; ++i) {
+    for (size_t j = 0; j < reqLen; ++j) {
       printf("%.1f, ", h_y[i * reqLen + j]);
     }
     printf("\n");
@@ -77,20 +77,21 @@ int main(int argc, char *argv[]) {
       reqLen * sizeof(float), thrust::raw_pointer_cast(d_y.data()),
       reqLen * sizeof(float), thrust::raw_pointer_cast(d_out.data()),
       reqLen * sizeof(float), dstSize, NPPI_INTER_LINEAR);
+  printf("Status %d\n", status);
 
   // Print the output
   thrust::host_vector<float> h_out = d_out;
   printf("Out: \n");
-  for (int i = 0; i < reqLen; ++i) {
-    for (int j = 0; j < reqLen; ++j) {
+  for (size_t i = 0; i < reqLen; ++i) {
+    for (size_t j = 0; j < reqLen; ++j) {
       printf("%.1f, ", h_out[i * reqLen + j]);
     }
     printf("\n");
   }
 
   // A bit hard to see, so let's just print the coordinates of where it changes
-  for (int i = 0; i < reqLen; ++i) {
-    for (int j = 0; j < reqLen; ++j) {
+  for (size_t i = 0; i < reqLen; ++i) {
+    for (size_t j = 0; j < reqLen; ++j) {
       if (h_out[i * reqLen + j] != 9.9f) {
         printf("x: %.1f, y: %.1f\n", h_x[i * reqLen + j], h_y[i * reqLen + j]);
       }

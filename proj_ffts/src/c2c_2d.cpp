@@ -45,7 +45,7 @@ int main(int argc, char *argv[]){
 
   // Fill easily from 0 to N-1
   // sequence doesn't work on complex?
-  for (int i = 0; i < x.size(); ++i)
+  for (size_t i = 0; i < x.size(); ++i)
   {
     x[i].real(i);
     x[i].imag(i+1);
@@ -129,7 +129,7 @@ int main(int argc, char *argv[]){
     {
       for (int i = 0; i < fft_size[0]; ++i)
       {
-        for (int j = 0; j < outputPerRow; ++j) {
+        for (size_t j = 0; j < outputPerRow; ++j) {
           printf("%12.6f %12.6fi, ", 
               h_y[b*perImage + i*outputPerRow + j].real(),
               h_y[b*perImage + i*outputPerRow + j].imag());

@@ -475,7 +475,7 @@ inline void cuFFTWrapper_2DPad_as_1Ds<CUFFT_C2C>::exec(
     throw std::runtime_error("input and output must be same size");
   }
   // Check that they match the FFT size
-  if (input.size() !=
+  if ((int)input.size() !=
       this->m_fftSize[0] * this->m_fftSize[1] * this->m_batchSize) {
     throw std::runtime_error(
         "input and output must do not match FFT size * batch");

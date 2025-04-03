@@ -129,7 +129,7 @@ template <typename T, template <class> class U> void test_remap_edgecases() {
   constexpr T invalid = std::numeric_limits<T>::max();
 
   thrust::host_vector<float> h_src_float(h_src.size());
-  for (int i = 0; i < h_src.size(); ++i) {
+  for (size_t i = 0; i < h_src.size(); ++i) {
     h_src_float[i] = static_cast<float>(h_src[i]);
   }
 
@@ -257,7 +257,7 @@ void test_remap_wraparound_edgecases() {
     inv,  inv,  inv,  inv,  inv,  inv,  inv
   };
 
-  for (int i = 0; i < h_expect.size(); ++i){
+  for (size_t i = 0; i < h_expect.size(); ++i){
     printf("x/y = %.1f, %.1f\n", h_inX[i], h_inY[i]);
     printf("expect = %.1f, result = %.1f\n", (float)static_cast<T>(h_expect[i]), (float)h_dest[i]);
     EXPECT_FLOAT_EQ(h_dest[i], static_cast<T>(h_expect[i]));

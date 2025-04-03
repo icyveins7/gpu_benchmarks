@@ -53,9 +53,9 @@ int main(int argc, char *argv[]) {
 
       h_x = d_x;
 
-      for (int b = 0; b < batch; ++b) {
-        for (int y = 0; y < oHeight; ++y) {
-          for (int x = 0; x < oWidth; ++x) {
+      for (size_t b = 0; b < batch; ++b) {
+        for (size_t y = 0; y < oHeight; ++y) {
+          for (size_t x = 0; x < oWidth; ++x) {
             printf("%.3f ", h_x[b * oWidth * oHeight + y * oWidth + x]);
           }
           printf("\n");
@@ -81,10 +81,10 @@ int main(int argc, char *argv[]) {
     thrust::host_vector<float> h_x2 = d_x2;
     printf("Checking equality with non-skippedahead RNG\n");
 
-    for (int b = 0; b < batch; ++b) {
-      for (int y = 0; y < oHeight; ++y) {
+    for (size_t b = 0; b < batch; ++b) {
+      for (size_t y = 0; y < oHeight; ++y) {
         bool allOk = true;
-        for (int x = 0; x < oWidth; ++x) {
+        for (size_t x = 0; x < oWidth; ++x) {
           printf("%.3f ", h_x2[b * oWidth * oHeight + y * oWidth + x]);
           if (h_x[b * oWidth * oHeight + y * oWidth + x] !=
               h_x2[b * oWidth * oHeight + y * oWidth + x])
@@ -107,10 +107,10 @@ int main(int argc, char *argv[]) {
     rng3.rand(d_x2, oWidth, oHeight);
     h_x2 = d_x2;
     printf("Checking equality with non-skippedahead RNG\n");
-    for (int b = 0; b < batch; ++b) {
-      for (int y = 0; y < oHeight; ++y) {
+    for (size_t b = 0; b < batch; ++b) {
+      for (size_t y = 0; y < oHeight; ++y) {
         bool allOk = true;
-        for (int x = 0; x < oWidth; ++x) {
+        for (size_t x = 0; x < oWidth; ++x) {
           printf("%.3f ", h_x2[b * oWidth * oHeight + y * oWidth + x]);
           if (h_x[b * oWidth * oHeight + y * oWidth + x] !=
               h_x2[b * oWidth * oHeight + y * oWidth + x])
@@ -133,10 +133,10 @@ int main(int argc, char *argv[]) {
     h_x2 = d_x2;
 
     printf("Checking equality with non-skippedahead RNG\n");
-    for (int b = 0; b < batch; ++b) {
-      for (int y = 0; y < oHeight; ++y) {
+    for (size_t b = 0; b < batch; ++b) {
+      for (size_t y = 0; y < oHeight; ++y) {
         bool allOk = true;
-        for (int x = 0; x < oWidth; ++x) {
+        for (size_t x = 0; x < oWidth; ++x) {
           printf("%.3f ", h_x2[b * oWidth * oHeight + y * oWidth + x]);
           if (h_x[b * oWidth * oHeight + y * oWidth + x] !=
               h_x2[b * oWidth * oHeight + y * oWidth + x])

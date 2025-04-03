@@ -18,8 +18,8 @@ int main() {
 
     h_data = d_out;
 
-    for (int y = 0; y < height; y++) {
-      for (int x = 0; x < width; x++) {
+    for (size_t y = 0; y < height; y++) {
+      for (size_t x = 0; x < width; x++) {
         printf("%2d ", h_data[y * width + x]);
       }
       std::cout << std::endl;
@@ -40,8 +40,8 @@ int main() {
 
     h_data = d_out;
 
-    for (int y = 0; y < height; y++) {
-      for (int x = 0; x < width; x++) {
+    for (size_t y = 0; y < height; y++) {
+      for (size_t x = 0; x < width; x++) {
         printf("%2d ", h_data[y * width + x]);
       }
       std::cout << std::endl;
@@ -63,8 +63,8 @@ int main() {
 
     h_data = d_out;
 
-    for (int y = 0; y < height; y++) {
-      for (int x = 0; x < width; x++) {
+    for (size_t y = 0; y < height; y++) {
+      for (size_t x = 0; x < width; x++) {
         printf("%3d ", h_data[y * width + x]);
       }
       std::cout << std::endl;

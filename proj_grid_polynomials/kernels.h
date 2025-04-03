@@ -31,7 +31,7 @@ __device__ void computePolynomialForValue(const T *const coeffs,
   out = coeffs[0];
   // Start at power 1
   T inp = in;
-  for (size_t i = 1; i < numCoeffs; ++i) {
+  for (int i = 1; i < numCoeffs; ++i) {
     // Add next term
     out += inp * coeffs[i];
     // Increment power
@@ -57,7 +57,7 @@ void equivalentComputePolynomialForValue(const T *const coeffs,
   out = coeffs[0];
   // Start at power 1
   T inp = in;
-  for (size_t i = 1; i < numCoeffs; ++i) {
+  for (int i = 1; i < numCoeffs; ++i) {
     // Add next term
     out += inp * coeffs[i];
     // Increment power
@@ -90,7 +90,7 @@ __device__ void computeSinSeriesForValue(const T* const ampCoeffs,
   // Add 0-order term
   out = in + ampCoeffs[0];
   // Iterate over the sin calls
-  for (size_t i = 1; i < numCoeffs; ++i){
+  for (int i = 1; i < numCoeffs; ++i){
     // Add next term
     out += ampCoeffs[i] * sin(static_cast<T>(i) * in + thetaCoeffs[i]);
   }
@@ -118,7 +118,7 @@ __device__ void computeSinIntrinsicsSeriesForValue(const T* const ampCoeffs,
   // Add 0-order term
   out = in + ampCoeffs[0];
   // Iterate over the sin calls
-  for (size_t i = 1; i < numCoeffs; ++i){
+  for (int i = 1; i < numCoeffs; ++i){
     // Add next term
     out += ampCoeffs[i] * sin(static_cast<T>(i) * in + thetaCoeffs[i]);
   }
@@ -137,7 +137,7 @@ inline __device__ void computeSinIntrinsicsSeriesForValue(const float* const amp
   // Add 0-order term
   out = in + ampCoeffs[0];
   // Iterate over the sin calls
-  for (size_t i = 1; i < numCoeffs; ++i){
+  for (int i = 1; i < numCoeffs; ++i){
     // Add next term
     out += ampCoeffs[i] * __sinf(static_cast<float>(i) * in + thetaCoeffs[i]);
   }
@@ -239,7 +239,7 @@ protected:
 template <typename T>
 __global__ void
 naiveGridStridePolynomial(const T *const d_coeffs, const size_t numCoeffs,
-                          const T *const in, const size_t in_length, T *out) {
+                          const T *const in, const int in_length, T *out) {
   // Simply execute 1 thread -> 1 value
   int idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx >= in_length)
@@ -290,8 +290,8 @@ public:
  */
 template <typename T>
 __global__ void
-sharedCoeffsGridStridePolynomial(const T *const d_coeffs, const size_t numCoeffs,
-                                 const T *const in, const size_t in_length, T *out) {
+sharedCoeffsGridStridePolynomial(const T *const d_coeffs, const int numCoeffs,
+                                 const T *const in, const int in_length, T *out) {
   // Allocate shared memory for the coefficients
   SharedMemory<T> s;
   T *s_coeffs = s.getPointer();
@@ -368,7 +368,7 @@ __global__ void
 // constantCoeffsGridStridePolynomial(const constCoeffsStruct<T> coeffStruct, const size_t numCoeffs,
 //                                    const T *const in, const size_t in_length, T *out) {
 constantCoeffsGridStridePolynomial(const size_t numCoeffs,
-                                   const T *const in, const size_t in_length, T *out) {
+                                   const T *const in, const int in_length, T *out) {
   // Compute polynomial
   int idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx >= in_length)
@@ -390,7 +390,7 @@ public:
       throw std::invalid_argument("MAX_COEFFS exceeded for constant memory!");
 
     // We copy additionally to the struct
-    for (int i = 0; i < this->m_h_coeffs.size(); ++i)
+    for (int i = 0; i < (int)this->m_h_coeffs.size(); ++i)
       this->m_coeffStruct.c_coeffs[i] = this->m_h_coeffs[i];
 
     // And copy the symbol manually too
@@ -490,9 +490,12 @@ public:
 
   void set_tpb(const int THREADS_PER_BLK) { m_THREADS_PER_BLK = THREADS_PER_BLK; }
 
+  #pragma GCC diagnostic push
+  #pragma GCC diagnostic ignored "-Wunused-parameter"
   // Placeholders for actual computations to do in child classes
   void h_run(const thrust::host_vector<T>& h_in, thrust::host_vector<T>& h_out) {};
   void d_run(const thrust::device_vector<T>& d_in, thrust::device_vector<T>& d_out) {};
+  #pragma GCC diagnostic pop
 
 protected:
   // All coefficients should be order 0 to order N
@@ -510,8 +513,8 @@ template <typename T>
 __global__ void
 naiveSinSeriesSum(const T *const d_ampCoeffs,
                   const T *const d_thetaCoeffs,
-                  const size_t numCoeffs,
-                  const T *const in, const size_t in_length, T *out) {
+                  const int numCoeffs,
+                  const T *const in, const int in_length, T *out) {
   // Simply execute 1 thread -> 1 value
   int idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx >= in_length)
@@ -574,7 +577,7 @@ __global__ void
 intrinsicSinSeriesSum(const T *const d_ampCoeffs,
                       const T *const d_thetaCoeffs,
                       const size_t numCoeffs,
-                      const T *const in, const size_t in_length, T *out) {
+                      const T *const in, const int in_length, T *out) {
   // Simply execute 1 thread -> 1 value
   int idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx >= in_length)

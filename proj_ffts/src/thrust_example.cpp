@@ -16,7 +16,11 @@
 
 #include "ipp.h"
 #include "ipp/ipptypes.h"
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wall"
 #include "ipp_ext.h"
+#pragma GCC diagnostic pop
 
 #include "timer.h"
 
@@ -161,7 +165,7 @@ int main(int argc, char *argv[]){
 
   {
     HighResolutionTimer timer;
-    for (size_t i = 0; i < batch_size; ++i)
+    for (size_t i = 0; i < (size_t)batch_size; ++i)
     {
       // new wrapped call
       dft.fwd<ippi::channels::C1>(
@@ -202,7 +206,7 @@ int main(int argc, char *argv[]){
   }
 
   // Unpack data for better views
-  for (size_t i = 0; i < batch_size; ++i){
+  for (size_t i = 0; i < (size_t)batch_size; ++i){
     ippiPackToCplxExtend_32f32fc_C1R(
         (Ipp32f*)&iy.at(i * outputPerRow),
         roiSize,

@@ -33,7 +33,7 @@ int main() {
       printf("%d: Expected: %d, got: %d\n", i, expected[i], h_hist[i]);
     }
   }
-  for (int i = 0; i < h_binIdxs.size(); ++i) {
+  for (int i = 0; i < (int)h_binIdxs.size(); ++i) {
     printf("BinIdx[%d] %f -> %d\n", i, values[i], h_binIdxs[i]);
   }
 
