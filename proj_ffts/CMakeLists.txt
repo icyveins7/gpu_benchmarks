@@ -39,7 +39,7 @@
 # Any use of the Licensed Deliverables in individual and commercial software
 # must include, in the user documentation and internal comments to the code, the
 # above Disclaimer and U.S. Government End Users Notice.
-cmake_minimum_required(VERSION 3.18)
+cmake_minimum_required(VERSION 3.24)
 
 # set(ROUTINE 1d_r2c_c2r)
 
