@@ -57,7 +57,6 @@ int main(int argc, char *argv[]) {
           d_src.data().get(), height, width, d_m.data().get(), d_c.data().get(),
           d_dst.data().get());
 
-    cudaDeviceSynchronize();
     nvtxRangePop();
   }
   // ======= Shared mem kernel implementations
@@ -74,7 +73,7 @@ int main(int argc, char *argv[]) {
           <<<blks_per_grid, threads_per_blk, smem_size>>>(
               d_src.data().get(), height, width, d_m.data().get(),
               d_c.data().get(), d_dst.data().get());
-    cudaDeviceSynchronize();
+
     nvtxRangePop();
   }
   {
@@ -90,7 +89,7 @@ int main(int argc, char *argv[]) {
           <<<blks_per_grid, threads_per_blk, smem_size>>>(
               d_src.data().get(), height, width, d_m.data().get(),
               d_c.data().get(), d_dst.data().get());
-    cudaDeviceSynchronize();
+
     nvtxRangePop();
   }
   {
@@ -107,7 +106,6 @@ int main(int argc, char *argv[]) {
               d_src.data().get(), height, width, d_m.data().get(),
               d_c.data().get(), d_dst.data().get());
 
-    cudaDeviceSynchronize();
     nvtxRangePop();
   }
 
@@ -121,7 +119,7 @@ int main(int argc, char *argv[]) {
       std::cout << std::endl;
     }
 
-    thrust::pinned_host_vector<float> check(dst.size());
+    thrust::pinned_host_vector<Ty> check(dst.size());
     validate_fmamat_columns<float>(src, height, width, m, c, check);
 
     // Print differences from validation
