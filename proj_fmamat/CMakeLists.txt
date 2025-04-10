@@ -18,12 +18,12 @@ target_sources(
   ${PROJECT_SOURCE_DIR}/fmamat.cu
 )
 
-# # -------------------- Tests
-# if (GTEST_FOUND)
-#   message("Enabling tests for proj_remap")
-#
-#   # --------------------
-#   add_executable(test_remap test_remap.cu)
-#   target_link_libraries(test_remap ${CUDA_nppc_LIBRARY} ${CUDA_nppig_LIBRARY} GTest::gtest_main)
-#   gtest_discover_tests(test_remap)
-# endif()
+# -------------------- Tests
+if (GTEST_FOUND)
+  message("Enabling tests for proj_fmamat")
+
+  # --------------------
+  add_executable(test_fmamat test_fmamat.cu)
+  target_link_libraries(test_fmamat GTest::gtest_main)
+  gtest_discover_tests(test_fmamat)
+endif()
