@@ -81,7 +81,8 @@ __device__ void cropAroundPoint_gridStride(const T *image, const int width,
     int srcY = top + dstY;
     int srcIdx = srcY * width + srcX;
 
-    dst[t] = image[srcIdx];
+    if (srcIdx < width * height)
+      dst[t] = image[srcIdx];
   }
 }
 
@@ -95,4 +96,54 @@ cropAroundPoint_gridStrideKernel(const T *image, const int width,
                                  const int2 ptCoords, T *dst) {
   // Redirect to the device function entirely
   cropAroundPoint_gridStride(image, width, height, cropDims, ptCoords, dst);
+}
+
+/**
+ * @brief This is identical to the grid stride one, but uses a block to stride
+ * instead. Better for inclusion in block-local kernels.
+ */
+template <typename T>
+__device__ void cropAroundPoint_blockStride(const T *image, const int width,
+                                            const int height,
+                                            const int4 cropDirections,
+                                            const int2 ptCoords, T *dst) {
+
+  // First we check that it's not going to clip the border
+  int left = ptCoords.x - cropDirections.x;
+  int right = ptCoords.x + cropDirections.y; // inclusive
+  if (left < 0) {
+    left = 0;
+    right = cropDirections.x + cropDirections.y;
+  } else if (right >= width) {
+    right = width - 1;
+    left = width - 1 - cropDirections.x - cropDirections.y;
+  }
+
+  // We use convention that top is lower index than bottm i.e. y goes downwards
+  int top = ptCoords.y - cropDirections.z;
+  int bottom = ptCoords.y + cropDirections.w; // inclusive
+  if (top < 0) {
+    top = 0;
+    bottom = cropDirections.z + cropDirections.w;
+  } else if (bottom >= height) {
+    bottom = height - 1;
+    top = height - 1 - cropDirections.z - cropDirections.w;
+  }
+
+  // Compute the expected destination dimensions
+  int dstWidth = right - left + 1;
+  int dstHeight = bottom - top + 1;
+
+  // Simple block-stride over destination to copy the cropped image
+  for (int t = threadIdx.x; t < dstWidth * dstHeight; t += blockDim.x) {
+    int dstX = t % dstWidth;
+    int dstY = t / dstWidth;
+
+    int srcX = left + dstX;
+    int srcY = top + dstY;
+    int srcIdx = srcY * width + srcX;
+
+    if (srcIdx < width * height)
+      dst[t] = image[srcIdx];
+  }
 }
