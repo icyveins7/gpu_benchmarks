@@ -1,5 +1,10 @@
 #include "sharedmem.cuh"
 
+static_assert(true); // dummy assert just for clangd LSP to stop complaining
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wsign-compare"
+
 /**
  * @brief Max and argmax reduction within a block. This does not currently
  * (24/4/2025) seem to have a simple cub implementation.
@@ -24,3 +29,5 @@ __device__ void blockReduceMaxAndArgMax(T *sdata, int *idx) {
     __syncthreads();
   }
 }
+
+#pragma GCC diagnostic pop
