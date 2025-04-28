@@ -59,6 +59,13 @@ __device__ void blockArgmaxWhileLoading(const T *blk_in,
                                         unsigned int &r_argmax, T &r_max) {
   for (int t = threadIdx.x; t < inLenPerBlock; t += blockDim.x) {
     T candidate = blk_in[t];
+    // On first iteration simply take the value
+    if (t == threadIdx.x) {
+      r_max = candidate;
+      r_argmax = t;
+    }
+
+    // On subsequent iterations compare
     if (candidate >= r_max) {
       // Prefer the earlier index if equal
       r_argmax = candidate == r_max ? min(r_argmax, t) : t;
@@ -137,19 +144,15 @@ __global__ void cubArgmax(const T *in, const int inLenPerBlock, T *maxPerBlock,
   unsigned int r_idx;
   blockArgmaxWhileLoading(blk_in, inLenPerBlock, r_idx, r_in);
 
+  // Create the key value pair to do block-wise reduction
   cub::KeyValuePair<unsigned int, T> toReduce(r_idx, r_in);
   // Invoke cub's reduction directly (apparently no need to syncthreads before
   // hand)
-  __syncthreads();
   cub::KeyValuePair<unsigned int, T> aggregate =
       BlkRed(temp_storage).Reduce(toReduce, cub::ArgMax());
   // Also no need to syncthreads after
-  __syncthreads();
 
   if (threadIdx.x == 0) {
-    // if (blockIdx.x == 0) {
-    //   printf("Aggregate: %d -> %d\n", aggregate.key, aggregate.value);
-    // }
     maxPerBlock[blockIdx.x] = static_cast<T>(aggregate.value);
     argMaxPerBlock[blockIdx.x] = static_cast<unsigned int>(aggregate.key);
   }
