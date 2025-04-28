@@ -12,7 +12,8 @@ static_assert(true); // dummy assert just for clangd LSP to stop complaining
  *
  * @tparam T Type of input
  * @param sdata Input data in shared memory, assumed to have length blockDim.x
- * @param idx Associated indices of the input data in shared memory, same length
+ * @param sidx Associated indices of the input data in shared memory, same
+ * length
  */
 template <typename T>
 __device__ void blockReduceMaxAndArgMax(T *sdata, int *sidx) {
@@ -37,6 +38,19 @@ __device__ void blockReduceMaxAndArgMax(T *sdata, int *sidx) {
   }
 }
 
+/**
+ * @brief Simple example of how to apply the device block reduction argmax
+ * function.
+ *
+ * @tparam T Type of input
+ * @param in Contiguous input arrays, each block works on one array
+ * @param inLenPerBlock Length per block's input array
+ * @param maxPerBlock Maximum value per input array/block
+ * @param argMaxPerBlock Argmax per input array/block
+ * @param debugMaxPerBlock For debugging: shared memory initialization of max
+ * @param debugArgMaxPerBlock For debugging: shared memory initialization of
+ * argmax
+ */
 template <typename T>
 __global__ void simpleBlockMaxAndArgMaxKernel(
     const T *in, const int inLenPerBlock, T *maxPerBlock, int *argMaxPerBlock,
