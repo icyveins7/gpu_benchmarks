@@ -127,6 +127,15 @@ simpleBlockMaxAndArgMaxKernel(const T *in, const int inLenPerBlock,
   }
 }
 
+/**
+ * @brief Simple example of how to use cub to do Argmax
+ *
+ * @tparam T Type of data
+ * @param in Input arrays
+ * @param inLenPerBlock Length of each individual input array
+ * @param maxPerBlock Max value for each array
+ * @param argMaxPerBlock Argmax for each array
+ */
 template <typename T, int BlockSize>
 __global__ void cubArgmax(const T *in, const int inLenPerBlock, T *maxPerBlock,
                           unsigned int *argMaxPerBlock) {
