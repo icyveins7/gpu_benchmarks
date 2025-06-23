@@ -77,4 +77,5 @@ add_subdirectory(proj_fmamat)
 add_subdirectory(proj_cropping)
 add_subdirectory(proj_blockReductions)
 add_subdirectory(proj_median)
+add_subdirectory(proj_selections)
 
