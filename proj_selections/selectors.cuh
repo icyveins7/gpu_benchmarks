@@ -6,6 +6,30 @@ struct SliceBounds {
   unsigned int colEnd;
 };
 
+/**
+ * @brief Selects (copies) 1D slices from a 2D input array into a 3D output
+ * array; the output array is effectively a 2D rectangular region (rows *
+ * columns) where each element contains oMaxLength elements.
+ *
+ * This is useful when we would like to have multiple slices and gather them
+ * (unordered) for each output element (for example, to calculate the
+ * mean/median). A slice is defined by the above struct SliceBounds, where a row
+ * and columnStart/End is defined.
+ *
+ * @tparam T Data type of input/output elements
+ * @param d_input Input 2D array, iRows * iCols
+ * @param iRows Input rows
+ * @param iCols Input columns
+ * @param d_output Output 3D array, oRows * oCols * oMaxLength
+ * @param outputLengths Used output length for each element, same dimensions as
+ * d_output
+ * @param oRows Output rows
+ * @param oCols Output columns
+ * @param oMaxLength Output maximum length
+ * @param sliceIdx Slice indices for each output element, oRows * oCols *
+ * MAX_SLICES
+ * @param numSlices Number of slices actually used (out of MAX_SLICES)
+ */
 template <typename T, int MAX_SLICES>
 __global__ void blockwise_select_1d_slices_for_2d_kernel(
     const T *d_input,                                   // iRows * iCols
