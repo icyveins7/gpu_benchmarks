@@ -21,32 +21,43 @@ int main() {
   thrust::device_vector<unsigned int> d_outputLengths(oRows * oCols);
 
   // Create some slices
-  thrust::host_vector<SliceBounds> h_sliceIdx(oRows * oCols * MAX_SLICES);
+  thrust::host_vector<SliceBounds<unsigned int>> h_sliceIdx(oRows * oCols *
+                                                            MAX_SLICES);
   thrust::host_vector<unsigned int> h_numSlices(oRows * oCols);
 
-  h_sliceIdx[0 * MAX_SLICES + 0] = {5, 0, 32};  // 33 elements
-  h_sliceIdx[0 * MAX_SLICES + 1] = {6, 15, 32}; // 18 elements
+  // ===
+  h_sliceIdx[0 * MAX_SLICES + 0] = {5 * iCols + 0,
+                                    5 * iCols + 33}; // 33 elements
+  h_sliceIdx[0 * MAX_SLICES + 1] = {6 * iCols + 15,
+                                    6 * iCols + 32}; // 18 elements
   h_numSlices[0] = 2;
 
-  h_sliceIdx[1 * MAX_SLICES + 0] = {51, 8, 11}; // 4 elements
+  // ===
+  h_sliceIdx[1 * MAX_SLICES + 0] = {51 * iCols + 8,
+                                    51 * iCols + 11}; // 4 elements
   h_numSlices[1] = 1;
 
-  h_sliceIdx[2 * MAX_SLICES + 0] = {77, 64, 80}; // 17 elements
+  // ===
+  h_sliceIdx[2 * MAX_SLICES + 0] = {77 * iCols + 64,
+                                    77 * iCols + 80}; // 17 elements
   h_numSlices[2] = 1;
 
-  h_sliceIdx[3 * MAX_SLICES + 0] = {97, 64, 80}; // 17 elements
-  h_sliceIdx[3 * MAX_SLICES + 1] = {98, 64, 80}; // 17 elements
+  // ===
+  h_sliceIdx[3 * MAX_SLICES + 0] = {97 * iCols + 64,
+                                    97 * iCols + 80}; // 17 elements
+  h_sliceIdx[3 * MAX_SLICES + 1] = {98 * iCols + 64,
+                                    98 * iCols + 80}; // 17 elements
   h_numSlices[3] = 2;
 
-  thrust::device_vector<SliceBounds> d_sliceIdx = h_sliceIdx;
+  thrust::device_vector<SliceBounds<unsigned int>> d_sliceIdx = h_sliceIdx;
   thrust::device_vector<unsigned int> d_numSlices = h_numSlices;
 
   // Call the kernel
-  blockwise_select_1d_slices_for_2d_kernel<int, MAX_SLICES>
-      <<<dim3(oCols, oRows, 1), dim3(32, 1, 1)>>>(
-          thrust::raw_pointer_cast(d_input.data()), iRows, iCols,
+  blockwise_select_1d_slices_kernel<int, unsigned int, MAX_SLICES>
+      <<<dim3(oCols * oRows, 1, 1), dim3(32, 1, 1)>>>(
+          thrust::raw_pointer_cast(d_input.data()), iRows * iCols,
           thrust::raw_pointer_cast(d_output.data()),
-          thrust::raw_pointer_cast(d_outputLengths.data()), oRows, oCols,
+          thrust::raw_pointer_cast(d_outputLengths.data()), oRows * oCols,
           oMaxLength, thrust::raw_pointer_cast(d_sliceIdx.data()),
           thrust::raw_pointer_cast(d_numSlices.data()));
 

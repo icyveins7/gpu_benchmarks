@@ -1,9 +1,8 @@
 #pragma once
 
-struct SliceBounds {
-  unsigned int row;
-  unsigned int colStart;
-  unsigned int colEnd;
+template <typename T = unsigned int> struct SliceBounds {
+  T start;
+  T end;
 };
 
 /**
@@ -30,48 +29,45 @@ struct SliceBounds {
  * MAX_SLICES
  * @param numSlices Number of slices actually used (out of MAX_SLICES)
  */
-template <typename T, int MAX_SLICES>
-__global__ void blockwise_select_1d_slices_for_2d_kernel(
-    const T *d_input,                                   // iRows * iCols
-    const unsigned int iRows, const unsigned int iCols, // input dimensions
-    T *d_output,                 // oRows * oCols * oMaxLength
-    unsigned int *outputLengths, // oRows * oCols
-    const unsigned int oRows, const unsigned int oCols, // output dimensions
-    const unsigned int oMaxLength,                      // see above
-    const SliceBounds *sliceIdx,  // oRows * oCols * MAX_SLICES
-    const unsigned int *numSlices // oRows * oCols
+template <typename T, typename Tslice, int MAX_SLICES>
+__global__ void blockwise_select_1d_slices_kernel(
+    const T *d_input,                    // iLength
+    const unsigned int iLength,          // input dimensions
+    T *d_output,                         // oRows * oMaxLength
+    unsigned int *outputLengths,         // oRows
+    const unsigned int oRows,            // output dimensions
+    const unsigned int oMaxLength,       // see above
+    const SliceBounds<Tslice> *sliceIdx, // oRows * MAX_SLICES
+    const unsigned int *numSlices        // oRows
 ) {
   // Each block operates on one output element
-  const unsigned int row = blockIdx.y;
-  const unsigned int col = blockIdx.x;
-  if (row >= oRows || col >= oCols) {
+  const unsigned int row = blockIdx.x;
+  if (row >= oRows) {
     return;
   }
 
   // Read slice index for this output element
-  const SliceBounds *blockSlices =
-      &sliceIdx[row * oCols * MAX_SLICES + col * MAX_SLICES];
+  const SliceBounds<Tslice> *blockSlices = &sliceIdx[row * MAX_SLICES];
   // Read number of slices
-  const int numSlicesForThisBlock = numSlices[row * oCols + col];
+  const int numSlicesForThisBlock = numSlices[row];
 
   // Iterate over slice bounds
   unsigned int lengthUsed = 0; // accumulate the length used
   for (int i = 0; i < numSlicesForThisBlock; ++i) {
     // Read next slice
     const SliceBounds slice = blockSlices[i];
-    unsigned int length = slice.colEnd - slice.colStart + 1;
+    unsigned int length = slice.end - slice.start + 1;
     // Check that the slice references a valid input
-    if (slice.row >= iRows || slice.colStart >= iCols ||
-        slice.colEnd >= iCols) {
-      break;
+    // NOTE: we assume unsigned integer types, so no need to check below 0
+    if (slice.start >= iLength || slice.end >= iLength) {
+      continue; // ignore this slice and try the rest
     }
 
     // Copy the slice into the output
     for (unsigned int t = threadIdx.x; t < length; t += blockDim.x) {
       // Only write if our output has sufficient space for the slice
       if (lengthUsed + t < oMaxLength) {
-        d_output[row * oCols * oMaxLength + col * oMaxLength + lengthUsed + t] =
-            d_input[slice.row * iCols + slice.colStart + t];
+        d_output[row * oMaxLength + lengthUsed + t] = d_input[slice.start + t];
       }
     } // end loop over current slice copy
 
@@ -83,6 +79,5 @@ __global__ void blockwise_select_1d_slices_for_2d_kernel(
 
   // Write the final output length used
   if (threadIdx.x == 0)
-    outputLengths[row * oCols + col] =
-        lengthUsed < oMaxLength ? lengthUsed : oMaxLength;
+    outputLengths[row] = lengthUsed < oMaxLength ? lengthUsed : oMaxLength;
 };
