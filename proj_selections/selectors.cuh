@@ -6,27 +6,23 @@ template <typename T = unsigned int> struct SliceBounds {
 };
 
 /**
- * @brief Selects (copies) 1D slices from a 2D input array into a 3D output
- * array; the output array is effectively a 2D rectangular region (rows *
- * columns) where each element contains oMaxLength elements.
+ * @brief Selects (copies) 1D slices from an input array into a 2D output
+ * array; the output array is effectively a 2D rectangular array where each
+ * element contains oMaxLength elements.
  *
  * This is useful when we would like to have multiple slices and gather them
  * (unordered) for each output element (for example, to calculate the
- * mean/median). A slice is defined by the above struct SliceBounds, where a row
- * and columnStart/End is defined.
+ * mean/median). A slice is defined by the above struct SliceBounds, where start
+ * and end index is defined.
  *
  * @tparam T Data type of input/output elements
- * @param d_input Input 2D array, iRows * iCols
- * @param iRows Input rows
- * @param iCols Input columns
- * @param d_output Output 3D array, oRows * oCols * oMaxLength
- * @param outputLengths Used output length for each element, same dimensions as
- * d_output
+ * @param d_input Input 2D array, iLength
+ * @param iLength Input length, used for checking
+ * @param d_output Output 2D array, oRows * oMaxLength
+ * @param outputLengths Used output length for each element, oRows
  * @param oRows Output rows
- * @param oCols Output columns
  * @param oMaxLength Output maximum length
- * @param sliceIdx Slice indices for each output element, oRows * oCols *
- * MAX_SLICES
+ * @param sliceIdx Slice indices for each output element, oRows * MAX_SLICES
  * @param numSlices Number of slices actually used (out of MAX_SLICES)
  */
 template <typename T, typename Tslice, int MAX_SLICES>
