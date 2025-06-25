@@ -4,21 +4,33 @@
 #include <cub/block/block_radix_sort.cuh>
 #include <cuda/std/limits>
 
+/**
+ * @brief Performs a row-wise median of a 2D input array, with one block
+ * tackling each row. Each row may have a different occupied length, as
+ * specified by a separate array.
+ *
+ * Fundamentally, this performs a cub::BlockRadixSort, where it sets the unused
+ * elements to be numeric_limits<T>::max(). This allows us to extract the
+ * 'correct' median by referencing the valid length.
+ *
+ * NOTE: median is defined to be a simple length/2, so even-length rows may not
+ * be as expected, but it is more efficient to process this way.
+ *
+ * @tparam T Type of input data
+ * @param inputRows The input data
+ * @param numRows The number of input rows
+ * @param numColumns The (max) number of input columns, not all may be used
+ * @param inputLengths The number of actually used elements in each row
+ * @param medians Output median values for each row
+ */
 template <typename T, int NUM_THREADS_PER_BLK, int ELEM_PER_THREAD>
 __global__ void blockwise_median_kernel(
     const T *inputRows,      // the input data, numRows x numColumns
     const int numRows,       // number of rows
     const int numColumns,    // number of columns
     const int *inputLengths, // the number of actually used elements in each row
-    T *medians) {
-  // TODO: move this into docstring above when ready
-  // - Expect that invalid data is filled with std::numeric_limits<T>::max()
-  // This will allow us to read the entire row, and sort as a static length,
-  // then ignore the ending length i.e get the validLength/2 as median
-  // - The numColumns represents the input data's dimensions; this should be
-  // smaller than or equal to NUM_THREADS * ELEM_PER_THREAD. It does not REQUIRE
-  // it to be EQUAL.
-
+    T *medians               // numRows
+) {
   // Define the sort length
   constexpr int SORT_LENGTH = NUM_THREADS_PER_BLK * ELEM_PER_THREAD;
 
