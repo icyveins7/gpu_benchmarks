@@ -24,17 +24,21 @@ template <typename T = unsigned int> struct SliceBounds {
  * @param oMaxLength Output maximum length
  * @param sliceIdx Slice indices for each output element, oRows * MAX_SLICES
  * @param numSlices Number of slices actually used (out of MAX_SLICES)
+ * @param numSkipPerSlice Number of elements to skip in each slice (downsample
+ * rate, optional)
  */
-template <typename T, typename Tslice, int MAX_SLICES>
+template <typename T, typename Tslice, int MAX_SLICES,
+          typename Tskip = unsigned char>
 __global__ void blockwise_select_1d_slices_kernel(
-    const T *d_input,                    // iLength
-    const unsigned int iLength,          // input dimensions
-    T *d_output,                         // oRows * oMaxLength
-    unsigned int *outputLengths,         // oRows
-    const unsigned int oRows,            // output dimensions
-    const unsigned int oMaxLength,       // see above
-    const SliceBounds<Tslice> *sliceIdx, // oRows * MAX_SLICES
-    const unsigned int *numSlices        // oRows
+    const T *d_input,                      // iLength
+    const unsigned int iLength,            // input dimensions
+    T *d_output,                           // oRows * oMaxLength
+    unsigned int *outputLengths,           // oRows
+    const unsigned int oRows,              // output dimensions
+    const unsigned int oMaxLength,         // see above
+    const SliceBounds<Tslice> *sliceIdx,   // oRows * MAX_SLICES
+    const unsigned int *numSlices,         // oRows
+    const Tskip *numSkipPerSlice = nullptr // oRows
 ) {
   // Each block operates on one output element
   const unsigned int row = blockIdx.x;
@@ -46,6 +50,9 @@ __global__ void blockwise_select_1d_slices_kernel(
   const SliceBounds<Tslice> *blockSlices = &sliceIdx[row * MAX_SLICES];
   // Read number of slices
   const int numSlicesForThisBlock = numSlices[row];
+  // Read (optional) skipping per slice for this row
+  Tskip numSkipPerSliceForThisBlock =
+      numSkipPerSlice ? numSkipPerSlice[row] : 1;
 
   // Iterate over slice bounds
   unsigned int lengthUsed = 0; // accumulate the length used
@@ -53,6 +60,13 @@ __global__ void blockwise_select_1d_slices_kernel(
     // Read next slice
     const SliceBounds slice = blockSlices[i];
     unsigned int length = slice.end - slice.start + 1;
+
+    // Amend the length based on the skip rate
+    // NOTE: this is equivalent to checking if the sliceIdx % numSkip == 0
+    length = length / numSkipPerSliceForThisBlock +
+             (length % numSkipPerSliceForThisBlock > 0 ? 1 : 0);
+    // E.g. for length 21, skip 10 -> 0, 10, 20 are used
+
     // Check that the slice references a valid input
     // NOTE: we assume unsigned integer types, so no need to check below 0
     if (slice.start >= iLength || slice.end >= iLength) {
@@ -63,7 +77,8 @@ __global__ void blockwise_select_1d_slices_kernel(
     for (unsigned int t = threadIdx.x; t < length; t += blockDim.x) {
       // Only write if our output has sufficient space for the slice
       if (lengthUsed + t < oMaxLength) {
-        d_output[row * oMaxLength + lengthUsed + t] = d_input[slice.start + t];
+        d_output[row * oMaxLength + lengthUsed + t] =
+            d_input[slice.start + t * numSkipPerSliceForThisBlock];
       }
     } // end loop over current slice copy
 
@@ -77,3 +92,10 @@ __global__ void blockwise_select_1d_slices_kernel(
   if (threadIdx.x == 0)
     outputLengths[row] = lengthUsed < oMaxLength ? lengthUsed : oMaxLength;
 };
+
+// TODO: add kernel to perform multiple outputs per block.
+// this would be useful especially if neighbouring outputs tend to have
+// overlapping slices. the idea would be to find 'umbrella' slices, load them
+// into shmem and then read from there for the various outputs, allowing for
+// coalesced reads (the above kernel will suffer from non-coalesced reads,
+// especially when downsampling is used)

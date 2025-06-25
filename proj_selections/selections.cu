@@ -77,5 +77,37 @@ int main() {
     }
   }
 
+  // Try kernel again with some downsampling
+  printf("\n================ Downsampling =============\n");
+  thrust::device_vector<unsigned char> d_skipsPerSlice(oRows * oCols);
+  // Set all to 2
+  thrust::fill(d_skipsPerSlice.begin(), d_skipsPerSlice.end(), 2);
+
+  blockwise_select_1d_slices_kernel<int, unsigned int, MAX_SLICES,
+                                    unsigned char>
+      <<<dim3(oCols * oRows, 1, 1), dim3(32, 1, 1)>>>(
+          thrust::raw_pointer_cast(d_input.data()), iRows * iCols,
+          thrust::raw_pointer_cast(d_output.data()),
+          thrust::raw_pointer_cast(d_outputLengths.data()), oRows * oCols,
+          oMaxLength, thrust::raw_pointer_cast(d_sliceIdx.data()),
+          thrust::raw_pointer_cast(d_numSlices.data()),
+          thrust::raw_pointer_cast(d_skipsPerSlice.data()));
+
+  // Read again
+  h_output = d_output;
+  h_outputLengths = d_outputLengths;
+  for (int oRow = 0; oRow < (int)oRows; ++oRow) {
+    for (int oCol = 0; oCol < (int)oCols; ++oCol) {
+      printf("===================\noRow=%d, oCol=%d\n", oRow, oCol);
+      unsigned int length = h_outputLengths[oRow * oCols + oCol];
+      printf("Total elements: %u\n", length);
+      for (unsigned int i = 0; i < length; ++i) {
+        std::cout << h_output[oRow * oCols * oMaxLength + oCol * oMaxLength + i]
+                  << " ";
+      }
+      std::cout << std::endl;
+    }
+  }
+
   return 0;
 }
