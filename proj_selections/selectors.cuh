@@ -9,7 +9,7 @@ template <typename T = unsigned int> struct SliceBounds {
  * @brief Internal function for blockwise_select_1d_slices_kernel.
  * Used when skipInSlice is true.
  */
-template <typename T, typename Tslice, int MAX_SLICES, typename Tskip>
+template <typename T, typename Tslice, typename Tskip>
 __device__ unsigned int blockwise_process_slices_skipInSlice(
     const int numSlicesForThisBlock, const SliceBounds<Tslice> *blockSlices,
     const Tskip *numSkip, const unsigned int row, const T *d_input,
@@ -58,7 +58,7 @@ __device__ unsigned int blockwise_process_slices_skipInSlice(
  * @brief Internal function for blockwise_select_1d_slices_kernel.
  * Used when skipInSlice is false.
  */
-template <typename T, typename Tslice, int MAX_SLICES, typename Tskip>
+template <typename T, typename Tslice, typename Tskip>
 __device__ unsigned int blockwise_process_slices_skipAfterSlices(
     const int numSlicesForThisBlock, const SliceBounds<Tslice> *blockSlices,
     const Tskip *numSkip, const unsigned int row, const T *d_input,
@@ -86,7 +86,7 @@ __device__ unsigned int blockwise_process_slices_skipAfterSlices(
       unsigned int aggInIdx = rawLengthUsed + t;
       unsigned int aggOutIdx = aggInIdx / numSkipForThisBlock;
       // Only write if our output has sufficient space for the slice
-      if (aggOutIdx % numSkipForThisBlock == 0 &&
+      if (aggInIdx % numSkipForThisBlock == 0 &&
           rawLengthUsed + t < oMaxLength) {
         // NOTE: this will be 'coalesced' on reads, but not on writes
         d_output[row * oMaxLength + aggOutIdx] = d_input[slice.start + t];
@@ -156,21 +156,21 @@ __global__ void blockwise_select_1d_slices_kernel(
   const SliceBounds<Tslice> *blockSlices = &sliceIdx[row * MAX_SLICES];
   // Read number of slices
   const int numSlicesForThisBlock = numSlices[row];
+  // NOTE: we do not explicitly check for numSlicesForThisBlock > MAX_SLICES
+  // since we assume it is prepared correctly
 
   unsigned int lengthUsed = 0;
   // Compile-time swap based on the skip method
   if constexpr (skipInSlice) {
     // Skip within each slice individually
-    lengthUsed =
-        blockwise_process_slices_skipInSlice<T, Tslice, MAX_SLICES, Tskip>(
-            numSlicesForThisBlock, blockSlices, numSkip, row, d_input, iLength,
-            oMaxLength, d_output);
+    lengthUsed = blockwise_process_slices_skipInSlice<T, Tslice, Tskip>(
+        numSlicesForThisBlock, blockSlices, numSkip, row, d_input, iLength,
+        oMaxLength, d_output);
   } else {
     // Skip only after aggregating all slices
-    lengthUsed =
-        blockwise_process_slices_skipAfterSlices<T, Tslice, MAX_SLICES, Tskip>(
-            numSlicesForThisBlock, blockSlices, numSkip, row, d_input, iLength,
-            oMaxLength, d_output);
+    lengthUsed = blockwise_process_slices_skipAfterSlices<T, Tslice, Tskip>(
+        numSlicesForThisBlock, blockSlices, numSkip, row, d_input, iLength,
+        oMaxLength, d_output);
   }
 
   // Write the final output length used
