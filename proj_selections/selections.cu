@@ -81,7 +81,7 @@ int main() {
   printf("\n================ Downsampling =============\n");
   thrust::device_vector<unsigned char> d_skipsPerSlice(oRows * oCols);
   // Set all to 2
-  thrust::fill(d_skipsPerSlice.begin(), d_skipsPerSlice.end(), 2);
+  thrust::fill(d_skipsPerSlice.begin(), d_skipsPerSlice.end(), 10);
 
   blockwise_select_1d_slices_kernel<int, unsigned int, MAX_SLICES,
                                     unsigned char>

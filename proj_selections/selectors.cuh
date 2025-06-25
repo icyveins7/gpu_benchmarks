@@ -86,8 +86,7 @@ __device__ unsigned int blockwise_process_slices_skipAfterSlices(
       unsigned int aggInIdx = rawLengthUsed + t;
       unsigned int aggOutIdx = aggInIdx / numSkipForThisBlock;
       // Only write if our output has sufficient space for the slice
-      if (aggInIdx % numSkipForThisBlock == 0 &&
-          rawLengthUsed + t < oMaxLength) {
+      if (aggInIdx % numSkipForThisBlock == 0 && aggOutIdx < oMaxLength) {
         // NOTE: this will be 'coalesced' on reads, but not on writes
         d_output[row * oMaxLength + aggOutIdx] = d_input[slice.start + t];
       }
