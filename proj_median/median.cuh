@@ -47,6 +47,12 @@ __global__ void blockwise_median_kernel(
     return;
   }
 
+  // Special case: if the length is 0, we return without writing anything
+  // Otherwise, due to how we fill the remainder elements, it will write
+  // numeric_limits<T>::max() instead.
+  if (inputLengths[row] == 0)
+    return;
+
   // Extract the row that will be processed
   const T *inputRow = &inputRows[row * numColumns];
   // Read the valid length for the row
