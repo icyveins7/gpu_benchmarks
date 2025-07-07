@@ -18,3 +18,16 @@ target_sources(
   ${PROJECT_SOURCE_DIR}/blkreductions.cu
 )
 
+# --------------------
+set_source_files_properties(devicereduction.cu PROPERTIES LANGUAGE CUDA)
+add_executable(devicereduction)
+
+target_include_directories(devicereduction
+                           PRIVATE ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
+                           )
+
+target_sources(
+  devicereduction PRIVATE
+  ${PROJECT_SOURCE_DIR}/devicereduction.cu
+)
+
