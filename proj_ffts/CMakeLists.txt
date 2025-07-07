@@ -80,7 +80,7 @@ target_sources(1d_r2c_c2r_example
 
 target_link_libraries(1d_r2c_c2r_example PRIVATE CUDA::cufft CUDA::cudart)
 # --------------------
-find_package(IPP REQUIRED)
+find_package(IPP)
 if (${IPP_FOUND})
   message("-- Found IPP at " ${IPP_DIR})
 

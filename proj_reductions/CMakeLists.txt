@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.24)
 
 project(
-  "proj_blockReductions"
-DESCRIPTION "Block-wise Reductions"
+  "proj_reductions"
+DESCRIPTION "Reductions"
   LANGUAGES CXX CUDA)
 
 # --------------------

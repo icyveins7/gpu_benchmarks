@@ -6,6 +6,7 @@
 
 #include <thrust/random.h>
 #include <thrust/complex.h>
+#include <thrust/tuple.h>
 
 // The following is adapted from
 // cuda-samples/Samples/3_CUDA_Features/cdpQuadtree/cdpQuadtree.cu
