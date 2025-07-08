@@ -13,6 +13,15 @@
 
 namespace cg = cooperative_groups;
 
+template <typename T> __device__ void atomicAggIncSum(T *sum, T val) {
+  cg::coalesced_group g = cg::coalesced_threads();
+  for (int i = g.size() / 2; i > 0; i /= 2) {
+    val += g.shfl_down(val, i);
+  }
+  if (g.thread_rank() == 0)
+    atomicAdd(sum, val);
+}
+
 /**
  * @brief Checks if an element is greater than the threshold, and atomically
  * increases the global counter. This is the most naive method, and the least

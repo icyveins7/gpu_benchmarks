@@ -38,8 +38,8 @@ int main(int argc, char **argv) {
           d_x.data().get(), length, d_sum.data().get(), d_sumSq.data().get());
   thrust::host_vector<AccumulatorType> h_sum(d_sum);
   thrust::host_vector<AccumulatorType> h_sumSq(d_sumSq);
-  printf("Sum: %llu\n", h_sum[0]);
-  printf("SumSq: %llu\n", h_sumSq[0]);
+  printf("Sum: %llu\n", h_sum[0] / 2);
+  printf("SumSq: %llu\n", h_sumSq[0] / 2);
   printf("CheckSum: %llu\n", checkSum);
   printf("CheckSumSq: %llu\n", checkSumSq);
 

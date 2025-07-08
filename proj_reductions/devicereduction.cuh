@@ -1,5 +1,6 @@
 #pragma once
 
+#include "atomic_extensions.cuh"
 #include "sharedmem.cuh"
 
 /**
@@ -8,14 +9,14 @@
  *
  * @tparam T Input type
  * @tparam U Output type; all inputs are cast to this first before accumulation
- * @param useExplicitSharedMemory Highly recommended to leave as true, as it has
- * been measured to be faster.
+ * @param useExplicitSharedMemory Highly recommended to leave as false, as it
+ * has been measured to be faster (using warp-level aggregation).
  * @param in Input array
  * @param length Length of input
  * @param d_sum Global memory sum, assumed to be zeroed
  * @param d_sumSq Global memory squared sum, assumed to be zeroed
  */
-template <typename T, typename U, bool useExplicitSharedMemory = true>
+template <typename T, typename U, bool useExplicitSharedMemory = false>
 __global__ void device_sum_and_sumSq_kernel(const T *in, size_t length,
                                             U *d_sum, U *d_sumSq) {
 
@@ -59,10 +60,13 @@ __global__ void device_sum_and_sumSq_kernel(const T *in, size_t length,
     if (threadIdx.x == 0) {
       atomicAdd(d_sumSq, s_workspace[0]);
     }
+  } else {
+    // Do warp-level aggregation with atomics
+    atomicAggIncSum(d_sum, x);
+    atomicAggIncSum(d_sumSq, xsq);
   }
-  // Try to let the compiler optimize the atomics? NOTE: don't use this
-  else {
-    atomicAdd(d_sum, x);
-    atomicAdd(d_sumSq, xsq);
-  }
+
+  // NOTE: previously we tested a plain atomicAdd to see if CUDA 12.6 nvcc would
+  // automatically optimize warp aggregation well. but this performed worse than
+  // shared memory reduction.
 }
