@@ -34,12 +34,25 @@ int main(int argc, char **argv) {
       <<<NUM_BLKS, TPB, sizeof(AccumulatorType) * TPB>>>(
           d_x.data().get(), length, d_sum.data().get(), d_sumSq.data().get());
   device_sum_and_sumSq_kernel<BaseType, AccumulatorType, false>
-      <<<NUM_BLKS, TPB, sizeof(AccumulatorType) * TPB>>>(
-          d_x.data().get(), length, d_sum.data().get(), d_sumSq.data().get());
+      <<<NUM_BLKS, TPB>>>(d_x.data().get(), length, d_sum.data().get(),
+                          d_sumSq.data().get());
   thrust::host_vector<AccumulatorType> h_sum(d_sum);
   thrust::host_vector<AccumulatorType> h_sumSq(d_sumSq);
   printf("Sum: %llu\n", h_sum[0] / 2);
   printf("SumSq: %llu\n", h_sumSq[0] / 2);
+  printf("CheckSum: %llu\n", checkSum);
+  printf("CheckSumSq: %llu\n", checkSumSq);
+
+  // What if we called the sectioned flavour of the kernel for just this
+  // instead? NOTE: this appears to be almost the same time as above, yay!
+  device_sectioned_sum_and_sumSq_kernel<BaseType, AccumulatorType, size_t>
+      <<<NUM_BLKS, TPB>>>(d_x.data().get(), length, d_sum.data().get(),
+                          d_sumSq.data().get(), length, 1);
+  h_sum = d_sum;
+  h_sumSq = d_sumSq;
+
+  printf("Sum: %llu\n", h_sum[0] / 3);
+  printf("SumSq: %llu\n", h_sumSq[0] / 3);
   printf("CheckSum: %llu\n", checkSum);
   printf("CheckSumSq: %llu\n", checkSumSq);
 

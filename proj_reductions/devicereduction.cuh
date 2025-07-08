@@ -70,3 +70,32 @@ __global__ void device_sum_and_sumSq_kernel(const T *in, size_t length,
   // automatically optimize warp aggregation well. but this performed worse than
   // shared memory reduction.
 }
+
+template <typename Tinput, typename Toutput, typename Tsize = int>
+__global__ void
+device_sectioned_sum_and_sumSq_kernel(const Tinput *in, Tsize length,
+                                      Toutput *d_sum, Toutput *d_sumSq,
+                                      Tsize sectionSize, Tsize numSections) {
+  // Thread-local accumulation
+  Toutput x = 0, xsq = 0;
+
+  // Input index for the thread
+  Tsize idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (idx >= length) {
+    return;
+  }
+
+  // Section index for the thread
+  Tsize sectionIdx = idx / sectionSize;
+  if (sectionIdx >= numSections) {
+    return;
+  }
+
+  // No grid-stride, assume grid covers input data sufficiently
+  Toutput val = static_cast<Toutput>(in[idx]);
+  Toutput valSq = val * val;
+
+  // Atomic warp-level aggregation
+  atomicAggIncSum(&d_sum[sectionIdx], val);
+  atomicAggIncSum(&d_sumSq[sectionIdx], valSq);
+}
