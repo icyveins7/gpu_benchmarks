@@ -190,6 +190,34 @@ __global__ void blockwise_select_1d_slices_kernel(
 // ========================================================================
 // ========================================================================
 
+/**
+ * @brief Downsamples from a rectangular ROI in an input array, conditioned
+ * on the values of a 2nd array, writing invalid values when the 2nd array
+ * exceeds a maximum value.
+ *
+ * Effectively, this is an if-else condition like:
+ *    if (condition < max)
+ *      write downsampled value
+ *    else
+ *      write invalid value
+ *
+ * @tparam T Data type of arrays
+ * @param input Input array, where data is downsampled
+ * @param conditional Conditional input array, same dimensions as input
+ * @param maxConditionVal Maximum value allowed in the conditional array
+ * @param inputNumRows Number of rows of 'input'
+ * @param inputNumCols Number of columns of 'input'
+ * @param roiStartRow Start row of ROI
+ * @param roiStartCol Start column of ROI
+ * @param roiNumRows Number of rows in ROI
+ * @param roiNumCols Number of columns in ROI
+ * @param roiRowStride Stride of rows in ROI, determines row downsampling
+ * @param roiColStride Stride of columns in ROI, determines column downsampling
+ * @param output Output array
+ * @param outputNumRows Number of rows of 'output'
+ * @param outputNumCols Number of columns of 'output'
+ * @param invalidVal Value to use for invalid values
+ */
 template <typename T>
 __global__ void maximum_conditioned_downsampling_kernel(
     const T *input, const T *conditional, const T maxConditionVal,
