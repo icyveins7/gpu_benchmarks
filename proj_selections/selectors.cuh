@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cuda/std/limits>
+
 template <typename T = unsigned int> struct SliceBounds {
   T start;
   T end;
@@ -183,3 +185,48 @@ __global__ void blockwise_select_1d_slices_kernel(
 // into shmem and then read from there for the various outputs, allowing for
 // coalesced reads (the above kernel will suffer from non-coalesced reads,
 // especially when downsampling is used)
+
+// ========================================================================
+// ========================================================================
+// ========================================================================
+
+template <typename T>
+__global__ void maximum_conditioned_downsampling_kernel(
+    const T *input, const T *conditional, const T maxConditionVal,
+    const unsigned int inputNumRows, const unsigned int inputNumCols,
+    const unsigned int roiStartRow, const unsigned int roiStartCol,
+    const unsigned int roiNumRows, const unsigned int roiNumCols,
+    const unsigned int roiRowStride, const unsigned int roiColStride, T *output,
+    const unsigned int outputNumRows, const unsigned int outputNumCols,
+    const T invalidVal = cuda::std::numeric_limits<T>::max()) {
+  // Assume 2D grid that covers ROI
+  const unsigned int ix = blockIdx.x * blockDim.x + threadIdx.x;
+  const unsigned int iy = blockIdx.y * blockDim.y + threadIdx.y;
+
+  if (ix >= roiNumCols || iy >= roiNumRows) {
+    return;
+  }
+
+  // Compute index into input
+  const unsigned int iRow = iy + roiStartRow;
+  const unsigned int iCol = ix + roiStartCol;
+  if (iRow >= inputNumRows || iCol >= inputNumCols) {
+    return;
+  }
+  const size_t iIndex = iRow * inputNumCols + iCol;
+
+  // Check if current thread is a valid downsample index
+  if (ix % roiColStride == 0 && iy % roiRowStride == 0) {
+    const unsigned int oRow = iy / roiRowStride;
+    const unsigned int oCol = ix / roiColStride;
+    if (oRow >= outputNumRows || oCol >= outputNumCols) {
+      return;
+    }
+    const size_t oIndex = oRow * outputNumCols + oCol;
+    // Check the condition
+    if (conditional[iIndex] < maxConditionVal) {
+      output[oIndex] = input[iIndex];
+    } else // Mark the value as invalid
+      output[oIndex] = invalidVal;
+  }
+}

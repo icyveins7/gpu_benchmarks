@@ -17,6 +17,18 @@ target_sources(
   selections PRIVATE
   ${PROJECT_SOURCE_DIR}/selections.cu
 )
+# --------------------
+set_source_files_properties(conditioned_selections.cu PROPERTIES LANGUAGE CUDA)
+add_executable(conditioned_selections)
+
+target_include_directories(conditioned_selections
+                           PRIVATE ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
+                           )
+
+target_sources(
+  conditioned_selections PRIVATE
+  ${PROJECT_SOURCE_DIR}/conditioned_selections.cu
+)
 
 # -------------------- Tests
 # if (GTEST_FOUND)
