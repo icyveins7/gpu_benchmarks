@@ -33,43 +33,51 @@ __global__ void remove_sigma_multiple_outlier_removal_sectioned_kernel(
     Tdata invalidValue = cuda::std::numeric_limits<Tdata>::max()) {
   static_assert(cuda::std::is_floating_point_v<Tcalc>,
                 "Tcalc must be float or double");
-  // Get global index
-  Tsize idx = blockIdx.x * blockDim.x + threadIdx.x;
-  if (idx >= numSections * maxSectionSize) {
+  // Get section index
+  Tsize sectionIdx = blockIdx.y;
+  if (sectionIdx >= numSections) {
     return;
   }
-
-  // Get section index
-  Tsize sectionIdx = idx / maxSectionSize;
-
   // Read associated sum and sum squared values
   Tcalc sectionSum = d_sumSections[sectionIdx];
   Tcalc sectionSumSq = d_sumSqSections[sectionIdx];
 
-  // Then the associated mean and variance
+  // Then define the associated mean and variance values
   Tcalc actualReciprocalSectionSize = 1.0 / sectionSizes[sectionIdx];
   Tcalc mean = sectionSum * actualReciprocalSectionSize;
   Tcalc variance = sectionSumSq * actualReciprocalSectionSize - mean * mean;
   Tcalc std = sqrt(variance);
 
-  // Read data and compare
-  Tdata data = d_data[idx];
-  if (data != invalidValue) {
-    // Cast to floating point template type
-    Tcalc cdata = (Tcalc)data;
-    // Calculate the abs differences
-    Tcalc diff = abs(cdata - mean);
-    // Rewrite if it exceeds
-    if (diff > stdFactor * std) {
-      d_data[idx] = invalidValue;
+  // Get index inside section
+  Tsize idx = blockIdx.x * blockDim.x + threadIdx.x;
+  Tdata data;
+  if (idx < maxSectionSize)
+    data = d_data[sectionIdx * maxSectionSize + idx];
+  else
+    data = invalidValue;
 
-      // We also amend the sum and sum squared values, and the counter
-      Tsum sdata = static_cast<Tsum>(data);
-      atomicAggIncSum(&d_sumSections[sectionIdx], -sdata);
-      atomicAggIncSum(&d_sumSqSections[sectionIdx], -sdata * sdata);
-      atomicAggDec(&sectionSizes[sectionIdx]);
-      // This should be ready for the next iteration, since the total sums now
-      // reflect the newly invalidated elements, and so does the counter
-    }
+  // Cast to floating point template type
+  Tcalc cdata = (Tcalc)data;
+  // Calculate the abs differences in floating point
+  Tcalc diff = abs(cdata - mean);
+  // Determine if it's a new outlier (should NOT be an invalid value)
+  bool isOutlier = (diff > stdFactor * std) && (data != invalidValue);
+  // Define adjustments for every thread in the warp
+  Tsum sumAdj = isOutlier ? -static_cast<Tsum>(data) : 0;
+  Tsum sumSqAdj =
+      isOutlier ? -static_cast<Tsum>(data) * static_cast<Tsum>(data) : 0;
+
+  // Warp-aggregatic atomic adjustment of the sum and sum squared values
+  atomicAggIncSum(&d_sumSections[sectionIdx], sumAdj);
+  atomicAggIncSum(&d_sumSqSections[sectionIdx], sumSqAdj);
+
+  // Overwrite if it is an outlier
+  if (isOutlier) {
+    d_data[sectionIdx * maxSectionSize + idx] = invalidValue;
+
+    // Reduce the count of valid values
+    atomicAggDec(&sectionSizes[sectionIdx]);
+    // This should be ready for the next iteration, since the total sums now
+    // reflect the newly invalidated elements, and so does the counter
   }
 }
