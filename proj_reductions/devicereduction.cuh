@@ -3,6 +3,8 @@
 #include "atomic_extensions.cuh"
 #include "sharedmem.cuh"
 
+#include <cuda/std/limits>
+
 /**
  * @brief Device-wide kernel to compute the sum and the squared sum of an input.
  * This can be used to compute the mean and standard deviation in later kernels.
@@ -72,30 +74,32 @@ __global__ void device_sum_and_sumSq_kernel(const T *in, size_t length,
 }
 
 template <typename Tinput, typename Toutput, typename Tsize = int>
-__global__ void
-device_sectioned_sum_and_sumSq_kernel(const Tinput *in, Tsize length,
-                                      Toutput *d_sum, Toutput *d_sumSq,
-                                      Tsize sectionSize, Tsize numSections) {
-  // Thread-local accumulation
-  Toutput x = 0, xsq = 0;
-
+__global__ void device_sectioned_sum_and_sumSq_kernel(
+    const Tinput *in, Toutput *d_sum, Toutput *d_sumSq, Tsize maxSectionSize,
+    Tsize numSections, Tsize *validSectionSizes = nullptr,
+    Tinput ignoredValue = cuda::std::numeric_limits<Tinput>::max()) {
   // Input index for the thread
   Tsize idx = blockIdx.x * blockDim.x + threadIdx.x;
-  if (idx >= length) {
+  if (idx >= maxSectionSize * numSections) {
     return;
   }
 
   // Section index for the thread
-  Tsize sectionIdx = idx / sectionSize;
-  if (sectionIdx >= numSections) {
-    return;
-  }
+  Tsize sectionIdx = idx / maxSectionSize;
 
   // No grid-stride, assume grid covers input data sufficiently
-  Toutput val = static_cast<Toutput>(in[idx]);
-  Toutput valSq = val * val;
+  Tinput val = in[idx];
+  // The value is set to 0 (nothing added) if it's to be ignored
+  Toutput valOut = val == ignoredValue ? 0 : static_cast<Toutput>(val);
+  Toutput valSq = valOut * valOut;
 
   // Atomic warp-level aggregation
-  atomicAggIncSum(&d_sum[sectionIdx], val);
+  atomicAggIncSum(&d_sum[sectionIdx], valOut);
   atomicAggIncSum(&d_sumSq[sectionIdx], valSq);
+  // Increment our counter as well, if provided
+  if (validSectionSizes != nullptr && val != ignoredValue)
+    atomicAggInc(&validSectionSizes[sectionIdx]);
+
+  // TODO: this is not giving correct results, as seen in devicereduction.cu,
+  // for some reason
 }

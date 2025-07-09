@@ -27,8 +27,9 @@
  */
 template <typename Tdata, typename Tsum, typename Tcalc, typename Tsize = int>
 __global__ void remove_sigma_multiple_outlier_removal_sectioned_kernel(
-    Tdata *d_data, Tsize maxSectionSize, Tsize *sectionSizes, Tsize numSections,
-    Tsum *d_sumSections, Tsum *d_sumSqSections, Tcalc stdFactor,
+    Tdata *d_data, Tsize maxSectionSize, Tsize *sectionSizes,
+    Tsize *prevSectionSizes, Tsize numSections, Tsum *d_sumSections,
+    Tsum *d_sumSqSections, Tcalc stdFactor,
     Tdata invalidValue = cuda::std::numeric_limits<Tdata>::max()) {
   static_assert(cuda::std::is_floating_point_v<Tcalc>,
                 "Tcalc must be float or double");
@@ -47,8 +48,7 @@ __global__ void remove_sigma_multiple_outlier_removal_sectioned_kernel(
 
   // Then the associated mean and variance
   Tcalc actualReciprocalSectionSize = 1.0 / sectionSizes[sectionIdx];
-  Tcalc mean =
-      sectionSum * actualReciprocalSectionSize; // TODO: ignore invalid values
+  Tcalc mean = sectionSum * actualReciprocalSectionSize;
   Tcalc variance = sectionSumSq * actualReciprocalSectionSize - mean * mean;
   Tcalc std = sqrt(variance);
 
@@ -62,6 +62,14 @@ __global__ void remove_sigma_multiple_outlier_removal_sectioned_kernel(
     // Rewrite if it exceeds
     if (diff > stdFactor * std) {
       d_data[idx] = invalidValue;
+
+      // We also amend the sum and sum squared values, and the counter
+      Tsum sdata = static_cast<Tsum>(data);
+      atomicAggIncSum(&d_sumSections[sectionIdx], -sdata);
+      atomicAggIncSum(&d_sumSqSections[sectionIdx], -sdata * sdata);
+      atomicAggDec(&sectionSizes[sectionIdx]);
+      // This should be ready for the next iteration, since the total sums now
+      // reflect the newly invalidated elements, and so does the counter
     }
   }
 }

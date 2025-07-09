@@ -87,6 +87,28 @@ template <typename T> __device__ int atomicAggInc(T *counter) {
 }
 
 /**
+ * @brief Similar to atomicAggInc above, but decrementing instead.
+ */
+template <typename T> __device__ int atomicAggDec(T *counter) {
+  // Gets all the threads that activated this in the warp
+  auto g = cg::coalesced_threads();
+
+  T warp_res;
+  // Get your lowest active thread (leader thread)
+  if (g.thread_rank() == 0)
+    // Atomically decrement by the number of threads active in this warp
+    warp_res = atomicSub(counter, g.size());
+
+  // Return 'index' for each thread: warp_res is the leader thread's index and
+  // the thread_rank will handle the rest in the warp
+  // NOTE: the atomicAdd returned the value before it was incremented
+  // TODO: check if this has some overhead (does compiler optimize away if
+  // unused?)
+  // TODO: not sure if just doing the minus here is correct?
+  return g.shfl(warp_res, 0) - g.thread_rank();
+}
+
+/**
  * @brief Implements atomicMin for floats, since there isn't one provided by
  * CUDA. Taken from
  * https://stackoverflow.com/questions/17399119/how-do-i-use-atomicmax-on-floating-point-values-in-cuda.
