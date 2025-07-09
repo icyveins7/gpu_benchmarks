@@ -56,5 +56,44 @@ int main(int argc, char **argv) {
   printf("CheckSum: %llu\n", checkSum);
   printf("CheckSumSq: %llu\n", checkSumSq);
 
+  // Now try doing multiple sections
+  const size_t sectionLength = 100000;
+  const size_t numSections = 6;
+  thrust::device_vector<AccumulatorType> d_sumSections(numSections);
+  thrust::device_vector<AccumulatorType> d_sumSqSections(numSections);
+  h_x.resize(sectionLength * numSections);
+  AccumulatorType checkSums[numSections] = {0};
+  AccumulatorType checkSumSqs[numSections] = {0};
+  for (size_t i = 0; i < numSections; ++i) {
+    for (size_t j = 0; j < sectionLength; ++j) {
+      h_x[i * sectionLength + j] = std::rand() % 10000;
+      checkSums[i] += h_x[i * sectionLength + j];
+      checkSumSqs[i] += h_x[i * sectionLength + j] * h_x[i * sectionLength + j];
+    }
+  }
+  d_x = h_x;
+
+  // Call sectioned kernel
+  NUM_BLKS = d_x.size() / TPB + 1;
+  printf("Total threads in grid = %zd\n", (size_t)NUM_BLKS * (size_t)TPB);
+  device_sectioned_sum_and_sumSq_kernel<BaseType, AccumulatorType, size_t>
+      <<<NUM_BLKS, TPB>>>(
+          d_x.data().get(), d_x.size(), d_sumSections.data().get(),
+          d_sumSqSections.data().get(), sectionLength, numSections);
+
+  thrust::host_vector<AccumulatorType> h_sumSections = d_sumSections;
+  thrust::host_vector<AccumulatorType> h_sumSqSections = d_sumSqSections;
+  for (size_t i = 0; i < numSections; ++i) {
+    printf("--------- Section %zd\n", i);
+    printf("Sum: %llu\n", h_sumSections[i]);
+    printf("SumSq: %llu\n", h_sumSqSections[i]);
+    printf("CheckSum: %llu\n", checkSums[i]);
+    printf("CheckSumSq: %llu\n", checkSumSqs[i]);
+    printf("%s\n", h_sumSections[i] == checkSums[i] &&
+                           h_sumSqSections[i] == checkSumSqs[i]
+                       ? "\u2713"
+                       : "\u2715");
+  }
+
   return 0;
 }
