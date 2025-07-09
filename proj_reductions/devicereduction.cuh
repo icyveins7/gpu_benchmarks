@@ -66,6 +66,8 @@ __global__ void device_sum_and_sumSq_kernel(const T *in, size_t length,
     // Do warp-level aggregation with atomics
     atomicAggIncSum(d_sum, x);
     atomicAggIncSum(d_sumSq, xsq);
+    // TODO: this may not necessarily work properly if data is not a multiple of
+    // 32
   }
 
   // NOTE: previously we tested a plain atomicAdd to see if CUDA 12.6 nvcc would
@@ -78,28 +80,43 @@ __global__ void device_sectioned_sum_and_sumSq_kernel(
     const Tinput *in, Toutput *d_sum, Toutput *d_sumSq, Tsize maxSectionSize,
     Tsize numSections, Tsize *validSectionSizes = nullptr,
     Tinput ignoredValue = cuda::std::numeric_limits<Tinput>::max()) {
+  // Section index for the thread, assume the grid has accounted for this
+  // NOTE: this is important, as we must have every warp contribute to the same
+  // sectionIdx i.e. the grouping is such that blockIdx.x * blockDim.x spans the
+  // sectionSize
+  Tsize sectionIdx = blockIdx.y;
+  if (sectionIdx >= numSections)
+    return;
+
   // Input index for the thread
   Tsize idx = blockIdx.x * blockDim.x + threadIdx.x;
-  if (idx >= maxSectionSize * numSections) {
-    return;
+
+  // Read inputs contingent on available data
+  Tinput val;
+  Toutput valOut, valSq;
+  if (idx >= maxSectionSize) {
+    valOut = 0;
+    valSq = 0;
+  } else {
+    // No grid-stride, assume grid covers input data sufficiently
+    val = in[sectionIdx * maxSectionSize + idx];
+    // The value is set to 0 (nothing added) if it's to be ignored
+    valOut = val == ignoredValue ? 0 : static_cast<Toutput>(val);
+    valSq = valOut * valOut;
   }
 
-  // Section index for the thread
-  Tsize sectionIdx = idx / maxSectionSize;
-
-  // No grid-stride, assume grid covers input data sufficiently
-  Tinput val = in[idx];
-  // The value is set to 0 (nothing added) if it's to be ignored
-  Toutput valOut = val == ignoredValue ? 0 : static_cast<Toutput>(val);
-  Toutput valSq = valOut * valOut;
+  // // No grid-stride, assume grid covers input data sufficiently
+  // Tinput val = in[sectionIdx * maxSectionSize + idx];
+  // // The value is set to 0 (nothing added) if it's to be ignored
+  // Toutput valOut = val == ignoredValue ? 0 : static_cast<Toutput>(val);
+  // Toutput valSq = valOut * valOut;
 
   // Atomic warp-level aggregation
   atomicAggIncSum(&d_sum[sectionIdx], valOut);
   atomicAggIncSum(&d_sumSq[sectionIdx], valSq);
-  // Increment our counter as well, if provided
-  if (validSectionSizes != nullptr && val != ignoredValue)
-    atomicAggInc(&validSectionSizes[sectionIdx]);
 
-  // TODO: this is not giving correct results, as seen in devicereduction.cu,
-  // for some reason
+  // Increment our counter as well, if provided
+  if (validSectionSizes != nullptr && val != ignoredValue &&
+      idx < maxSectionSize)
+    atomicAggInc(&validSectionSizes[sectionIdx]);
 }

@@ -13,13 +13,29 @@
 
 namespace cg = cooperative_groups;
 
+/**
+ * @brief Warp-aggregated atomic add of values.
+ * NOTE: this specifically requires that all threads in the warp increment the
+ * SAME ADDRESS. The results are undefined if this assumption does not hold, as
+ * only the address of the leader thread will be used during the atomicAdd.
+ * NOTE: this also specifically requires that ALL 32 threads of the warp are
+ * active. This is due to the factor of 2 division loop; if not all 32 threads
+ * are active, some values will be left out of the final sum. Assign 0s to the
+ * 'inactive' threads 'val' arguments before calling this.
+ *
+ * @tparam T Type of data
+ * @param sum Address to accumulate sum. Must be identical across the warp.
+ * @param val Value per thread. Must be valid across the warp. Set to 0 for
+ * threads un-used.
+ */
 template <typename T> __device__ void atomicAggIncSum(T *sum, T val) {
   cg::coalesced_group g = cg::coalesced_threads();
   for (int i = g.size() / 2; i > 0; i /= 2) {
     val += g.shfl_down(val, i);
   }
-  if (g.thread_rank() == 0)
+  if (g.thread_rank() == 0) {
     atomicAdd(sum, val);
+  }
 }
 
 /**
