@@ -6,8 +6,9 @@
 #include <cuda/std/limits>
 
 /**
- * @brief Device-wide kernel to compute the sum and the squared sum of an input.
- * This can be used to compute the mean and standard deviation in later kernels.
+ * @brief Device-wide kernel to compute the sum and the sum of squares of an
+ * input. This can be used to compute the mean and standard deviation in later
+ * kernels.
  *
  * @tparam T Input type
  * @tparam U Output type; all inputs are cast to this first before accumulation
@@ -75,6 +76,30 @@ __global__ void device_sum_and_sumSq_kernel(const T *in, size_t length,
   // shared memory reduction.
 }
 
+/**
+ * @brief Calculates the sum and sum of squares of individual equal-length
+ * sections of an input, contingent on their validity (marked by the
+ * ignoredValue, like a NaN).
+ *
+ * |--section 0--|--section 1--|--......
+ *    │               └summed into d_sum[1], d_sumSq[1]
+ *    └summed into d_sum[0], d_sumSq[0]
+ *
+ * NOTE: this kernel assumes a sufficient grid dimensions to cover the data.
+ * 1) You should ensure that gridDim.y is equal to the number of sections.
+ * 2) You should ensure that gridDim.x * blockDim.x >= maxSectionSize
+ *
+ * @tparam Tinput Data type of input
+ * @tparam Toutput Data type of output sum and sum of squares
+ * @param in Input array (numSections x maxSectionSize)
+ * @param d_sum Output sums (per section)
+ * @param d_sumSq Output sums of squares (per section)
+ * @param maxSectionSize Section length (including invalid elements)
+ * @param numSections Number of sections
+ * @param validSectionSizes Output accumulator counter, excluding the invalid
+ * elements (per section)
+ * @param ignoredValue Value to ignore per element
+ */
 template <typename Tinput, typename Toutput, typename Tsize = int>
 __global__ void device_sectioned_sum_and_sumSq_kernel(
     const Tinput *in, Toutput *d_sum, Toutput *d_sumSq, Tsize maxSectionSize,
@@ -104,12 +129,7 @@ __global__ void device_sectioned_sum_and_sumSq_kernel(
     valOut = val == ignoredValue ? 0 : static_cast<Toutput>(val);
     valSq = valOut * valOut;
   }
-
-  // // No grid-stride, assume grid covers input data sufficiently
-  // Tinput val = in[sectionIdx * maxSectionSize + idx];
-  // // The value is set to 0 (nothing added) if it's to be ignored
-  // Toutput valOut = val == ignoredValue ? 0 : static_cast<Toutput>(val);
-  // Toutput valSq = valOut * valOut;
+  // Doing the above ensures that every thread in every warp has a valid value
 
   // Atomic warp-level aggregation
   atomicAggIncSum(&d_sum[sectionIdx], valOut);
