@@ -42,8 +42,10 @@ __global__ void blockwise_median_kernel(
 
   // Check whether the sort length is valid (must be more than the input length
   // of this row) Otherwise write the max value for this type
-  if (SORT_LENGTH < inputLengths[row] && threadIdx.x == 0) {
-    medians[row] = cuda::std::numeric_limits<T>::max();
+  if (SORT_LENGTH < inputLengths[row]) {
+    if (threadIdx.x == 0) {
+      medians[row] = cuda::std::numeric_limits<T>::max();
+    }
     return;
   }
 
