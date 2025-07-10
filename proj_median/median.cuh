@@ -23,7 +23,8 @@
  * @param inputLengths The number of actually used elements in each row
  * @param medians Output median values for each row
  */
-template <typename T, int NUM_THREADS_PER_BLK, int ELEM_PER_THREAD>
+template <typename T, int NUM_THREADS_PER_BLK, int ELEM_PER_THREAD,
+          bool allValidInFront = true>
 __global__ void blockwise_median_kernel(
     const T *inputRows,      // the input data, numRows x numColumns
     const int numRows,       // number of rows
@@ -40,9 +41,12 @@ __global__ void blockwise_median_kernel(
   if (row > numRows)
     return;
 
+  // Read the valid input length for this row
+  const int validLength = inputLengths[row];
+
   // Check whether the sort length is valid (must be more than the input length
   // of this row) Otherwise write the max value for this type
-  if (SORT_LENGTH < inputLengths[row]) {
+  if (SORT_LENGTH < validLength) {
     if (threadIdx.x == 0) {
       medians[row] = cuda::std::numeric_limits<T>::max();
     }
@@ -52,13 +56,11 @@ __global__ void blockwise_median_kernel(
   // Special case: if the length is 0, we return without writing anything
   // Otherwise, due to how we fill the remainder elements, it will write
   // numeric_limits<T>::max() instead.
-  if (inputLengths[row] == 0)
+  if (validLength == 0)
     return;
 
   // Extract the row that will be processed
   const T *inputRow = &inputRows[row * numColumns];
-  // Read the valid length for the row
-  const int validLength = inputLengths[row];
 
   // Standard cub boilerplate, adapted from example_block_radix_sort.cu
   using BlockRadixSort =
@@ -72,12 +74,25 @@ __global__ void blockwise_median_kernel(
   // There should be a total of ELEM_PER_THREAD loops
   for (int t = threadIdx.x; t < NUM_THREADS_PER_BLK * ELEM_PER_THREAD;
        t += NUM_THREADS_PER_BLK) {
-    // We write the valid elements
-    if (t < validLength)
-      items[t / NUM_THREADS_PER_BLK] = inputRow[t];
-    // Fill the remainder with the max type value
-    else
-      items[t / NUM_THREADS_PER_BLK] = cuda::std::numeric_limits<T>::max();
+    // Compile-time switch based on the type of data supplied
+    // Here we assume that the first validLength elements of each row are used
+    // E.g. O O O O O X X ...
+    if constexpr (allValidInFront) {
+      // we write the valid elements from the front
+      if (t < validLength)
+        items[t / NUM_THREADS_PER_BLK] = inputRow[t];
+      // Fill the remainder with the max type value
+      else
+        items[t / NUM_THREADS_PER_BLK] = cuda::std::numeric_limits<T>::max();
+    }
+    // Otherwise, we cannot assume the first validLength elements are to be used
+    // and we instead assume that the invalid elements have already been marked
+    // as numeric_limits<T>::max(), so we read all the elements available
+    // E.g. O O X O O X O X O ...
+    else {
+      if (t < numColumns)
+        items[t / NUM_THREADS_PER_BLK] = inputRow[t];
+    }
   }
 
   // Now sort

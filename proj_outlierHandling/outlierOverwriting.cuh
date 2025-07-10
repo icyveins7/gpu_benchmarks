@@ -42,10 +42,12 @@ __global__ void minmax_hold_from_section_medians_thresholds_kernel(
 
   // Now read and replace the data
   Tsize idx = blockIdx.x * blockDim.x + threadIdx.x;
-  Tdata data = d_data[sectionIdx * dataLengthPerSection + idx];
-  if (data > upperThreshold) {
-    d_data[sectionIdx * dataLengthPerSection + idx] = (Tdata)upperThreshold;
-  } else if (data < lowerThreshold) {
-    d_data[sectionIdx * dataLengthPerSection + idx] = (Tdata)lowerThreshold;
+  if (idx < dataLengthPerSection) {
+    Tdata data = d_data[sectionIdx * dataLengthPerSection + idx];
+    if (data > upperThreshold) {
+      d_data[sectionIdx * dataLengthPerSection + idx] = (Tdata)upperThreshold;
+    } else if (data < lowerThreshold) {
+      d_data[sectionIdx * dataLengthPerSection + idx] = (Tdata)lowerThreshold;
+    }
   }
 }
