@@ -5,6 +5,7 @@
 #include <thrust/host_vector.h>
 
 #include "../proj_reductions/devicereduction.cuh"
+#include "outlierOverwriting.cuh"
 #include "outlierRemoval.cuh"
 
 int main() {
@@ -98,6 +99,9 @@ int main() {
       printf("\n [Sum %u, SumSq %u]\n", h_sumSections[s], h_sumSqSections[s]);
     }
   }
+
+  // Now try to overwrite outliers
+  // But first we need to estimate the medians from the remaining elements
 
   return 0;
 }
