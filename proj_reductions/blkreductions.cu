@@ -25,7 +25,7 @@ int main() {
   // Run kernel
   int blocks = batch;
   const int threads_per_blk = 128;
-  int smem = threads_per_blk * (sizeof(int) + sizeof(int));
+  // int smem = threads_per_blk * (sizeof(int) + sizeof(int));
 
   thrust::device_vector<int> d_debugMaxPerBlockStates(threads_per_blk * blocks);
   thrust::device_vector<unsigned int> d_debugArgMaxPerBlockStates(
