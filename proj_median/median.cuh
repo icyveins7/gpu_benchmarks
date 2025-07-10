@@ -38,7 +38,7 @@ __global__ void blockwise_median_kernel(
   // Each block processes one row
   int row = blockIdx.x;
   // Exit if nothing to do
-  if (row > numRows)
+  if (row >= numRows)
     return;
 
   // Read the valid input length for this row
@@ -60,7 +60,8 @@ __global__ void blockwise_median_kernel(
     return;
 
   // Extract the row that will be processed
-  const T *inputRow = &inputRows[row * numColumns];
+  size_t rowOffset = row * numColumns; // may be very large, so use size_t here
+  const T *inputRow = &inputRows[rowOffset];
 
   // Standard cub boilerplate, adapted from example_block_radix_sort.cu
   using BlockRadixSort =
