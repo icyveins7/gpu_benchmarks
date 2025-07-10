@@ -78,4 +78,5 @@ add_subdirectory(proj_cropping)
 add_subdirectory(proj_reductions)
 add_subdirectory(proj_median)
 add_subdirectory(proj_selections)
+add_subdirectory(proj_outlierRemoval)
 
