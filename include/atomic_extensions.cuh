@@ -33,7 +33,8 @@ template <typename T> __device__ void atomicAggIncSum(T *sum, T val) {
   for (int i = g.size() / 2; i > 0; i /= 2) {
     val += g.shfl_down(val, i);
   }
-  if (g.thread_rank() == 0) {
+  // No point activating the atomic if no change
+  if (val != 0 && g.thread_rank() == 0) {
     atomicAdd(sum, val);
   }
 }
