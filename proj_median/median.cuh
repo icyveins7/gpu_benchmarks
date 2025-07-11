@@ -93,6 +93,9 @@ __global__ void blockwise_median_kernel(
     else {
       if (t < numColumns)
         items[t / NUM_THREADS_PER_BLK] = inputRow[t];
+      // Fill the remainder with the max type value
+      else
+        items[t / NUM_THREADS_PER_BLK] = cuda::std::numeric_limits<T>::max();
     }
   }
 
