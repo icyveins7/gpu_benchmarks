@@ -191,9 +191,13 @@ __global__ void blockwise_select_1d_slices_kernel(
 // ========================================================================
 
 /**
- * @brief Downsamples from a rectangular ROI in an input array, conditioned
- * on the values of a 2nd array, writing invalid values when the 2nd array
- * exceeds a maximum value.
+ * @brief Downsamples from a rectangular ROI in an input array, conditioned on
+ * both the values of the input as well as the values of a 2nd array, writing
+ * invalid values when the validator says so.
+ *
+ * @details An example is included below, where a MaximumValidator can be used
+ * to scan only the condition array for a maximum value, and returning an
+ * invalid value otherwise.
  *
  * Effectively, this is an if-else condition like:
  *    if (condition < max)
@@ -218,15 +222,15 @@ __global__ void blockwise_select_1d_slices_kernel(
  * @param outputNumCols Number of columns of 'output'
  * @param invalidVal Value to use for invalid values
  */
-template <typename T>
-__global__ void maximum_conditioned_downsampling_kernel(
-    const T *input, const T *conditional, const T maxConditionVal,
-    const unsigned int inputNumRows, const unsigned int inputNumCols,
-    const unsigned int roiStartRow, const unsigned int roiStartCol,
-    const unsigned int roiNumRows, const unsigned int roiNumCols,
-    const unsigned int roiRowStride, const unsigned int roiColStride, T *output,
+template <typename T, typename Validator>
+__global__ void conditioned_downsampling_kernel(
+    const T *input, const T *conditional, const unsigned int inputNumRows,
+    const unsigned int inputNumCols, const unsigned int roiStartRow,
+    const unsigned int roiStartCol, const unsigned int roiNumRows,
+    const unsigned int roiNumCols, const unsigned int roiRowStride,
+    const unsigned int roiColStride, T *output,
     const unsigned int outputNumRows, const unsigned int outputNumCols,
-    const T invalidVal = cuda::std::numeric_limits<T>::max()) {
+    const Validator validator) {
   // Assume 2D grid that covers ROI
   const unsigned int ix = blockIdx.x * blockDim.x + threadIdx.x;
   const unsigned int iy = blockIdx.y * blockDim.y + threadIdx.y;
@@ -252,9 +256,22 @@ __global__ void maximum_conditioned_downsampling_kernel(
     }
     const size_t oIndex = oRow * outputNumCols + oCol;
     // Check the condition
-    if (conditional[iIndex] < maxConditionVal) {
+    if (validator.checkIsValid(input[iIndex], conditional[iIndex])) {
       output[oIndex] = input[iIndex];
     } else // Mark the value as invalid
-      output[oIndex] = invalidVal;
+      output[oIndex] = validator.getInvalidValue();
   }
 }
+
+// Here's a sample validator that checks only the condition value for a maximum
+// value
+template <typename T> struct MaximumValidator {
+  T maxVal;
+
+  __host__ __device__ bool checkIsValid(const T, const T cond) const {
+    return cond < maxVal;
+  }
+  __host__ __device__ T getInvalidValue() const {
+    return cuda::std::numeric_limits<T>::max();
+  }
+};
