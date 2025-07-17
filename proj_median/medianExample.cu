@@ -36,16 +36,31 @@ template <typename T> void testKernel(int numTests, int maxLength) {
   thrust::device_vector<int> d_inputLengths(inputLengths);
   thrust::device_vector<T> d_medians(numTests);
 
-  const int numThreads = 128;
-  const int ELEM_PER_THREAD = 1;
-  const int numBlocks = numTests;
+  // Simple cub sorting
+  {
+    const int numThreads = 128;
+    const int ELEM_PER_THREAD = 1;
+    const int numBlocks = numTests;
+    printf("Starting kernel, %d blocks, %d threads.\n", numBlocks, numThreads);
+    blockwise_median_kernel<T, numThreads, ELEM_PER_THREAD>
+        <<<numBlocks, numThreads>>>(d_input.data().get(), numTests, maxLength,
+                                    d_inputLengths.data().get(),
+                                    d_medians.data().get());
+    printf("Kernel complete\n");
+  }
 
-  printf("Starting kernel, %d blocks, %d threads.\n", numBlocks, numThreads);
-  blockwise_median_kernel<T, numThreads, ELEM_PER_THREAD>
-      <<<numBlocks, numThreads>>>(d_input.data().get(), numTests, maxLength,
-                                  d_inputLengths.data().get(),
-                                  d_medians.data().get());
-  printf("Kernel complete\n");
+  // Custom quickselect
+  {
+    thrust::device_vector<int> d_n(numTests);
+    thrust::transform(d_inputLengths.begin(), d_inputLengths.end(), d_n.begin(),
+                      [] __device__(int x) { return x / 2; });
+    const int numThreads = 128;
+    const int numBlocks = numTests;
+    const int shmem = sizeof(T) * maxLength * 2 + 2 * sizeof(int);
+    blockwise_quickselect_kernel<T><<<numBlocks, numThreads, shmem>>>(
+        d_input.data().get(), numTests, maxLength, d_inputLengths.data().get(),
+        d_n.data().get(), d_medians.data().get());
+  }
 
   thrust::host_vector<T> h_medians = d_medians;
   printf("Copied kernel results back\n");
@@ -76,6 +91,7 @@ int main() {
   printf("Median kernel tests\n");
 
   testKernel<unsigned short>(10000, 100);
+  // testKernel<unsigned short>(1, 100);
 
   return 0;
 }

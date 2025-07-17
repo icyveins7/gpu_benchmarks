@@ -4,6 +4,9 @@
 #include <cub/block/block_radix_sort.cuh>
 #include <cuda/std/limits>
 
+#include "atomic_extensions.cuh"
+#include "sharedmem.cuh"
+
 /**
  * @brief Performs a row-wise median of a 2D input array, with one block
  * tackling each row. Each row may have a different occupied length, as
@@ -108,4 +111,165 @@ __global__ void blockwise_median_kernel(
   const int threadIdxContainingMedian = medianIdx / ELEM_PER_THREAD;
   if (threadIdx.x == threadIdxContainingMedian)
     medians[row] = items[medianIdx % ELEM_PER_THREAD];
+}
+
+template <typename T> struct BlockQuickSelect {
+  const int totalLength;
+  T *sdata;       // totalLength * 2;
+  int *scounters; // 2 elements
+
+  __device__ BlockQuickSelect(const int totalLength, int *sdata)
+      : totalLength(totalLength) {
+    // Assume T size is 32 bits or less for now, so that ordering is maintained
+    // since shared memory must be aligned with larger words first
+    this->scounters = &sdata[0];
+    this->sdata = (T *)&sdata[2];
+  }
+
+  __device__ void fill(int usedLength, const T *d_row) {
+    for (int t = threadIdx.x; t < usedLength; t += blockDim.x) {
+      this->sdata[t] = d_row[t];
+    }
+    __syncthreads();
+  }
+
+  __device__ T select(int length, int n) {
+    // Entire data for the block starts in first half of sdata
+
+    T *sdata1 = sdata;
+    T *sdata2 = &sdata1[totalLength];
+
+    T pivot;
+    int pivotIdx;
+    int offset = 0;
+    // Iterations should never exceed this anyway, just as a soft cap
+    for (int i = 0; i < totalLength; ++i) {
+      // Get pivot, just use first element
+      pivotIdx = i % length;
+      pivot = sdata1[pivotIdx + offset];
+      // if (threadIdx.x == 0) {
+      //   printf("Pivot: %d, pivotIdx: %d\n", (int)pivot, pivotIdx);
+      //   printf("sdata1: %p, sdata2: %p\n", sdata1, sdata2);
+      // }
+
+      // Reset counters
+      if (threadIdx.x == 0)
+        scounters[0] = 0;
+      if (threadIdx.x == 1)
+        scounters[1] = 0;
+      __syncthreads();
+
+      // Loop over the side we want to recurse into
+      for (int t = threadIdx.x; t < length; t += blockDim.x) {
+        // Skip pivot
+        if (t == pivotIdx)
+          continue;
+
+        // Read current element to compare
+        // There is an additional offset because we may be reading from
+        // the back loaded section of a previous iteration e.g.
+        // LLLLXXXRRRRRRRR
+        //        └start of the array for the right side
+        T element = sdata1[t + offset];
+
+        // Check <
+        if (element < pivot) {
+          // Front load to 2nd buffer
+          int oIdx = atomicAggInc(&scounters[0]);
+          sdata2[oIdx] = element;
+          // printf("L -> thread %d, iter %d, %d, index %d, oIdx %d\n",
+          //        threadIdx.x, i, element, t + offset, oIdx);
+        }
+        // Check >
+        else {
+          // Back load to 2nd buffer
+          int oIdx = totalLength - atomicAggInc(&scounters[1]) - 1;
+          sdata2[oIdx] = element;
+          // printf("R -> thread %d, iter %d, %d, index %d, oIdx %d\n",
+          //        threadIdx.x, i, element, t + offset, oIdx);
+        }
+      }
+      __syncthreads();
+      // if (threadIdx.x == 0) {
+      //   printf("iter %d, length %d, n %d, scounters %d %d\n", i, length, n,
+      //          scounters[0], scounters[1]);
+      // }
+
+      // Which side do we recurse to?
+      if (n == scounters[0]) {
+        // e.g. looking for index 5, and there are 5
+        // elements on left, then pivot is the selection
+        // if (threadIdx.x == 0) {
+        //   printf("->N: iter %d, length %d, n %d, value %d\n", i, length, n,
+        //          pivot);
+        // }
+        break;
+      } else if (n < scounters[0]) {
+        // e.g. looking for index 5, and there are 6 elements on left i.e. 0-5
+        // then element we want is on the left
+        length = scounters[0];
+        // no need to change 'n' since the 'n'th element in the whole is still
+        // the 'n'th in the left
+        // offset must now be 0
+        offset = 0;
+        // if (threadIdx.x == 0) {
+        //   printf("->L: iter %d, length %d, n %d, offset %d\n", i, length, n,
+        //          offset);
+        // }
+      } else {
+        // e.g. looking for index 5, and there are 4 elements on left i.e. 0-3
+        // then element we want is on the right
+        length = scounters[1];
+        // change the 'n' in the recursed shorter array on the right
+        // in above example, 'n' would now be 0 [(0-3), pivot, target, ...)]
+        n = n - scounters[0] - 1;
+        // make sure our offset is now to the start of the right side
+        offset = totalLength - scounters[1];
+        // if (threadIdx.x == 0) {
+        //   printf("->R: iter %d, length %d, n %d, offset %d\n", i, length, n,
+        //          offset);
+        // }
+      }
+      __syncthreads();
+
+      swapBuffers(&sdata1, &sdata2);
+    } // end while loop
+
+    // if we reach this without getting a value, use a helpful error value
+    return pivot;
+  } // end select() function
+
+  __device__ void swapBuffers(T **sdata1, T **sdata2) {
+    // if (threadIdx.x == 0)
+    //   printf("before swap: sdata1 = %p, sdata2 = %p\n", *sdata1, *sdata2);
+    T *spare = *sdata2;
+    *sdata2 = *sdata1;
+    *sdata1 = spare;
+    // if (threadIdx.x == 0)
+    //   printf("after swap: sdata1 = %p, sdata2 = %p\n", *sdata1, *sdata2);
+  }
+};
+
+template <typename T>
+__global__ void blockwise_quickselect_kernel(const T *d_input, int numRows,
+                                             int numCols, int *lengths,
+                                             int *d_n, T *d_output) {
+  // Get the row for this block
+  int row = blockIdx.x;
+  if (row >= numRows)
+    return;
+  const T *d_row = &d_input[row * numCols];
+  // And the actual used length and selected element
+  int usedLength = lengths[row];
+  int n = d_n[row];
+  // Load shared memory
+  SharedMemory<int> smem;
+  int *sdata = smem.getPointer();
+
+  // Call quickselect
+  BlockQuickSelect<T> selector(numCols, sdata);
+  selector.fill(usedLength, d_row);
+  T nthElement = selector.select(usedLength, n);
+  if (threadIdx.x == 0)
+    d_output[row] = nthElement;
 }

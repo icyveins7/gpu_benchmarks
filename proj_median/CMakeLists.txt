@@ -9,6 +9,7 @@ DESCRIPTION "Kernels to perform medians"
 set_source_files_properties(medianExample.cu PROPERTIES LANGUAGE CUDA)
 add_executable(medianExample)
 
+target_compile_options(medianExample PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--expt-extended-lambda>)
 target_include_directories(medianExample
                            PRIVATE ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
                            )
