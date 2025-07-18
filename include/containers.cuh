@@ -22,7 +22,7 @@ public:
    *
    * @return m_stream, the underlying cudaStream_t.
    */
-  cudaStream_t operator()();
+  cudaStream_t &operator()();
 
 private:
   cudaStream_t m_stream;
