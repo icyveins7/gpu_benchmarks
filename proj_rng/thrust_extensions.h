@@ -4,6 +4,8 @@
  * to implement the operator() function of the struct that is passed.
  */
 
+#define _USE_MATH_DEFINES
+#include <cmath>
 #include <thrust/random.h>
 #include <thrust/complex.h>
 #include <thrust/tuple.h>

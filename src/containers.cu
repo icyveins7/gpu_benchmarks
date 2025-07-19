@@ -10,6 +10,6 @@ CudaStream::~CudaStream() { cudaStreamDestroy(m_stream); }
 
 void CudaStream::sync() { cudaStreamSynchronize(m_stream); }
 
-cudaStream_t CudaStream::operator()() { return m_stream; }
+cudaStream_t &CudaStream::operator()() { return m_stream; }
 
 } // namespace containers

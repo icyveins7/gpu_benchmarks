@@ -92,6 +92,7 @@ if (${IPP_FOUND})
                            ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
                            include/
                            ${CMAKE_CURRENT_SOURCE_DIR}/../ipp_ext/include/
+                           $ENV{IPPROOT}/include/
   )
 
   target_sources(thrust_example

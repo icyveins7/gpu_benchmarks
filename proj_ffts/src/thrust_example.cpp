@@ -15,7 +15,6 @@
 #include "cuFFT_wrapper.cuh"
 
 #include "ipp.h"
-#include "ipp/ipptypes.h"
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wall"

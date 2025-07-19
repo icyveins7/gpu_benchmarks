@@ -1,7 +1,8 @@
+#define _USE_MATH_DEFINES
+#include <cmath>
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
 #include "cuda.h"
-#include <cmath>
 #include <random>
 #include "../include/sharedmem.cuh"
 

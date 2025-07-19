@@ -31,7 +31,7 @@ if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID STREQUAL "Clan
   add_compile_options(-Wall -Wextra) # don't use Wpedantic for cuda code or you get tons of useless warnings
   # Enable warnings for MSVC
 elseif (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
-  add_compile_options(/W4)
+  # add_compile_options(/W4) # this breaks the windows build, dont know why yet
 endif()
 
 # Fixes for clangd

@@ -9,6 +9,8 @@
 #include <limits>
 #include <vector>
 
+#include <algorithm>
+
 template <typename T> void testKernel(int numTests, int maxLength) {
   // Initialise inputs to all maximum values
   std::vector<T> input(maxLength * numTests, std::numeric_limits<T>::max());
