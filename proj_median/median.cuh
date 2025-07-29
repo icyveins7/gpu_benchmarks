@@ -113,22 +113,14 @@ __global__ void blockwise_median_kernel(
     medians[row] = items[medianIdx % ELEM_PER_THREAD];
 }
 
-template <typename T> struct BlockQuickSelect {
-  const int totalLength;
-  T *sdata;       // totalLength * 2;
-  int *scounters; // 2 elements
-
-  __device__ BlockQuickSelect(const int totalLength, int *sdata)
-      : totalLength(totalLength) {
-    // Assume T size is 32 bits or less for now, so that ordering is maintained
-    // since shared memory must be aligned with larger words first
-    this->scounters = &sdata[0];
-    this->sdata = (T *)&sdata[2];
-  }
+template <typename T, int MAX_LENGTH> struct BlockQuickSelect {
+  T sdata[MAX_LENGTH * 2];
+  int scounters[2];
 
   __device__ void fill(int usedLength, const T *d_row) {
     for (int t = threadIdx.x; t < usedLength; t += blockDim.x) {
-      this->sdata[t] = d_row[t];
+      if (t < MAX_LENGTH)
+        this->sdata[t] = d_row[t];
     }
     __syncthreads();
   }
@@ -137,20 +129,16 @@ template <typename T> struct BlockQuickSelect {
     // Entire data for the block starts in first half of sdata
 
     T *sdata1 = sdata;
-    T *sdata2 = &sdata1[totalLength];
+    T *sdata2 = &sdata1[MAX_LENGTH];
 
     T pivot;
     int pivotIdx;
     int offset = 0;
     // Iterations should never exceed this anyway, just as a soft cap
-    for (int i = 0; i < totalLength; ++i) {
+    for (int i = 0; i < MAX_LENGTH; ++i) {
       // Get pivot, just use first element
       pivotIdx = i % length;
       pivot = sdata1[pivotIdx + offset];
-      // if (threadIdx.x == 0) {
-      //   printf("Pivot: %d, pivotIdx: %d\n", (int)pivot, pivotIdx);
-      //   printf("sdata1: %p, sdata2: %p\n", sdata1, sdata2);
-      // }
 
       // Reset counters
       if (threadIdx.x == 0)
@@ -177,32 +165,20 @@ template <typename T> struct BlockQuickSelect {
           // Front load to 2nd buffer
           int oIdx = atomicAggInc(&scounters[0]);
           sdata2[oIdx] = element;
-          // printf("L -> thread %d, iter %d, %d, index %d, oIdx %d\n",
-          //        threadIdx.x, i, element, t + offset, oIdx);
         }
         // Check >
         else {
           // Back load to 2nd buffer
-          int oIdx = totalLength - atomicAggInc(&scounters[1]) - 1;
+          int oIdx = MAX_LENGTH - atomicAggInc(&scounters[1]) - 1;
           sdata2[oIdx] = element;
-          // printf("R -> thread %d, iter %d, %d, index %d, oIdx %d\n",
-          //        threadIdx.x, i, element, t + offset, oIdx);
         }
       }
       __syncthreads();
-      // if (threadIdx.x == 0) {
-      //   printf("iter %d, length %d, n %d, scounters %d %d\n", i, length, n,
-      //          scounters[0], scounters[1]);
-      // }
 
       // Which side do we recurse to?
       if (n == scounters[0]) {
         // e.g. looking for index 5, and there are 5
         // elements on left, then pivot is the selection
-        // if (threadIdx.x == 0) {
-        //   printf("->N: iter %d, length %d, n %d, value %d\n", i, length, n,
-        //          pivot);
-        // }
         break;
       } else if (n < scounters[0]) {
         // e.g. looking for index 5, and there are 6 elements on left i.e. 0-5
@@ -212,10 +188,6 @@ template <typename T> struct BlockQuickSelect {
         // the 'n'th in the left
         // offset must now be 0
         offset = 0;
-        // if (threadIdx.x == 0) {
-        //   printf("->L: iter %d, length %d, n %d, offset %d\n", i, length, n,
-        //          offset);
-        // }
       } else {
         // e.g. looking for index 5, and there are 4 elements on left i.e. 0-3
         // then element we want is on the right
@@ -224,11 +196,7 @@ template <typename T> struct BlockQuickSelect {
         // in above example, 'n' would now be 0 [(0-3), pivot, target, ...)]
         n = n - scounters[0] - 1;
         // make sure our offset is now to the start of the right side
-        offset = totalLength - scounters[1];
-        // if (threadIdx.x == 0) {
-        //   printf("->R: iter %d, length %d, n %d, offset %d\n", i, length, n,
-        //          offset);
-        // }
+        offset = MAX_LENGTH - scounters[1];
       }
       __syncthreads();
 
@@ -240,17 +208,13 @@ template <typename T> struct BlockQuickSelect {
   } // end select() function
 
   __device__ void swapBuffers(T **sdata1, T **sdata2) {
-    // if (threadIdx.x == 0)
-    //   printf("before swap: sdata1 = %p, sdata2 = %p\n", *sdata1, *sdata2);
     T *spare = *sdata2;
     *sdata2 = *sdata1;
     *sdata1 = spare;
-    // if (threadIdx.x == 0)
-    //   printf("after swap: sdata1 = %p, sdata2 = %p\n", *sdata1, *sdata2);
   }
 };
 
-template <typename T>
+template <typename T, int MAX_LENGTH>
 __global__ void blockwise_quickselect_kernel(const T *d_input, int numRows,
                                              int numCols, int *lengths,
                                              int *d_n, T *d_output) {
@@ -262,12 +226,10 @@ __global__ void blockwise_quickselect_kernel(const T *d_input, int numRows,
   // And the actual used length and selected element
   int usedLength = lengths[row];
   int n = d_n[row];
-  // Load shared memory
-  SharedMemory<int> smem;
-  int *sdata = smem.getPointer();
 
-  // Call quickselect
-  BlockQuickSelect<T> selector(numCols, sdata);
+  // Call quickselect (now templated for max length with shared memory
+  // allocation directly)
+  __shared__ BlockQuickSelect<T, MAX_LENGTH> selector;
   selector.fill(usedLength, d_row);
   T nthElement = selector.select(usedLength, n);
   if (threadIdx.x == 0)

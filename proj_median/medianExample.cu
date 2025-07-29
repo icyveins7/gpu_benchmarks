@@ -11,7 +11,7 @@
 
 #include <algorithm>
 
-template <typename T> void testKernel(int numTests, int maxLength) {
+template <typename T, int maxLength> void testKernel(int numTests) {
   // Initialise inputs to all maximum values
   std::vector<T> input(maxLength * numTests, std::numeric_limits<T>::max());
   std::vector<int> inputLengths(numTests);
@@ -58,8 +58,9 @@ template <typename T> void testKernel(int numTests, int maxLength) {
                       [] __device__(int x) { return x / 2; });
     const int numThreads = 128;
     const int numBlocks = numTests;
-    const int shmem = sizeof(T) * maxLength * 2 + 2 * sizeof(int);
-    blockwise_quickselect_kernel<T><<<numBlocks, numThreads, shmem>>>(
+    // const int shmem = sizeof(T) * maxLength * 2 + 2 * sizeof(int);
+    // blockwise_quickselect_kernel<T><<<numBlocks, numThreads, shmem>>>(
+    blockwise_quickselect_kernel<T, maxLength><<<numBlocks, numThreads>>>(
         d_input.data().get(), numTests, maxLength, d_inputLengths.data().get(),
         d_n.data().get(), d_medians.data().get());
   }
@@ -92,8 +93,7 @@ template <typename T> void testKernel(int numTests, int maxLength) {
 int main() {
   printf("Median kernel tests\n");
 
-  testKernel<unsigned short>(10000, 100);
-  // testKernel<unsigned short>(1, 100);
+  testKernel<unsigned short, 100>(10000);
 
   return 0;
 }
