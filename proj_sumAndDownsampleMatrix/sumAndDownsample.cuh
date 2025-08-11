@@ -107,11 +107,14 @@ __global__ void sumAndDownsampleMatrixWithArgmaxBlockwiseKernel(
   T *s_blkds = &s_blkdata[blockDim.x * blockDim.y * widthDsr *
                           heightDsr]; // blockDim.x * blockDim.y
   // Reading is done 1 tile at a time
+  // TODO: this is currently wrong
   for (int j = 0; j < heightDsr; j++) {
     int sy = blockDim.y * j + threadIdx.y;
     for (int i = 0; i < widthDsr; i++) {
       int sx = blockDim.x * i + threadIdx.x;
       s_blkdata[sx + sy * blockDim.y] = input[y * width + x];
+      printf("Loaded sx %d sy %d  from x %d y %d-> %u\n", sx, sy, x, y,
+             s_blkdata[sx + sy * blockDim.y]);
     }
   }
   __syncthreads();

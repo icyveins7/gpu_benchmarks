@@ -1,8 +1,8 @@
 #pragma once
-/* This header will contain kernel functions related to threshold checking of
- * data. Since this is usually just a simple check, it is probably not a good
- * idea to make this a __global__ kernel, but do this operation as part of
- * another kernel.
+/* This header will contain kernel functions related to atomics, usually due to
+ * the need for threshold checking of data. Since this is usually just a simple
+ * check, it is probably not a good idea to make this a __global__ kernel, but
+ * do this operation as part of another kernel.
  *
  * Good references:
  * https://developer.nvidia.com/blog/cuda-pro-tip-optimized-filtering-warp-aggregated-atomics/
@@ -221,9 +221,21 @@ __device__ __forceinline__ Tsqueeze squeezeValueIndexForAtomic(Tdata val,
   // The following assumes CUDA is little-endian (i.e. most significant is last
   // byte)
   // Copy value to most significant top half bytes
-  memcpy(reinterpret_cast<char *>(&ret)[sizeof(Tdata)], &val, sizeof(Tdata));
+  memcpy(&reinterpret_cast<char *>(&ret)[sizeof(Tdata)], &val, sizeof(Tdata));
   // Copy index to bottom half bytes
   memcpy(reinterpret_cast<char *>(&ret), &idx, sizeof(Tidx));
 
   return ret;
 };
+
+template <typename Tdata, typename Tidx, typename Tsqueeze>
+__device__ __host__ void unsqueezeValueIndex(const Tsqueeze maxWithArgmax,
+                                             Tdata &val, Tidx &idx) {
+  static_assert(std::is_unsigned_v<Tidx>, "Tidx must be unsigned");
+  static_assert(std::is_integral_v<Tidx>, "Tidx must be integer");
+  static_assert(sizeof(Tdata) + sizeof(Tidx) == sizeof(Tsqueeze),
+                "T squeeze bitwidth must be equal to sum of Tdata and Tidx");
+  memcpy(&val, reinterpret_cast<const char *>(&maxWithArgmax) + sizeof(Tdata),
+         sizeof(Tdata));
+  memcpy(&idx, &maxWithArgmax, sizeof(Tidx));
+}

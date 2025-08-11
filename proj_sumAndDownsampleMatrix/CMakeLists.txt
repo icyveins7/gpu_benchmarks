@@ -17,6 +17,19 @@ target_sources(
   main PRIVATE
   ${PROJECT_SOURCE_DIR}/main.cu
 )
+# --------------------
+set_source_files_properties(withArgmax.cu PROPERTIES LANGUAGE CUDA)
+add_executable(withArgmax)
+
+target_include_directories(withArgmax
+                           PRIVATE ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
+                           )
+
+target_sources(
+  withArgmax PRIVATE
+  ${PROJECT_SOURCE_DIR}/withArgmax.cu
+)
+
 
 # -------------------- Tests
 # if (GTEST_FOUND)
