@@ -208,3 +208,22 @@ __device__ __forceinline__ double atomicMaxDouble(double *addr, double value) {
     return *((double *)&oldCast);
   }
 }
+
+template <typename Tdata, typename Tidx, typename Tsqueeze>
+__device__ __forceinline__ Tsqueeze squeezeValueIndexForAtomic(Tdata val,
+                                                               Tidx idx) {
+  static_assert(std::is_unsigned_v<Tidx>, "Tidx must be unsigned");
+  static_assert(std::is_integral_v<Tidx>, "Tidx must be integer");
+  static_assert(sizeof(Tdata) + sizeof(Tidx) == sizeof(Tsqueeze),
+                "T squeeze bitwidth must be equal to sum of Tdata and Tidx");
+  Tsqueeze ret;
+
+  // The following assumes CUDA is little-endian (i.e. most significant is last
+  // byte)
+  // Copy value to most significant top half bytes
+  memcpy(reinterpret_cast<char *>(&ret)[sizeof(Tdata)], &val, sizeof(Tdata));
+  // Copy index to bottom half bytes
+  memcpy(reinterpret_cast<char *>(&ret), &idx, sizeof(Tidx));
+
+  return ret;
+};
