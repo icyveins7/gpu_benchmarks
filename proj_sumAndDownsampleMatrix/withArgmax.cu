@@ -13,6 +13,7 @@ void test(const size_t width, const size_t height, const size_t widthDsr,
   thrust::sequence(img.begin(), img.end());
   size_t oWidth = width / widthDsr;
   size_t oHeight = height / heightDsr;
+  printf("oWidth: %zu, oHeight: %zu\n", oWidth, oHeight);
   thrust::device_vector<Tdata> dsrImg(batch * oWidth * oHeight);
   thrust::device_vector<Tsqueeze> maxArgmax(batch);
 
@@ -36,6 +37,8 @@ void test(const size_t width, const size_t height, const size_t widthDsr,
     unsqueezeValueIndex<Tdata, Tidx, Tsqueeze>(h_maxArgmax[i], max, argmax);
     printf("Batch %zu\n", i);
     std::cout << "max: " << max << " argmax: " << argmax << std::endl;
+    std::cout << "argmax conversion: " << argmax / oWidth << " "
+              << argmax % oWidth << std::endl;
   }
 
   if (print) {
@@ -65,6 +68,24 @@ int main() {
     batch = 2;
     test<uint16_t, uint16_t, unsigned int>(width, height, widthDsr, heightDsr,
                                            batch, true);
+  }
+  {
+    width = 67;
+    height = 67;
+    widthDsr = 2;
+    heightDsr = 2;
+    batch = 2;
+    test<uint16_t, uint16_t, unsigned int>(width, height, widthDsr, heightDsr,
+                                           batch, false);
+  }
+  {
+    width = 8192;
+    height = 8192;
+    widthDsr = 5;
+    heightDsr = 5;
+    batch = 8;
+    test<float, unsigned int, unsigned long long int>(width, height, widthDsr,
+                                                      heightDsr, batch, false);
   }
   return 0;
 }

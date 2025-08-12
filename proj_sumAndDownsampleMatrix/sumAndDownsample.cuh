@@ -149,10 +149,10 @@ __global__ void sumAndDownsampleMatrixWithArgmaxBlockwiseKernel(
   // Reading is done 1 tile at a time
   blockRoiLoad<T>(input, width, height, roiStartX, roiLengthX, roiStartY,
                   roiLengthY, s_blkdata);
-  if (threadIdx.x == 0 && threadIdx.y == 0) {
-    for (int i = 0; i < roiLengthX * roiLengthY; i++)
-      printf("[%d/%d]: %d\n", i, roiLengthX * roiLengthY, s_blkdata[i]);
-  }
+  // if (threadIdx.x == 0 && threadIdx.y == 0) {
+  //   for (int i = 0; i < roiLengthX * roiLengthY; i++)
+  //     printf("[%d/%d]: %d\n", i, roiLengthX * roiLengthY, s_blkdata[i]);
+  // }
   __syncthreads();
 
   // Shared-memory integration
@@ -168,10 +168,10 @@ __global__ void sumAndDownsampleMatrixWithArgmaxBlockwiseKernel(
                        s_blkds);
 
   __syncthreads();
-  if (threadIdx.x == 0 && threadIdx.y == 0) {
-    for (int i = 0; i < dsLengthX * dsLengthY; i++)
-      printf("[%d/%d]: %d\n", i, dsLengthX * dsLengthY, s_blkds[i]);
-  }
+  // if (threadIdx.x == 0 && threadIdx.y == 0) {
+  //   for (int i = 0; i < dsLengthX * dsLengthY; i++)
+  //     printf("[%d/%d]: %d\n", i, dsLengthX * dsLengthY, s_blkds[i]);
+  // }
 
   // Global writes out
   int sOidx = threadIdx.x + threadIdx.y * roiLengthX / widthDsr;
@@ -193,8 +193,8 @@ __global__ void sumAndDownsampleMatrixWithArgmaxBlockwiseKernel(
     if (sOidx < s && sOidx < dsLengthX * dsLengthY &&
         sOidx + s < dsLengthX * dsLengthY) {
       if (s_blkds[sOidx + s] >= s_blkds[sOidx]) {
-        printf("sOidx: %d s: %d, values: %d %d\n", sOidx, s, s_blkds[sOidx],
-               s_blkds[sOidx + s]);
+        // printf("sOidx: %d s: %d, values: %d %d\n", sOidx, s, s_blkds[sOidx],
+        //        s_blkds[sOidx + s]);
         s_blkds[sOidx] = s_blkds[sOidx + s];
         s_idx[sOidx] = s_idx[sOidx + s];
       }
@@ -210,10 +210,15 @@ __global__ void sumAndDownsampleMatrixWithArgmaxBlockwiseKernel(
     int ymax = symax + blockIdx.y * blockDim.y;
 
     // Craft the squeezed output
-    printf("Blk %d,%d Max: %d at %d, %d [thread %d] -> %d, %d\n", blockIdx.x,
-           blockIdx.y, s_blkds[0], sxmax, symax, s_idx[0], xmax, ymax);
-    V squeezed = squeezeValueIndexForAtomic<T, U, V>(s_blkds[0],
-                                                     (U)(xmax + ymax * width));
+    // printf("Blk %d,%d,%d Max: %d at %d, %d [thread %d] -> %d, %d\n",
+    // blockIdx.x,
+    //        blockIdx.y, blockIdx.z, s_blkds[0], sxmax, symax, s_idx[0], xmax,
+    //        ymax);
+    // TODO: note that using the squeezed atomic method requires positive-only
+    // values, otherwise it will be incorrect; should have an option to handle
+    // this
+    V squeezed = squeezeValueIndexForAtomic<T, U, V>(
+        s_blkds[0], (U)(xmax + ymax * outWidth));
     // Atomically update
     atomicMax(&d_maxargmax[batchIdx], squeezed);
   }
