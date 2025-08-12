@@ -17,7 +17,7 @@ void test(const size_t width, const size_t height, const size_t widthDsr,
   thrust::device_vector<Tdata> dsrImg(batch * oWidth * oHeight);
   thrust::device_vector<Tsqueeze> maxArgmax(batch);
 
-  dim3 tpb(32, 2);
+  dim3 tpb(32, 4);
   dim3 blks((width / widthDsr + tpb.x - 1) / tpb.x,
             (height / heightDsr + tpb.y - 1) / tpb.y, batch);
   printf("Grid: %dx%dx%d Block: %dx%d\n", blks.x, blks.y, blks.z, tpb.x, tpb.y);
