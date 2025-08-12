@@ -19,6 +19,19 @@ __device__ void fromRoiCoords(const int roiX, const int roiY,
   y = roiY + roiStartY;
 }
 
+template <typename T>
+__device__ void threadRoiLoad(const T *src, const int srcWidth,
+                              const int srcHeight, const int roiStartX,
+                              const int roiStartY, T &val, int tx = -1,
+                              int ty = -1) {
+  tx = (tx == -1) ? threadIdx.x : tx;
+  ty = (ty == -1) ? threadIdx.y : ty;
+  int x, y;
+  fromRoiCoords(tx, ty, roiStartX, roiStartY, x, y);
+  if (x >= 0 && x < srcWidth && y >= 0 && y < srcHeight)
+    val = src[y * srcWidth + x];
+}
+
 /**
  * @brief Loads an ROI from a source image to a packed destination, whose
  * dimensions equal the ROI.
@@ -57,9 +70,10 @@ __device__ void fromRoiCoords(const int roiX, const int roiY,
  * @param dst Destination, can be global or shared
  */
 template <typename T>
-__device__ void roiLoad(const T *src, const int srcWidth, const int srcHeight,
-                        const int roiStartX, const int roiLengthX,
-                        const int roiStartY, const int roiLengthY, T *dst) {
+__device__ void gridRoiLoad(const T *src, const int srcWidth,
+                            const int srcHeight, const int roiStartX,
+                            const int roiLengthX, const int roiStartY,
+                            const int roiLengthY, T *dst) {
   // Grid-stride over the destination; tx and ty are the roi-zeroed coords
   int x, y;
   for (int ty = threadIdx.y + blockDim.y * blockIdx.y; ty < roiLengthY;
@@ -121,12 +135,10 @@ __device__ void blockRoiLoad(const T *src, const int srcWidth,
                              const int roiLengthX, const int roiStartY,
                              const int roiLengthY, T *dst) {
   // Block-stride over the destination
-  int x, y;
   for (int ty = threadIdx.y; ty < roiLengthY; ty += blockDim.y) {
     for (int tx = threadIdx.x; tx < roiLengthX; tx += blockDim.x) {
-      fromRoiCoords(tx, ty, roiStartX, roiStartY, x, y);
-      if (x >= 0 && x < srcWidth && y >= 0 && y < srcHeight)
-        dst[ty * roiLengthX + tx] = src[y * srcWidth + x];
+      threadRoiLoad(src, srcWidth, srcHeight, roiStartX, roiStartY,
+                    dst[ty * roiLengthX + tx], tx, ty);
     }
   }
 }
