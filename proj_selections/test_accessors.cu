@@ -13,8 +13,8 @@ __global__ void test_roiLoad_kernel(const T *src, T *dst, const int srcWidth,
                                     const int roiStartY, const int roiLengthX,
                                     const int roiLengthY) {
   // Load and copy directly
-  roiLoad<T>(src, srcWidth, srcHeight, roiStartX, roiLengthX, roiStartY,
-             roiLengthY, dst);
+  gridRoiLoad<T>(src, srcWidth, srcHeight, roiStartX, roiLengthX, roiStartY,
+                 roiLengthY, dst);
 }
 
 template <typename T>

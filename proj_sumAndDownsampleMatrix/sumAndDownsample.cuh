@@ -84,13 +84,15 @@ __device__ void blockRoiIntegrate(const T *src, const int srcWidth,
     for (int tx = threadIdx.x; tx < dstWidth; tx += blockDim.x) {
       // Next 2 loops are to access the source read locations to accumulate sum
       // from
+      T sum = 0;
       for (int i = 0; i < heightDsr; i++) {
         int srcY = ty * heightDsr + i;
         for (int j = 0; j < widthDsr; j++) {
           int srcX = tx * widthDsr + j;
-          dst[ty * dstWidth + tx] += src[srcY * srcWidth + srcX];
+          sum += src[srcY * srcWidth + srcX];
         }
       }
+      dst[ty * dstWidth + tx] = sum;
     }
   }
 }
@@ -177,8 +179,9 @@ __global__ void sumAndDownsampleMatrixWithArgmaxBlockwiseKernel(
   int sOidx = threadIdx.x + threadIdx.y * roiLengthX / widthDsr;
   if (x < outWidth && y < outHeight)
     output[oIdx] = s_blkds[sOidx];
-  __syncthreads(); // make sure everyone wrote out before we do our reduction
 
+  // make sure everyone wrote out before we do our reduction
+  __syncthreads();
   // Continue work to find max and argmax inside the shared mem
   // We reuse shared memory from the original block data for the indices,
   // this is usually sufficient
