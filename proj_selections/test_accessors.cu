@@ -8,27 +8,26 @@
 #include <thrust/sequence.h>
 
 template <typename T>
-__global__ void
-test_blockRoiLoad_kernel(const T *src, T *dst, const int srcWidth,
-                         const int srcHeight, const int roiStartX,
-                         const int roiStartY, const int roiLengthX,
-                         const int roiLengthY) {
+__global__ void test_roiLoad_kernel(const T *src, T *dst, const int srcWidth,
+                                    const int srcHeight, const int roiStartX,
+                                    const int roiStartY, const int roiLengthX,
+                                    const int roiLengthY) {
   // Load and copy directly
-  blockRoiLoad<T>(src, srcWidth, srcHeight, roiStartX, roiLengthX, roiStartY,
-                  roiLengthY, dst);
+  roiLoad<T>(src, srcWidth, srcHeight, roiStartX, roiLengthX, roiStartY,
+             roiLengthY, dst);
 }
 
 template <typename T>
-void test_blockRoiLoad(const int srcWidth, const int srcHeight,
-                       const int roiStartX, const int roiStartY,
-                       const int roiLengthX, const int roiLengthY) {
+void test_roiLoad(const int srcWidth, const int srcHeight, const int roiStartX,
+                  const int roiStartY, const int roiLengthX,
+                  const int roiLengthY) {
   thrust::device_vector<T> d_src(srcWidth * srcHeight);
   thrust::sequence(d_src.begin(), d_src.end());
   thrust::device_vector<T> d_dst(roiLengthX * roiLengthY);
 
-  test_blockRoiLoad_kernel<<<4, 32>>>(d_src.data().get(), d_dst.data().get(),
-                                      srcWidth, srcHeight, roiStartX, roiStartY,
-                                      roiLengthX, roiLengthY);
+  test_roiLoad_kernel<<<4, 32>>>(d_src.data().get(), d_dst.data().get(),
+                                 srcWidth, srcHeight, roiStartX, roiStartY,
+                                 roiLengthX, roiLengthY);
 
   thrust::host_vector<T> h_dst = d_dst;
 
@@ -40,6 +39,4 @@ void test_blockRoiLoad(const int srcWidth, const int srcHeight,
   }
 }
 
-TEST(Accessors, blockRoiLoad) {
-  test_blockRoiLoad<unsigned short>(9, 4, 3, 1, 3, 2);
-}
+TEST(Accessors, roiLoad) { test_roiLoad<unsigned short>(9, 4, 3, 1, 3, 2); }

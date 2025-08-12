@@ -1,5 +1,6 @@
 #pragma once
 
+#include "accessors.cuh"
 #include "atomic_extensions.cuh"
 #include "sharedmem.cuh"
 #include <cuda/std/limits>
@@ -69,6 +70,31 @@ __global__ void sumAndDownsampleMatrixWithThreshold(
   }
 }
 
+template <typename T>
+__device__ void blockRoiIntegrate(const T *src, const int srcWidth,
+                                  const int srcHeight, const int widthDsr,
+                                  const int heightDsr, T *dst) {
+  // Implicitly expects destination has sufficient and exact dimensions
+  // for the downsampled output (srcWidth / widthDsr, srcHeight / heightDsr)
+  int dstWidth = srcWidth / widthDsr;
+  int dstHeight = srcHeight / heightDsr;
+  // Each thread loops over destination points; this prevents race conditions on
+  // writes First 2 loops are simply a block-stride over the destination
+  for (int ty = threadIdx.y; ty < dstHeight; ty += blockDim.y) {
+    for (int tx = threadIdx.x; tx < dstWidth; tx += blockDim.x) {
+      // Next 2 loops are to access the source read locations to accumulate sum
+      // from
+      for (int i = 0; i < heightDsr; i++) {
+        int srcY = ty * heightDsr + i;
+        for (int j = 0; j < widthDsr; j++) {
+          int srcX = tx * widthDsr + j;
+          dst[ty * dstWidth + tx] += src[srcY * srcWidth + srcX];
+        }
+      }
+    }
+  }
+}
+
 template <typename T, typename Tidx> struct ValIdxPair {
   T val;
   Tidx idx;
@@ -92,13 +118,15 @@ __global__ void sumAndDownsampleMatrixWithArgmaxBlockwiseKernel(
   // Define the pointers for the block
   T *output = &outputs[batchIdx * outWidth * outHeight];
   const T *input = &inputs[batchIdx * width * height];
+  // these are output x, y positions
   unsigned int x = blockIdx.x * blockDim.x + threadIdx.x;
   unsigned int y = blockIdx.y * blockDim.y + threadIdx.y;
   size_t oIdx = y * outWidth + x;
 
-  // Pixel is either completely valid or invalid, no 'half-way integrations'
-  if (x >= outWidth || y >= outHeight)
-    return;
+  // NOTE: you should not disable or return here if the threads don't have a
+  // 'valid' output index, since we need all threads to perform other stuff in
+  // the block, and returning here would cause issues with block-wise
+  // loads/reductions etc
 
   // Read original (oversampled) data into shared mem
   SharedMemory<T> smem;
@@ -106,55 +134,84 @@ __global__ void sumAndDownsampleMatrixWithArgmaxBlockwiseKernel(
       smem.getPointer(); // blockDim.x * blockDim.y * widthDsr * heightDsr
   T *s_blkds = &s_blkdata[blockDim.x * blockDim.y * widthDsr *
                           heightDsr]; // blockDim.x * blockDim.y
+  // Define the ROI for the block
+  int roiStartX = blockIdx.x * blockDim.x * widthDsr;
+  int roiStartY = blockIdx.y * blockDim.y * heightDsr;
+  int roiLengthX = blockDim.x * widthDsr;
+  int roiLengthY = blockDim.y * heightDsr;
+  // Handle edge of image remnants, and ensure ROI is always a multiple of
+  // downsample rate
+  roiLengthX =
+      min(roiLengthX, (width - roiStartX) - (width - roiStartX) % widthDsr);
+  roiLengthY =
+      min(roiLengthY, (height - roiStartY) - (height - roiStartY) % heightDsr);
+
   // Reading is done 1 tile at a time
-  // TODO: this is currently wrong
-  for (int j = 0; j < heightDsr; j++) {
-    int sy = blockDim.y * j + threadIdx.y;
-    for (int i = 0; i < widthDsr; i++) {
-      int sx = blockDim.x * i + threadIdx.x;
-      s_blkdata[sx + sy * blockDim.y] = input[y * width + x];
-      printf("Loaded sx %d sy %d  from x %d y %d-> %u\n", sx, sy, x, y,
-             s_blkdata[sx + sy * blockDim.y]);
-    }
+  blockRoiLoad<T>(input, width, height, roiStartX, roiLengthX, roiStartY,
+                  roiLengthY, s_blkdata);
+  if (threadIdx.x == 0 && threadIdx.y == 0) {
+    for (int i = 0; i < roiLengthX * roiLengthY; i++)
+      printf("[%d/%d]: %d\n", i, roiLengthX * roiLengthY, s_blkdata[i]);
   }
   __syncthreads();
 
   // Shared-memory integration
-  int sOidx = threadIdx.x +
-              threadIdx.y * blockDim.x; // flattened 1d index within the block
-  s_blkds[sOidx] = 0;
-  for (int j = 0; j < heightDsr; j++) {
-    int sy = threadIdx.y * heightDsr + j; // y read index
-    for (int i = 0; i < widthDsr; i++) {
-      int sx = threadIdx.x * widthDsr + i; // x read index
-      s_blkds[sOidx] += s_blkdata[sx + sy * blockDim.x * widthDsr];
+  // zero out first
+  int dsLengthX = roiLengthX / widthDsr;
+  int dsLengthY = roiLengthY / heightDsr;
+  for (int ty = threadIdx.y; ty < dsLengthY; ty += blockDim.y) {
+    for (int tx = threadIdx.x; tx < dsLengthX; tx += blockDim.x) {
+      s_blkds[ty * dsLengthX + tx] = 0;
     }
   }
+  blockRoiIntegrate<T>(s_blkdata, roiLengthX, roiLengthY, widthDsr, heightDsr,
+                       s_blkds);
+
   __syncthreads();
+  if (threadIdx.x == 0 && threadIdx.y == 0) {
+    for (int i = 0; i < dsLengthX * dsLengthY; i++)
+      printf("[%d/%d]: %d\n", i, dsLengthX * dsLengthY, s_blkds[i]);
+  }
 
   // Global writes out
-  output[oIdx] = s_blkds[sOidx];
+  int sOidx = threadIdx.x + threadIdx.y * roiLengthX / widthDsr;
+  if (x < outWidth && y < outHeight)
+    output[oIdx] = s_blkds[sOidx];
+  __syncthreads(); // make sure everyone wrote out before we do our reduction
 
   // Continue work to find max and argmax inside the shared mem
-  U argmax_thread = sOidx;
+  // We reuse shared memory from the original block data for the indices,
+  // this is usually sufficient
+  // TODO: add static_assert for size ?
+  int *s_idx = (int *)s_blkdata;
+  // Label each index value in shared memory
+  for (int t = threadIdx.x + threadIdx.y * dsLengthX; t < dsLengthX * dsLengthY;
+       t += blockDim.x * blockDim.y)
+    s_idx[t] = t;
+
   for (int s = blockDim.x * blockDim.y / 2; s > 0; s >>= 1) {
-    if (sOidx < s) {
+    if (sOidx < s && sOidx < dsLengthX * dsLengthY &&
+        sOidx + s < dsLengthX * dsLengthY) {
       if (s_blkds[sOidx + s] >= s_blkds[sOidx]) {
+        printf("sOidx: %d s: %d, values: %d %d\n", sOidx, s, s_blkds[sOidx],
+               s_blkds[sOidx + s]);
         s_blkds[sOidx] = s_blkds[sOidx + s];
-        argmax_thread = sOidx + s;
+        s_idx[sOidx] = s_idx[sOidx + s];
       }
     }
     __syncthreads();
   }
   // Thread 0 has max and argmax
-  if (threadIdx.x == 0) {
+  if (threadIdx.x == 0 && threadIdx.y == 0) {
     // Translate block's argmax into image-space index
-    int sxmax = argmax_thread % blockDim.x;
-    int symax = argmax_thread / blockDim.x;
+    int sxmax = s_idx[0] % dsLengthX;
+    int symax = s_idx[0] / dsLengthX;
     int xmax = sxmax + blockIdx.x * blockDim.x;
     int ymax = symax + blockIdx.y * blockDim.y;
 
     // Craft the squeezed output
+    printf("Blk %d,%d Max: %d at %d, %d [thread %d] -> %d, %d\n", blockIdx.x,
+           blockIdx.y, s_blkds[0], sxmax, symax, s_idx[0], xmax, ymax);
     V squeezed = squeezeValueIndexForAtomic<T, U, V>(s_blkds[0],
                                                      (U)(xmax + ymax * width));
     // Atomically update

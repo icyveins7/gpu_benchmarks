@@ -7,7 +7,7 @@
 
 template <typename Tdata, typename Tidx, typename Tsqueeze>
 void test(const size_t width, const size_t height, const size_t widthDsr,
-          const size_t heightDsr, const size_t batch) {
+          const size_t heightDsr, const size_t batch, bool print = false) {
 
   thrust::device_vector<Tdata> img(batch * width * height);
   thrust::sequence(img.begin(), img.end());
@@ -38,6 +38,18 @@ void test(const size_t width, const size_t height, const size_t widthDsr,
     std::cout << "max: " << max << " argmax: " << argmax << std::endl;
   }
 
+  if (print) {
+    for (size_t i = 0; i < batch; i++) {
+      printf("---------\n");
+      for (size_t j = 0; j < oHeight; j++) {
+        for (size_t k = 0; k < oWidth; k++) {
+          printf("%d ", h_dsrImg[i * oWidth * oHeight + j * oWidth + k]);
+        }
+        printf("\n");
+      }
+    }
+  }
+
   printf("=======================\n");
 }
 
@@ -46,13 +58,13 @@ int main() {
   size_t width, height, widthDsr, heightDsr, batch;
 
   {
-    width = 4;
-    height = 4;
+    width = 7;
+    height = 7;
     widthDsr = 2;
     heightDsr = 2;
-    batch = 1;
+    batch = 2;
     test<uint16_t, uint16_t, unsigned int>(width, height, widthDsr, heightDsr,
-                                           batch);
+                                           batch, true);
   }
   return 0;
 }
