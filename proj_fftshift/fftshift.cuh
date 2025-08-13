@@ -1,7 +1,7 @@
 #include <thrust/complex.h>
 
-template <typename T>
-__global__ void fftShift2D_kernel(const T *in, T *out, int width, int height) {
+template <typename T, typename U = T, bool norm = false>
+__global__ void fftShift2D_kernel(const T *in, U *out, int width, int height) {
   int x = threadIdx.x + blockIdx.x * blockDim.x;
   int y = threadIdx.y + blockIdx.y * blockDim.y;
 
@@ -13,18 +13,21 @@ __global__ void fftShift2D_kernel(const T *in, T *out, int width, int height) {
     int newX = (widthInc + x) % width;
     int newY = (heightInc + y) % height;
 
-    out[y * width + x] = in[newY * width + newX];
+    if constexpr (norm)
+      out[y * width + x] = thrust::norm(in[newY * width + newX]);
+    else
+      out[y * width + x] = in[newY * width + newX];
   }
 }
 
-template <typename T>
-void fftShift2D(const T *d_data, T *d_out, int width, int height) {
-  dim3 threadsPerBlock(16, 16);
+template <typename T, typename U = T, bool norm = false>
+void fftShift2D(const T *d_data, U *d_out, int width, int height,
+                dim3 threadsPerBlock = {16, 16}) {
   // The kernel expects that the entire matrix is covered, no grid strides
   dim3 blocksPerGrid((width + threadsPerBlock.x - 1) / threadsPerBlock.x,
                      (height + threadsPerBlock.y - 1) / threadsPerBlock.y);
   printf("Blks: %d %d\n", blocksPerGrid.x, blocksPerGrid.y);
 
-  fftShift2D_kernel<<<blocksPerGrid, threadsPerBlock>>>(d_data, d_out, width,
-                                                        height);
+  fftShift2D_kernel<T, U, norm>
+      <<<blocksPerGrid, threadsPerBlock>>>(d_data, d_out, width, height);
 }

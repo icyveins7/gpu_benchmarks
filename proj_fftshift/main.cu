@@ -72,5 +72,23 @@ int main() {
     std::cout << "=======================" << std::endl;
   }
 
+  {
+    // large one for timing
+    size_t width = 8192, height = 8192;
+    thrust::host_vector<thrust::complex<float>> h_data(width * height);
+    thrust::sequence(h_data.begin(), h_data.end());
+
+    thrust::device_vector<thrust::complex<float>> d_data = h_data;
+    thrust::device_vector<float> d_out(d_data.size());
+
+    fftShift2D<thrust::complex<float>, float, true>(
+        thrust::raw_pointer_cast(d_data.data()),
+        thrust::raw_pointer_cast(d_out.data()), width, height, {32, 4});
+
+    h_data = d_out;
+
+    std::cout << "=======================" << std::endl;
+  }
+
   return 0;
 }
