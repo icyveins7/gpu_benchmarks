@@ -159,3 +159,27 @@ target_sources(manual_2dpad_as_1ds
                PRIVATE ${PROJECT_SOURCE_DIR}/src/manual_2dpad_as_1ds.cpp)
 
 target_link_libraries(manual_2dpad_as_1ds PRIVATE CUDA::cufft CUDA::cudart)
+# --------------------
+if(DEFINED MATHDX_DIR)
+  message(STATUS "MATHDX_DIR set to ${MATHDX_DIR}, building CUFFTDX examples")
+
+  set(mathdx_cufftdx_DISABLE_CUTLASS TRUE)
+  find_package(mathdx REQUIRED COMPONENTS cufftdx CONFIG PATHS ${MATHDX_DIR})
+
+  set_source_files_properties(src/cufftdx_example.cu PROPERTIES LANGUAGE CUDA)
+  add_executable(cufftdx_example)
+
+  target_include_directories(
+    cufftdx_example
+    PRIVATE
+    ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
+    include/
+  )
+
+  target_sources(cufftdx_example
+    PRIVATE ${PROJECT_SOURCE_DIR}/src/cufftdx_example.cu)
+
+target_link_libraries(cufftdx_example mathdx::cufftdx)
+else()
+  message(STATUS "MATHDX_DIR not set, not building CUFFTDX examples")
+endif()
