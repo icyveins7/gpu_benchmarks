@@ -86,7 +86,7 @@ def make_indices_map(binary_map: np.ndarray, dtype: type = np.int32) -> np.ndarr
     return idx
 
 
-def make_connections(idx_map: np.ndarray, hdist: int, vdist: int):
+def make_connections(idx_map: np.ndarray, hdist: int, vdist: int, reach: int = -1):
     numChanges = 0
     workspace = idx_map.copy()
     for i in range(0, idx_map.shape[0]):
@@ -103,27 +103,65 @@ def make_connections(idx_map: np.ndarray, hdist: int, vdist: int):
             # print(window_idx)
             root = np.min(window_idx[window_idx >= 0])
 
-            if (workspace[i,j] != root):
-                print(f"Setting idx[{i}, {j}] = {root}")
+            # This snippet is kinda like path compression;
+            # if a long chain occurs like
+            # O...
+            # .O..
+            # ..O.
+            # ...O
+            # HOWEVER, doing this may be very bad in CUDA due to significant warp divergence
+            # i.e. some threads will have to hop more than others
+            # we will have to test this part (have a version that does this versus just doing more passes)
+
+            if reach < 0:
+                # Essentially, follow the entire chain to the end
+                grandparent = idx_map.reshape(-1)[root]
+                while grandparent != root:
+                    root = grandparent
+                    grandparent = idx_map.reshape(-1)[root]
+                root = grandparent
+
+            elif reach > 1:
+                for _ in range(1, reach):
+                    grandparent = idx_map.reshape(-1)[root]
+                    if grandparent == root:
+                        break
+                    root = grandparent
+
+            if workspace[i,j] != root:
+                # print(f"Setting idx[{i}, {j}] = {root}")
                 workspace[i,j] = root
                 numChanges += 1
 
     return workspace, numChanges
 
-def connect(idx_map: np.ndarray, hdist: int, vdist: int, maxIter: int = 100):
+def pprint(idx_map: np.ndarray, invalid_char: str = "."):
+    unique_idx = np.unique(idx_map[idx_map >= 0])
+    if unique_idx.size > 16:
+        raise ValueError("Too many unique indices for formatting")
+    mapping = {idx: format(i, 'X') for i, idx in enumerate(unique_idx)}
+    s = list()
+    for row in idx_map:
+        s.append("".join([str(mapping[i]) if i in unique_idx else invalid_char for i in row]))
+    print("\n".join(s))
+    return s
+
+def connect(idx_map: np.ndarray, hdist: int, vdist: int, reach: int = -1, maxIter: int = 100, verbose: bool = True):
     numChanges_list = []
-    numIter = 0
-    while numIter < maxIter:
-        idx_map, numChanges = make_connections(idx_map, hdist, vdist)
+    while len(numChanges_list) < maxIter:
+        idx_map, numChanges = make_connections(idx_map, hdist, vdist, reach)
         numChanges_list.append(numChanges)
         if numChanges == 0:
             break
 
-        print(idx_map)
-        numIter += 1
+        if verbose:
+            print(idx_map)
+            pprint(idx_map)
 
     if numChanges_list[-1] != 0:
         raise ValueError(f"Failed to connect indices within {maxIter} iterations")
+
+    print(f"Total iterations: {len(numChanges_list)}")
 
     return idx_map, numChanges_list
 

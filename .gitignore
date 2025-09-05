@@ -44,3 +44,4 @@
 build/
 .cache/
 *.nsys-rep
+__pycache__/
