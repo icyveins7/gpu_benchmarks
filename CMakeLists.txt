@@ -79,4 +79,5 @@ add_subdirectory(proj_reductions)
 add_subdirectory(proj_median)
 add_subdirectory(proj_selections)
 add_subdirectory(proj_outlierHandling)
+add_subdirectory(proj_windowccl)
 
