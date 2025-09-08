@@ -9,14 +9,14 @@ project(
 add_executable(wccl_experiment)
 
 target_include_directories(
-  wccl_experiment
+  wccl_experiment PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
 target_sources(
-  curandrng PRIVATE
-  ${CMAKE_CURRENT_SOURCE_DIR}/wccl.cpp
-  ${CMAKE_CURRENT_SOURCE_DIR}/wccl_experiment.cpp
+  wccl_experiment PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/wccl.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/wccl_experiment.cpp
 )
 # # --------------------
 # set_source_files_properties(curandrng.cu PROPERTIES LANGUAGE CUDA)
