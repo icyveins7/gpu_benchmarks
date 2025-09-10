@@ -1,27 +1,10 @@
 #include "wccl.h"
 
 #include <stdexcept>
+#include <algorithm>
 
 namespace wccl
 {
-
-CPUMapping::CPUMapping(const uint32_t _height, const uint32_t _width)
-  : data(_height * _width), height(_height), width(_width)
-{}
-
-void CPUMapping::print(const char* fmt)
-{
-  for (uint32_t i = 0; i < height; ++i){
-    for (uint32_t j = 0; j < width; ++j){
-      if (data[i * width + j] == -1)
-        printf("- ");
-      else
-        printf(fmt, data[i * width + j]);
-    }
-    printf("\n");
-  }
-
-}
 
 CPUSolver::CPUSolver(const uint32_t hDist, const uint32_t vDist)
   : m_hDist(hDist), m_vDist(vDist)
@@ -98,7 +81,19 @@ void CPUSolver::connect(const std::vector<uint8_t>& img, const uint32_t height, 
   this->connect(img.data(), height, width, mappings.data());
 }
 
+void CPUSolver::readout(const uint32_t height, const uint32_t width, std::vector<int32_t>& mapping){
+  for (uint32_t i = 0; i < height; ++i){
+    for (uint32_t j = 0; j < width; ++j){
+      int32_t root = this->find(mapping.data(), i, j, width);
+      mapping[i * width + j] = root;
+    }
+  }
+}
+
 int32_t CPUSolver::find(int32_t* mappings, const uint32_t i, const uint32_t j, const uint32_t width){
+  if (mappings[i * width + j] < 0)
+    return -1;
+
   int32_t root = mappings[i * width + j];
   while (root != mappings[root])
     root = mappings[root];
@@ -107,11 +102,15 @@ int32_t CPUSolver::find(int32_t* mappings, const uint32_t i, const uint32_t j, c
 }
 
 void CPUSolver::pathcompress(int32_t* mappings, const uint32_t i, const uint32_t j, const uint32_t width, const int32_t root){
-  int32_t current = mappings[i * width + j];
-  while (current != root){
-    int32_t next = mappings[current];
-    mappings[current] = root;
-    current = next;
+  int32_t* currentPtr = &mappings[i * width + j];
+  int32_t currentParent = *currentPtr;
+  while (currentParent != root){
+    // Change the current pointer value
+    *currentPtr = root;
+    // Go to the parent
+    currentPtr = &mappings[currentParent];
+    // Update the parent
+    currentParent = *currentPtr;
   }
 }
 

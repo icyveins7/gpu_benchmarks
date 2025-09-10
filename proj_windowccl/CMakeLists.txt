@@ -32,11 +32,16 @@ target_sources(
 # )
 
 # -------------------- Tests
-# if (GTEST_FOUND)
-#   message("Enabling tests for proj_rng")
-#
-#   # --------------------
-#   add_executable(test_remap test_remap.cu)
-#   target_link_libraries(test_remap ${CUDA_nppc_LIBRARY} ${CUDA_nppig_LIBRARY} GTest::gtest_main)
-#   gtest_discover_tests(test_remap)
-# endif()
+if (GTEST_FOUND)
+  message("Enabling tests for proj_windowccl")
+
+  # --------------------
+  add_executable(test_wccl test/test_wccl.cpp src/wccl.cpp)
+  # target_link_libraries(test_wccl ${CUDA_nppc_LIBRARY} ${CUDA_nppig_LIBRARY} GTest::gtest_main)
+  target_link_libraries(test_wccl GTest::gtest_main)
+  target_include_directories(
+    test_wccl PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+  )
+  gtest_discover_tests(test_wccl)
+endif()
