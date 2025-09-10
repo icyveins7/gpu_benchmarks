@@ -18,18 +18,22 @@ target_sources(
   ${CMAKE_CURRENT_SOURCE_DIR}/src/wccl.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/wccl_experiment.cpp
 )
-# # --------------------
-# set_source_files_properties(curandrng.cu PROPERTIES LANGUAGE CUDA)
-# add_executable(curandrng)
-#
-# target_include_directories(curandrng
-#                            PRIVATE ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
-#                            )
-#
-# target_sources(
-#   curandrng PRIVATE
-#   ${PROJECT_SOURCE_DIR}/curandrng.cu
-# )
+# --------------------
+set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/src/wccl_experiment_cuda.cu PROPERTIES LANGUAGE CUDA)
+set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/include/wccl_kernels.cuh PROPERTIES LANGUAGE CUDA)
+add_executable(wccl_experiment_cuda)
+
+target_include_directories(
+  wccl_experiment_cuda
+  PRIVATE
+  ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+target_sources(
+  wccl_experiment_cuda PRIVATE
+  ${PROJECT_SOURCE_DIR}/src/wccl_experiment_cuda.cu
+)
 
 # -------------------- Tests
 if (GTEST_FOUND)
