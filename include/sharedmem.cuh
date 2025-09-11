@@ -165,4 +165,25 @@ template <> struct SharedMemory<unsigned long long> {
   }
 };
 
+template <> struct SharedMemory<char2> {
+  __device__ char2 *getPointer() {
+    extern __shared__ char2 s_char2[];
+    return s_char2;
+  }
+};
+
+template <> struct SharedMemory<short2> {
+  __device__ short2 *getPointer() {
+    extern __shared__ short2 s_short2[];
+    return s_short2;
+  }
+};
+
+template <> struct SharedMemory<int2> {
+  __device__ int2 *getPointer() {
+    extern __shared__ int2 s_int2[];
+    return s_int2;
+  }
+};
+
 #endif //_SHAREDMEM_H_
