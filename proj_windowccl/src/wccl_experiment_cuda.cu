@@ -41,7 +41,7 @@ int main() {
   //   input[i] = rand() % 2;
   // // clang-format on
   // ================= Example 4
-  constexpr int rows = 8;
+  constexpr int rows = 16;
   constexpr int cols = 64;
   // clang-format off
   std::vector<uint8_t> input(rows * cols);
@@ -70,23 +70,23 @@ int main() {
 
   // Kernel
   dim3 tpb(32, 4);
-  dim3 bpg(d_image.width / tpb.x + (d_image.width % tpb.x ? 1 : 0),
-           d_image.height / tpb.y + (d_image.height % tpb.y ? 1 : 0));
-  const int2 tileDims = {32, 4};
-  const int2 windowDist = {1, 1};
+  const int2 tileDims = {32, 8};
+  dim3 bpg(d_image.width / tileDims.x + (d_image.width % tileDims.x ? 1 : 0),
+           d_image.height / tileDims.y + (d_image.height % tileDims.y ? 1 : 0));
+  const int2 windowDist = {2, 1};
   size_t shmem = tileDims.x * tileDims.y * 2 * sizeof(short);
   printf("Launching (%d, %d) blks kernel with shmem = %zu\n", bpg.x, bpg.y,
          shmem);
-  wccl::connect_kernel<MappingType, KernelColRowType>
+  wccl::local_connect_kernel<MappingType, KernelColRowType>
       <<<bpg, tpb, shmem>>>(d_image, d_mapping, tileDims, windowDist);
 
   thrust::host_vector<MappingType> h_mapping_vec = d_mapping_vec;
 
   if (rows <= 64 && cols <= 64)
-    printf("%s\n",
-           wccl::prettystring<MappingType>(
-               thrust::raw_pointer_cast(h_mapping_vec.data()), rows, cols)
-               .c_str());
+    printf("%s\n", wccl::prettystring<MappingType>(
+                       thrust::raw_pointer_cast(h_mapping_vec.data()), rows,
+                       cols, tileDims.x, tileDims.y)
+                       .c_str());
 
   return 0;
 }

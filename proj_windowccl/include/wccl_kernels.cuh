@@ -167,10 +167,30 @@ __device__ Tcolrow find(const DeviceIndexImage<Tcolrow> &tile, Tcolrow idx) {
   return idx;
 }
 
+/**
+ * @brief Does a pseudo-unite between two tiles.
+ *
+ * @details This does _NOT_ actually fully unite both sets, as this would
+ * possibly require multiple threads to write to the same address. Specifically,
+ * we try to prevent this by having each thread only rewrite to the address it
+ * is currently working on. The downside of this is that 2 sets may not
+ * immediately be united on one invocation, but the upside is that this method
+ * does not require atomics (which were required when multiple threads could
+ * update the same root address). Instead, this function is closer to a
+ * 'neighbour' linkage. Hence, multiple iterations are required to fully unite
+ * two sets. Very loosely, the number of iterations is dependent on the longest
+ * 'chain'.
+ *
+ * @tparam Tcolrow Type of the col/row indices (see DeviceIndexImage)
+ * @tparam Tmapping Type of the 1D flattened indices, used for comparisons
+ * @param tile_in Input tile
+ * @param tile_out Output tile
+ * @param windowDist Window distance
+ */
 template <typename Tcolrow, typename Tmapping>
-__device__ void unite(const DeviceIndexImage<Tcolrow> &tile_in,
-                      DeviceIndexImage<Tcolrow> &tile_out,
-                      const int2 windowDist) {
+__device__ void pseudoUnite(const DeviceIndexImage<Tcolrow> &tile_in,
+                            DeviceIndexImage<Tcolrow> &tile_out,
+                            const int2 windowDist) {
   for (int ty = threadIdx.y; ty < tile_in.height; ty += blockDim.y) {
     for (int tx = threadIdx.x; tx < tile_in.width; tx += blockDim.x) {
       // Early exit (but still remember to copy the invalid value)
@@ -215,9 +235,10 @@ __device__ void unite(const DeviceIndexImage<Tcolrow> &tile_in,
 }
 
 template <typename Tmapping, typename Tcolrow>
-__global__ void connect_kernel(const DeviceImage<uint8_t> input,
-                               DeviceImage<Tmapping> mapping,
-                               const int2 tileDims, const int2 windowDist) {
+__global__ void local_connect_kernel(const DeviceImage<uint8_t> input,
+                                     DeviceImage<Tmapping> mapping,
+                                     const int2 tileDims,
+                                     const int2 windowDist) {
   static_assert(std::is_signed_v<Tmapping>, "mapping type T must be signed");
 
   // Define the tile for this block
@@ -271,8 +292,9 @@ __global__ void connect_kernel(const DeviceImage<uint8_t> input,
   int numUniteSteps = 0;
   constexpr int maxNumUnites = 100; // TODO: what's a good max iteration?
   for (; numUniteSteps < maxNumUnites; ++numUniteSteps) {
-    unite<Tcolrow, Tmapping>(s_tiles[numUniteSteps % 2],
-                             s_tiles[(numUniteSteps + 1) % 2], windowDist);
+    pseudoUnite<Tcolrow, Tmapping>(s_tiles[numUniteSteps % 2],
+                                   s_tiles[(numUniteSteps + 1) % 2],
+                                   windowDist);
     // Detect workspace changes from input tile to output tile
     int threadChanges = 0;
     for (int ty = threadIdx.y; ty < blockTileDims.y; ty += blockDim.y) {
@@ -289,16 +311,16 @@ __global__ void connect_kernel(const DeviceImage<uint8_t> input,
     if (decision == 0)
       break;
   }
-  // if (threadIdx.x == 0 && threadIdx.y == 0) {
-  //   printf("numUniteSteps: %d\n", numUniteSteps);
-  //   for (int i = 0; i < blockTileDims.y; ++i) {
-  //     for (int j = 0; j < blockTileDims.x; ++j) {
-  //       printf("(%d, %d): (%d, %d)\n", i, j,
-  //              s_tiles[numUniteSteps % 2].get(i, j).y,
-  //              s_tiles[numUniteSteps % 2].get(i, j).x);
-  //     }
-  //   }
-  // }
+  if (threadIdx.x == 0 && threadIdx.y == 0) {
+    printf("numUniteSteps: %d\n", numUniteSteps);
+    //   for (int i = 0; i < blockTileDims.y; ++i) {
+    //     for (int j = 0; j < blockTileDims.x; ++j) {
+    //       printf("(%d, %d): (%d, %d)\n", i, j,
+    //              s_tiles[numUniteSteps % 2].get(i, j).y,
+    //              s_tiles[numUniteSteps % 2].get(i, j).x);
+    //     }
+    //   }
+  }
 
   for (int ty = threadIdx.y; ty < blockTileDims.y; ty += blockDim.y) {
     int y = tileYstart + ty;

@@ -15,7 +15,11 @@ namespace wccl
 {
 
 template <typename T>
-std::string prettystring(const T* data, const int height, const int width){
+std::string prettystring(const T* data,
+                         const int height,
+                         const int width,
+                         const int tileWidth = -1,
+                         const int tileHeight = -1){
   std::vector<char> labelChars;
   std::unordered_map<int32_t, char> labelMap;
   // A-Z
@@ -38,7 +42,15 @@ std::string prettystring(const T* data, const int height, const int width){
   std::string s;
   char temp[8];
   for (int i = 0; i < height; ++i){
+    if (i > 0 && tileHeight > 0 && i % tileHeight == 0){
+      for (int l = 0; l < width*2 + width / tileWidth * 2; ++l)
+        s += "\u2015";
+      s += "\n";
+    }
     for (int j = 0; j < width; ++j){
+      if (j > 0 && tileWidth > 0 && j % tileWidth == 0)
+        s += "\u2502 ";
+
       if (data[i * width + j] == -1)
         s += "- ";
       else
