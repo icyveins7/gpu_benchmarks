@@ -19,10 +19,13 @@ template <typename T> struct DeviceImage {
   unsigned int height;
   unsigned int width;
 
-  DeviceImage() = default;
-  __device__ DeviceImage(T *_data, int _height, int _width)
+  __host__ __device__ DeviceImage(T *_data, int _height, int _width)
       : data(_data), height(_height), width(_width) {}
-  DeviceImage(thrust::device_vector<T> &_data, int _height, int _width)
+  /**
+   * @brief Specifically for host side code, to instantiate a container before
+   * sending it into the kernel.
+   */
+  __host__ DeviceImage(thrust::device_vector<T> &_data, int _height, int _width)
       : data(_data.data().get()), height(_height), width(_width) {
     if (data == nullptr) {
       throw std::runtime_error("data is null");
@@ -253,9 +256,9 @@ __global__ void connect_kernel(const DeviceImage<uint8_t> input,
         else
           s_tiles[0].makeInvalidAt(ty, tx);
 
-        printf("blk(%d,%d) tile(%d,%d)<-input.get(%d,%d): (%d,%d)\n",
-               blockIdx.x, blockIdx.y, ty, tx, y, x, s_tiles[0].get(ty, tx).y,
-               s_tiles[0].get(ty, tx).x);
+        // printf("blk(%d,%d) tile(%d,%d)<-input.get(%d,%d): (%d,%d)\n",
+        //        blockIdx.x, blockIdx.y, ty, tx, y, x, s_tiles[0].get(ty,
+        //        tx).y, s_tiles[0].get(ty, tx).x);
       } else {
         // printf("Out of bounds at (%d, %d) in s_tiles[0]\n", y, x);
         s_tiles[0].makeInvalidAt(ty, tx);

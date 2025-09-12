@@ -1,21 +1,29 @@
 #include "wccl.h"
 #include <iostream>
+#include <cstdlib>
+#include "timer.h"
 
 void experiment(
   const uint32_t height,
   const uint32_t width,
   const int hDist,
   const int vDist,
-  const std::vector<uint8_t>& img
+  const std::vector<uint8_t>& img,
+  const bool print = true
 ){
-  printf("Experiment: hDist = %d, vDist = %d\n", hDist, vDist);
+  printf("Experiment: height = %u, width = %u, hDist = %d, vDist = %d\n", height, width, hDist, vDist);
   wccl::CPUMapping mapping(height, width);
   wccl::CPUSolver solver(hDist, vDist);
 
-  solver.connect(img, mapping.height, mapping.width, mapping.data);
-  solver.readout(height, width, mapping.data);
+  {
+    HighResolutionTimer timer;
+    solver.connect(img, mapping.height, mapping.width, mapping.data);
+    solver.readout(height, width, mapping.data);
+  }
 
-  mapping.print();
+  if (print){
+    mapping.print();
+  }
 
   printf("=========\n\n");
 }
@@ -81,6 +89,13 @@ int main()
       };
       experiment(height, width, hDist, vDist, img);
     }
+    {
+      uint32_t height = 8192, width = 1024;
+      std::vector<uint8_t> img(height * width);
+      for (size_t i = 0; i < height * width; ++i)
+        img.at(i) = rand() % 2;
+      experiment(height, width, hDist, vDist, img, false);
+    }
   } // end hDist = 1, vDist = 1
 
   {
@@ -109,6 +124,7 @@ int main()
       experiment(height, width, hDist, vDist, img);
     }
   } // end hDist = 1, vDist = 2
+
 
   return 0;
 }

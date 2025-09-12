@@ -14,6 +14,45 @@ I just like how wccl sounds.
 namespace wccl
 {
 
+template <typename T>
+std::string prettystring(const T* data, const int height, const int width){
+  std::vector<char> labelChars;
+  std::unordered_map<int32_t, char> labelMap;
+  // A-Z
+  for (uint8_t i = 65; i < 91; ++i)
+    labelChars.push_back(i);
+
+  // 0-9
+  for (uint8_t i = 48; i < 58; ++i)
+    labelChars.push_back(i);
+  printf("Max labels: %lu\n", labelChars.size());
+
+  size_t ctr = 0;
+  for (size_t i = 0; i < (size_t)(height * width); ++i){
+    if (data[i] >= 0 && labelMap.find(data[i]) == labelMap.end()){
+      labelMap.insert({data[i], labelChars.at(ctr)});
+      ctr++;
+    }
+  }
+
+  std::string s;
+  char temp[8];
+  for (int i = 0; i < height; ++i){
+    for (int j = 0; j < width; ++j){
+      if (data[i * width + j] == -1)
+        s += "- ";
+      else
+      {
+        snprintf(temp, 8, "%c ", labelMap.at(data[i * width + j]));
+
+        s += temp;
+      }
+    }
+    s += "\n";
+  }
+  return s;
+}
+
 template <typename T = int32_t>
 struct CPUMapping
 {

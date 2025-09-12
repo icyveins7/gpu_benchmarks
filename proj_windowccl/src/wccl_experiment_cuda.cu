@@ -1,5 +1,7 @@
+#include "wccl.h"
 #include "wccl_kernels.cuh"
 
+#include <cstdlib>
 #include <thrust/device_vector.h>
 #include <thrust/host_vector.h>
 
@@ -15,20 +17,36 @@ int main() {
   //   0, 1, 0, 0, 1,
   // };
   // // clang-format on
-  // ================= Example 2
+  // // ================= Example 2
+  // constexpr int rows = 8;
+  // constexpr int cols = 5;
+  // // clang-format off
+  // const std::vector<uint8_t> input = {
+  //   1, 0, 0, 0, 1,
+  //   0, 1, 0, 1, 0,
+  //   0, 0, 1, 0, 0,
+  //   0, 1, 0, 0, 1,
+  //   0, 0, 0, 0, 1,
+  //   0, 1, 0, 1, 0,
+  //   1, 0, 0, 0, 0,
+  //   0, 0, 0, 0, 0,
+  // };
+  // // clang-format on
+  // // ================= Example 3
+  // constexpr int rows = 8192;
+  // constexpr int cols = 1024;
+  // // clang-format off
+  // std::vector<uint8_t> input(rows * cols);
+  // for (size_t i = 0; i < rows * cols; ++i)
+  //   input[i] = rand() % 2;
+  // // clang-format on
+  // ================= Example 4
   constexpr int rows = 8;
-  constexpr int cols = 5;
+  constexpr int cols = 64;
   // clang-format off
-  const std::vector<uint8_t> input = {
-    1, 0, 0, 0, 1,
-    0, 1, 0, 1, 0,
-    0, 0, 1, 0, 0,
-    0, 1, 0, 0, 1,
-    0, 0, 0, 0, 1,
-    0, 1, 0, 1, 0,
-    1, 0, 0, 0, 0,
-    0, 0, 0, 0, 0,
-  };
+  std::vector<uint8_t> input(rows * cols);
+  for (size_t i = 0; i < rows * cols; ++i)
+    input[i] = rand() % 2;
   // clang-format on
 
   typedef short2 KernelColRowType;
@@ -62,16 +80,13 @@ int main() {
   wccl::connect_kernel<MappingType, KernelColRowType>
       <<<bpg, tpb, shmem>>>(d_image, d_mapping, tileDims, windowDist);
 
-  thrust::host_vector<short> h_mapping = d_mapping_vec;
-  for (int r = 0; r < rows; r++) {
-    for (int c = 0; c < cols; c++) {
-      if (h_mapping[r * cols + c] < 0)
-        printf("-- ");
-      else
-        printf("%2d ", h_mapping[r * cols + c]);
-    }
-    printf("\n");
-  }
+  thrust::host_vector<MappingType> h_mapping_vec = d_mapping_vec;
+
+  if (rows <= 64 && cols <= 64)
+    printf("%s\n",
+           wccl::prettystring<MappingType>(
+               thrust::raw_pointer_cast(h_mapping_vec.data()), rows, cols)
+               .c_str());
 
   return 0;
 }
