@@ -15,6 +15,34 @@ namespace wccl
 {
 
 template <typename T>
+std::string idxstring(const T* data,
+                      const int height,
+                      const int width,
+                      const char* fmt="%d ",
+                      const char* cfmt="%c ",
+                      const int tileWidth = -1,
+                      const int tileHeight = -1) {
+  std::string s;
+  char temp[8];
+  for (uint32_t i = 0; i < height; ++i){
+    for (uint32_t j = 0; j < width; ++j){
+      if (data[i * width + j] == -1){
+        snprintf(temp, 8, cfmt, '-');
+        s += temp;
+      }
+      else
+      {
+        // Print the value itself
+        snprintf(temp, 8, fmt, data[i * width + j]);
+        s += temp;
+      }
+    }
+    s += "\n";
+  }
+  return s;
+}
+
+template <typename T>
 std::string prettystring(const T* data,
                          const int height,
                          const int width,

@@ -65,6 +65,26 @@ template <typename T> struct DeviceImage {
     if (row < height && col < width)
       data[flattenedIndex(row, col)] = val;
   }
+
+  /**
+   * @brief Range-checked getter via global row/col indices, removing tile
+   * offsets automatically.
+   *
+   * @param gRow Global row index
+   * @param gCol Global col index
+   * @param tileXstart Tile column offset
+   * @param tileYstart Tile row offset
+   * @return Associated value from internal data
+   */
+  __host__ __device__ T get(const unsigned int gRow, const unsigned int gCol,
+                            const int tileYstart, const int tileXstart) const {
+    const int row = gRow - tileYstart;
+    const int col = gCol - tileXstart;
+    if (row >= 0 && col >= 0 && row < height && col < width)
+      return data[flattenedIndex(row, col)];
+    else
+      return T();
+  }
 };
 
 /**
@@ -154,6 +174,9 @@ struct DeviceIndexImage : public DeviceImage<Tcolrow> {
 // ========================================================================
 // ========================================================================
 
+/**
+ * @brief Local block finding, based on row/col indices.
+ */
 template <typename Tcolrow>
 __device__ Tcolrow find(const DeviceIndexImage<Tcolrow> &tile, Tcolrow idx) {
   // Return directly if inactive i.e. -1 -> -1
@@ -165,6 +188,21 @@ __device__ Tcolrow find(const DeviceIndexImage<Tcolrow> &tile, Tcolrow idx) {
     idx = tile.get(idx.y, idx.x);
   }
   return idx;
+}
+
+/**
+ * @brief Global finder, may be highly warp divergent and will inevitably go
+ * across global memory.
+ */
+template <typename Tmapping>
+__device__ Tmapping *find(const DeviceImage<Tmapping> &img, Tmapping idx) {
+  if (img.data[idx] < 0)
+    return nullptr;
+
+  while (img.data[idx] != idx) {
+    idx = img.data[idx];
+  }
+  return &img.data[idx];
 }
 
 /**
@@ -341,6 +379,152 @@ __global__ void local_connect_kernel(const DeviceImage<uint8_t> input,
       mapping.set(y, x, globalIdx);
     }
   }
-} // namespace wccl
+}
+
+template <typename Tmapping>
+__global__ void inter_tile_neighbours_kernel(DeviceImage<Tmapping> mapping,
+                                             const int2 tileDims,
+                                             const int2 windowDist) {
+  static_assert(std::is_signed_v<Tmapping>, "mapping type T must be signed");
+
+  // Define the tile for this block
+  const int tileXstart = blockIdx.x * tileDims.x;
+  const int tileYstart = blockIdx.y * tileDims.y;
+  // We then define an enlarged tile to include the border (this is what we will
+  // load)
+  const int borderTileXstart =
+      tileXstart - windowDist.x < 0 ? 0 : tileXstart - windowDist.x;
+  const int borderTileYstart =
+      tileYstart - windowDist.y < 0 ? 0 : tileYstart - windowDist.y;
+  // Tile may not be fully occupied at the ends
+  const int2 blockTileDims{tileXstart + tileDims.x < (int)mapping.width
+                               ? tileDims.x
+                               : (int)mapping.width - tileXstart,
+                           tileYstart + tileDims.y < (int)mapping.height
+                               ? tileDims.y
+                               : (int)mapping.height - tileYstart};
+
+  const int2 borderBlockTileDims{
+      borderTileXstart + tileDims.x + 2 * windowDist.x < (int)mapping.width
+          ? tileDims.x + 2 * windowDist.x
+          : (int)mapping.width - borderTileXstart,
+      borderTileYstart + tileDims.y + 2 * windowDist.y < (int)mapping.height
+          ? tileDims.y + 2 * windowDist.y
+          : (int)mapping.height - borderTileYstart,
+  };
+
+  // Read tile with border into shared memory
+  SharedMemory<Tmapping> smem;
+  DeviceIndexImage<Tmapping> s_tiles(smem.getPointer(), borderBlockTileDims.y,
+                                     borderBlockTileDims.x);
+
+  blockRoiLoad(mapping.data, mapping.width, mapping.height, borderTileXstart,
+               borderBlockTileDims.x, borderTileYstart, borderBlockTileDims.y,
+               s_tiles.data);
+  __syncthreads();
+
+  // Now for every element, check for neighbours
+  for (int ty = threadIdx.y; ty < blockTileDims.y; ty += blockDim.y) {
+    for (int tx = threadIdx.x; tx < blockTileDims.x; tx += blockDim.x) {
+      // We read elements based on their global indices instead of the local
+      // ones, to track the internal tile WITHOUT the borders
+      int gRow = tileXstart + tx;
+      int gCol = tileYstart + ty;
+
+      Tmapping root =
+          s_tiles.get(gRow, gCol, borderTileYstart, borderTileXstart);
+
+      // Now iterate over the window, again via global indices
+      for (int gwy = gRow - windowDist.y; gwy <= gRow + windowDist.y; gwy++) {
+        for (int gwx = gCol - windowDist.x; gwx <= gCol + windowDist.x; gwx++) {
+          // If the element in the window is inside the 'main' tile then ignore
+          // it
+          if (gwy >= tileYstart && gwy < tileYstart + tileDims.y &&
+              gwx >= tileXstart && gwx < tileXstart + tileDims.x) {
+            continue;
+          }
+
+          // Otherwise it is inside the border, test it
+          Tmapping windowRoot =
+              s_tiles.get(gwy, gwx, borderTileYstart, borderTileXstart);
+
+          // Take min root
+          root = root < windowRoot ? root : windowRoot;
+
+          // TODO: this doesn't really work, i need to hold all neighbours to
+          // the current element and append them somewhere, while maintaining
+          // only unique windowRoots.. pause while i figure this out
+        }
+      }
+    }
+  }
+}
+
+template <typename Tmapping>
+__global__ void naive_global_unionfind_kernel(DeviceImage<Tmapping> mapping,
+                                              const int2 tileDims,
+                                              const int2 windowDist) {
+  // Still 'work in the tile'
+  const int tileXstart = blockIdx.x * tileDims.x;
+  const int tileYstart = blockIdx.y * tileDims.y;
+  const int2 blockTileDims{tileXstart + tileDims.x < (int)mapping.width
+                               ? tileDims.x
+                               : (int)mapping.width - tileXstart,
+                           tileYstart + tileDims.y < (int)mapping.height
+                               ? tileDims.y
+                               : (int)mapping.height - tileYstart};
+
+  for (int ty = threadIdx.y; ty < blockTileDims.y; ty += blockDim.y) {
+    for (int tx = threadIdx.x; tx < blockTileDims.x; tx += blockDim.x) {
+      // Don't do anything if it is not in range of the border
+      if (tx < windowDist.x || tx >= blockTileDims.x - windowDist.x ||
+          ty < windowDist.y || ty >= blockTileDims.y - windowDist.y) {
+        continue;
+      }
+
+      // Read the value, which is the tile root
+      int gy = tileYstart + ty;
+      int gx = tileXstart + tx;
+      Tmapping *rootPtr = find(
+          mapping, (Tmapping)(gy * mapping.width + gx)); // this will not change
+      // Ignore inactive sites
+      if (rootPtr == nullptr) {
+        continue;
+      }
+      // Unite with neighbours in the border
+      for (int gwy = ty - windowDist.y; gwy <= ty + windowDist.y; gwy++) {
+        for (int gwx = tx - windowDist.x; gwx <= tx + windowDist.x; gwx++) {
+          // Ignore if outside image
+          if (gwy < 0 || gwy >= (int)mapping.height || gwx < 0 ||
+              gwx >= (int)mapping.width) {
+            continue;
+          }
+          // Ignore inside the tile
+          if (gwy >= tileYstart && gwy < tileYstart + blockTileDims.y &&
+              gwx >= tileXstart && gwx < tileXstart + blockTileDims.x) {
+            continue;
+          }
+          // Ignore if inactive
+          Tmapping *neighbourRootPtr =
+              find(mapping, (Tmapping)(gwy * mapping.width + gwx));
+          if (neighbourRootPtr == nullptr) {
+            continue;
+          }
+
+          // Otherwise change the root addresses
+          if (*rootPtr < *neighbourRootPtr) {
+            // Change the neighbour's root to this element's root
+            printf("Changing root %d -> %d\n", *neighbourRootPtr, *rootPtr);
+            atomicMin(neighbourRootPtr, *rootPtr);
+          } else if (*rootPtr > *neighbourRootPtr) {
+            // Change this element's root to the neighbour's root
+            printf("Changing root %d -> %d\n", *rootPtr, *neighbourRootPtr);
+            atomicMin(rootPtr, *neighbourRootPtr);
+          }
+        }
+      }
+    }
+  }
+}
 
 } // namespace wccl
