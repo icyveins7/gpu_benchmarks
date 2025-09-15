@@ -49,11 +49,15 @@ int main() {
   //   input[i] = rand() % 2;
   // // clang-format on
   // // ================= Example 5
-  constexpr int rows = 8;
+  constexpr int rows = 12;
   constexpr int cols = 6;
   // clang-format off
   const std::vector<uint8_t> input = {
+    0, 0, 1, 0, 1, 0,
     0, 1, 0, 0, 0, 1,
+    0, 1, 0, 0, 0, 1,
+    0, 0, 1, 0, 1, 0,
+    0, 0, 1, 0, 1, 0,
     0, 1, 0, 0, 0, 1,
     0, 1, 0, 0, 0, 1,
     0, 0, 1, 0, 1, 0,

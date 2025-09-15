@@ -9,6 +9,12 @@
 
 namespace wccl {
 
+#ifndef NDEBUG
+#define dprintf(...) printf(__VA_ARGS__)
+#else
+#define dprintf(...)
+#endif
+
 // NOTE: it is important that when using this as inputs to a kernel, a
 // reference/pointer is not used, since it is merely a container for a copy of
 // the pointers and sizes i.e. just a handy substitute for using 4 separate
@@ -500,8 +506,8 @@ __global__ void naive_global_unionfind_kernel(DeviceImage<Tmapping> mapping,
       // Translate tile index to global index
       int gy = tileYstart + ty;
       int gx = tileXstart + tx;
-      printf("Blk (%d,%d): %d, %d == %d, %d\n", blockIdx.x, blockIdx.y, tx, ty,
-             gx, gy);
+      dprintf("Blk (%d,%d): %d, %d == %d, %d\n", blockIdx.x, blockIdx.y, tx, ty,
+              gx, gy);
       // Read the value, which is the tile root
       Tmapping *rootPtr = find(
           mapping, (Tmapping)(gy * mapping.width + gx)); // this will not change
@@ -535,21 +541,21 @@ __global__ void naive_global_unionfind_kernel(DeviceImage<Tmapping> mapping,
           // Otherwise change the root addresses
           if (*rootPtr < *neighbourRootPtr) {
             // Change the neighbour's root to this element's root
-            printf("Blk (%d,%d), pos(%d, %d), wpos(%d,%d): Tile wants to "
-                   "change neighbour "
-                   "root %p(%d) -> "
-                   "%p(%d)\n",
-                   blockIdx.x, blockIdx.y, gx, gy, gwx, gwy, neighbourRootPtr,
-                   *neighbourRootPtr, rootPtr, *rootPtr);
+            dprintf("Blk (%d,%d), pos(%d, %d), wpos(%d,%d): Tile wants to "
+                    "change neighbour "
+                    "root %p(%d) -> "
+                    "%p(%d)\n",
+                    blockIdx.x, blockIdx.y, gx, gy, gwx, gwy, neighbourRootPtr,
+                    *neighbourRootPtr, rootPtr, *rootPtr);
             atomicMin(neighbourRootPtr, *rootPtr);
           } else if (*rootPtr > *neighbourRootPtr) {
             // Change this element's root to the neighbour's root
-            printf("Blk (%d,%d), pos(%d, %d), wpos(%d,%d): Neighbour wants to "
-                   "change tile "
-                   "root %p(%d) -> "
-                   "%p(%d)\n",
-                   blockIdx.x, blockIdx.y, gx, gy, gwx, gwy, rootPtr, *rootPtr,
-                   neighbourRootPtr, *neighbourRootPtr);
+            dprintf("Blk (%d,%d), pos(%d, %d), wpos(%d,%d): Neighbour wants to "
+                    "change tile "
+                    "root %p(%d) -> "
+                    "%p(%d)\n",
+                    blockIdx.x, blockIdx.y, gx, gy, gwx, gwy, rootPtr, *rootPtr,
+                    neighbourRootPtr, *neighbourRootPtr);
             atomicMin(rootPtr, *neighbourRootPtr);
           }
         }
