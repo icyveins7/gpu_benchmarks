@@ -5,6 +5,8 @@
 #include <thrust/device_vector.h>
 #include <thrust/host_vector.h>
 
+#include "pinnedalloc.cuh"
+
 int main() {
   // ================= Example 1
   // constexpr int rows = 4;
@@ -17,6 +19,7 @@ int main() {
   //   0, 1, 0, 0, 1,
   // };
   // // clang-format on
+
   // // ================= Example 2
   // constexpr int rows = 8;
   // constexpr int cols = 5;
@@ -32,14 +35,17 @@ int main() {
   //   0, 0, 0, 0, 0,
   // };
   // // clang-format on
-  // // ================= Example 3 (for timing)
-  // constexpr int rows = 8192;
-  // constexpr int cols = 1024;
-  // // clang-format off
-  // std::vector<uint8_t> input(rows * cols);
-  // for (size_t i = 0; i < rows * cols; ++i)
-  //   input[i] = rand() % 2;
-  // // clang-format on
+
+  // ================= Example 3 (for timing)
+  constexpr int rows = 8192;
+  constexpr int cols = 1024;
+  // clang-format off
+  std::vector<uint8_t> input(rows * cols);
+  for (size_t i = 0; i < rows * cols; ++i)
+    input[i] = rand() % 2;
+  const int2 tileDims = {32, 4};
+  // clang-format on
+
   // // ================= Example 4
   // constexpr int rows = 16;
   // constexpr int cols = 64;
@@ -47,26 +53,28 @@ int main() {
   // std::vector<uint8_t> input(rows * cols);
   // for (size_t i = 0; i < rows * cols; ++i)
   //   input[i] = rand() % 2;
+  // const int2 tileDims = {32, 4};
   // // clang-format on
   // // ================= Example 5
-  constexpr int rows = 12;
-  constexpr int cols = 6;
-  // clang-format off
-  const std::vector<uint8_t> input = {
-    0, 0, 1, 0, 1, 0,
-    0, 1, 0, 0, 0, 1,
-    0, 1, 0, 0, 0, 1,
-    0, 0, 1, 0, 1, 0,
-    0, 0, 1, 0, 1, 0,
-    0, 1, 0, 0, 0, 1,
-    0, 1, 0, 0, 0, 1,
-    0, 0, 1, 0, 1, 0,
-    1, 0, 0, 1, 0, 0,
-    1, 0, 1, 0, 1, 0,
-    0, 1, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0,
-  };
-  // clang-format on
+  // constexpr int rows = 12;
+  // constexpr int cols = 6;
+  // // clang-format off
+  // const std::vector<uint8_t> input = {
+  //   0, 0, 1, 0, 1, 0,
+  //   0, 1, 0, 0, 0, 1,
+  //   0, 1, 0, 0, 0, 1,
+  //   0, 0, 1, 0, 1, 0,
+  //   0, 0, 1, 0, 1, 0,
+  //   0, 1, 0, 0, 0, 1,
+  //   0, 1, 0, 0, 0, 1,
+  //   0, 0, 1, 0, 1, 0,
+  //   1, 0, 0, 1, 0, 0,
+  //   1, 0, 1, 0, 1, 0,
+  //   0, 1, 0, 0, 0, 0,
+  //   0, 0, 0, 0, 0, 0,
+  // };
+  // const int2 tileDims = {32, 4};
+  // // clang-format on
 
   typedef short2 KernelColRowType;
   typedef int MappingType;
@@ -89,7 +97,6 @@ int main() {
 
   // Kernel 1. Local tile merge
   dim3 tpb(32, 4);
-  const int2 tileDims = {6, 4};
   dim3 bpg(d_image.width / tileDims.x + (d_image.width % tileDims.x ? 1 : 0),
            d_image.height / tileDims.y + (d_image.height % tileDims.y ? 1 : 0));
   const int2 windowDist = {1, 1};
@@ -114,15 +121,41 @@ int main() {
   }
 
   // Kernel 2. Cross-tile merge
-  wccl::naive_global_unionfind_kernel<MappingType>
-      <<<bpg, tpb>>>(d_mapping, tileDims, windowDist);
+  thrust::pinned_host_vector<unsigned int> h_counter(1);
+  h_counter[0] = 0;
+  thrust::device_vector<unsigned int> d_counter(1);
+  thrust::copy(h_counter.begin(), h_counter.end(), d_counter.begin());
+  unsigned int prevCounter;
+  size_t numUnionFindIters = 0;
+
+  do {
+    prevCounter = h_counter[0];
+    wccl::naive_global_unionfind_kernel<MappingType>
+        <<<bpg, tpb>>>(d_mapping, tileDims, windowDist, d_counter.data().get());
+    thrust::copy(d_counter.begin(), d_counter.end(), h_counter.begin());
+    // printf("Update count: %u\n", h_counter[0]);
+    numUnionFindIters++;
+
+    // We can print to see it evolve
+    if (rows <= 64 && cols <= 64) {
+      h_mapping_vec = d_mapping_vec;
+      printf("%s\n ========================== \n",
+             wccl::idxstring<MappingType>(
+                 thrust::raw_pointer_cast(h_mapping_vec.data()), rows, cols,
+                 "%2d ", "%2c ", tileDims.x, tileDims.y)
+                 .c_str());
+    }
+  } while (prevCounter != h_counter[0]);
+
+  printf("numUnionFindIters = %zu\n", numUnionFindIters);
   h_mapping_vec = d_mapping_vec;
 
   if (rows <= 64 && cols <= 64) {
-    printf("%s\n", wccl::idxstring<MappingType>(
-                       thrust::raw_pointer_cast(h_mapping_vec.data()), rows,
-                       cols, "%2d ", "%2c ", tileDims.x, tileDims.y)
-                       .c_str());
+    printf("%s\n ========================== \n",
+           wccl::idxstring<MappingType>(
+               thrust::raw_pointer_cast(h_mapping_vec.data()), rows, cols,
+               "%2d ", "%2c ", tileDims.x, tileDims.y)
+               .c_str());
   }
   return 0;
 }

@@ -355,8 +355,10 @@ __global__ void local_connect_kernel(const DeviceImage<uint8_t> input,
     if (decision == 0)
       break;
   }
+
+#ifndef NDEBUG
   if (threadIdx.x == 0 && threadIdx.y == 0) {
-    printf("numUniteSteps: %d\n", numUniteSteps);
+    dprintf("numUniteSteps: %d\n", numUniteSteps);
     //   for (int i = 0; i < blockTileDims.y; ++i) {
     //     for (int j = 0; j < blockTileDims.x; ++j) {
     //       printf("(%d, %d): (%d, %d)\n", i, j,
@@ -365,6 +367,7 @@ __global__ void local_connect_kernel(const DeviceImage<uint8_t> input,
     //     }
     //   }
   }
+#endif
 
   for (int ty = threadIdx.y; ty < blockTileDims.y; ty += blockDim.y) {
     int y = tileYstart + ty;
@@ -469,7 +472,8 @@ __global__ void inter_tile_neighbours_kernel(DeviceImage<Tmapping> mapping,
 template <typename Tmapping>
 __global__ void naive_global_unionfind_kernel(DeviceImage<Tmapping> mapping,
                                               const int2 tileDims,
-                                              const int2 windowDist) {
+                                              const int2 windowDist,
+                                              unsigned int *updateCounter) {
   // Still 'work in the tile'
   const int tileXstart = blockIdx.x * tileDims.x;
   const int tileYstart = blockIdx.y * tileDims.y;
@@ -548,6 +552,7 @@ __global__ void naive_global_unionfind_kernel(DeviceImage<Tmapping> mapping,
                     blockIdx.x, blockIdx.y, gx, gy, gwx, gwy, neighbourRootPtr,
                     *neighbourRootPtr, rootPtr, *rootPtr);
             atomicMin(neighbourRootPtr, *rootPtr);
+            atomicAdd(updateCounter, 1);
           } else if (*rootPtr > *neighbourRootPtr) {
             // Change this element's root to the neighbour's root
             dprintf("Blk (%d,%d), pos(%d, %d), wpos(%d,%d): Neighbour wants to "
@@ -557,6 +562,7 @@ __global__ void naive_global_unionfind_kernel(DeviceImage<Tmapping> mapping,
                     blockIdx.x, blockIdx.y, gx, gy, gwx, gwy, rootPtr, *rootPtr,
                     neighbourRootPtr, *neighbourRootPtr);
             atomicMin(rootPtr, *neighbourRootPtr);
+            atomicAdd(updateCounter, 1);
           }
         }
       }
