@@ -475,16 +475,34 @@ __global__ void naive_global_unionfind_kernel(DeviceImage<Tmapping> mapping,
                                : (int)mapping.height - tileYstart};
 
   for (int ty = threadIdx.y; ty < blockTileDims.y; ty += blockDim.y) {
-    for (int tx = threadIdx.x; tx < blockTileDims.x; tx += blockDim.x) {
-      // Don't do anything if it is not in range of the border
-      if (tx < windowDist.x || tx >= blockTileDims.x - windowDist.x ||
-          ty < windowDist.y || ty >= blockTileDims.y - windowDist.y) {
-        continue;
-      }
+    // Must be in range of border
+    /*
+    E.g., only O is considered, windowDist = {2, 2}
+    OOOOOOO
+    OOOOOOO
+    OOXXXOO
+    OOOOOOO
+    OOOOOOO
+    */
+    bool validY = false;
+    if (ty < windowDist.y || ty >= blockTileDims.y - windowDist.y)
+      validY = true;
 
-      // Read the value, which is the tile root
+    for (int tx = threadIdx.x; tx < blockTileDims.x; tx += blockDim.x) {
+      bool validX = false;
+      if (tx < windowDist.x || tx >= blockTileDims.x - windowDist.x)
+        validX = true;
+
+      // Don't do anything if it is not in range of the border
+      if (!(validX || validY))
+        continue;
+
+      // Translate tile index to global index
       int gy = tileYstart + ty;
       int gx = tileXstart + tx;
+      printf("Blk (%d,%d): %d, %d == %d, %d\n", blockIdx.x, blockIdx.y, tx, ty,
+             gx, gy);
+      // Read the value, which is the tile root
       Tmapping *rootPtr = find(
           mapping, (Tmapping)(gy * mapping.width + gx)); // this will not change
       // Ignore inactive sites
@@ -492,11 +510,14 @@ __global__ void naive_global_unionfind_kernel(DeviceImage<Tmapping> mapping,
         continue;
       }
       // Unite with neighbours in the border
-      for (int gwy = ty - windowDist.y; gwy <= ty + windowDist.y; gwy++) {
-        for (int gwx = tx - windowDist.x; gwx <= tx + windowDist.x; gwx++) {
+      for (int gwy = gy - windowDist.y; gwy <= gy + windowDist.y; gwy++) {
+        // Ignore if outside image
+        if (gwy < 0 || gwy >= (int)mapping.height) {
+          continue;
+        }
+        for (int gwx = gx - windowDist.x; gwx <= gx + windowDist.x; gwx++) {
           // Ignore if outside image
-          if (gwy < 0 || gwy >= (int)mapping.height || gwx < 0 ||
-              gwx >= (int)mapping.width) {
+          if (gwx < 0 || gwx >= (int)mapping.width) {
             continue;
           }
           // Ignore inside the tile
@@ -514,11 +535,21 @@ __global__ void naive_global_unionfind_kernel(DeviceImage<Tmapping> mapping,
           // Otherwise change the root addresses
           if (*rootPtr < *neighbourRootPtr) {
             // Change the neighbour's root to this element's root
-            printf("Changing root %d -> %d\n", *neighbourRootPtr, *rootPtr);
+            printf("Blk (%d,%d), pos(%d, %d), wpos(%d,%d): Tile wants to "
+                   "change neighbour "
+                   "root %p(%d) -> "
+                   "%p(%d)\n",
+                   blockIdx.x, blockIdx.y, gx, gy, gwx, gwy, neighbourRootPtr,
+                   *neighbourRootPtr, rootPtr, *rootPtr);
             atomicMin(neighbourRootPtr, *rootPtr);
           } else if (*rootPtr > *neighbourRootPtr) {
             // Change this element's root to the neighbour's root
-            printf("Changing root %d -> %d\n", *rootPtr, *neighbourRootPtr);
+            printf("Blk (%d,%d), pos(%d, %d), wpos(%d,%d): Neighbour wants to "
+                   "change tile "
+                   "root %p(%d) -> "
+                   "%p(%d)\n",
+                   blockIdx.x, blockIdx.y, gx, gy, gwx, gwy, rootPtr, *rootPtr,
+                   neighbourRootPtr, *neighbourRootPtr);
             atomicMin(rootPtr, *neighbourRootPtr);
           }
         }
