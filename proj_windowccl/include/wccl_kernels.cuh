@@ -441,8 +441,12 @@ __global__ void local_connect_naive_unionfind_kernel(
       Tmapping element = s_tile.get(ty, tx);
       // Path compress if valid
       if (element >= 0) {
-        pathcompress(s_tile, (Tmapping)s_tile.flattenedIndex(ty, tx));
-        element = s_tile.get(ty, tx);
+        // pathcompress(s_tile, (Tmapping)s_tile.flattenedIndex(ty, tx));
+        // element = s_tile.get(ty, tx);
+        // Just read the root directly?
+        Tmapping *rootPtr =
+            find(s_tile, (Tmapping)s_tile.flattenedIndex(ty, tx));
+        element = *rootPtr;
         // Split 1D index into col and row
         int gcol = element % s_tile.width + tileXstart;
         int grow = element / s_tile.width + tileYstart;
