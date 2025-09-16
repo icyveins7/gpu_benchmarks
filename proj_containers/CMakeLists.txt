@@ -6,17 +6,17 @@ DESCRIPTION "Custom containers"
   LANGUAGES CXX CUDA)
 
 # --------------------
-set_source_files_properties(streams.cu PROPERTIES LANGUAGE CUDA)
-add_executable(streams)
+set_source_files_properties(streams_example.cu PROPERTIES LANGUAGE CUDA)
+add_executable(streams_example)
 
-target_include_directories(streams
+target_include_directories(streams_example
                            PRIVATE ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
                            )
 
 target_sources(
-  streams PRIVATE
-  ${PROJECT_SOURCE_DIR}/streams.cu
-  ${CMAKE_CURRENT_SOURCE_DIR}/../src/containers.cu
+  streams_example PRIVATE
+  ${PROJECT_SOURCE_DIR}/streams_example.cu
+  ${CMAKE_CURRENT_SOURCE_DIR}/../src/containers/streams.cu
 )
 
 # # -------------------- Tests
