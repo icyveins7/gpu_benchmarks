@@ -1,0 +1,124 @@
+#pragma once
+
+#include <thrust/device_vector.h>
+#include <thrust/host_vector.h>
+
+#include <stdexcept>
+
+namespace containers {
+
+/**
+ * @brief A container that represents a view over some data containing raw bits.
+ */
+template <typename T = unsigned int, typename U = int> struct Bitset {
+  static_assert(std::is_unsigned<T>::value, "T must be unsigned");
+
+  T *data = nullptr;
+  U numDataElements = 0;
+  U numBits = 0;
+
+  __host__ __device__ Bitset() {};
+  __host__ __device__ Bitset(T *_data, U _numDataElements, U _numBits)
+      : data(_data), numDataElements(_numDataElements), numBits(_numBits) {
+    // There is no easy way to check this inside the kernel since we cannot
+    // throw, so it is expected that the numBits can fit inside numDataElements
+  }
+  __host__ Bitset(thrust::device_vector<T> &_data, U _numBits)
+      : data(_data.data().get()), numDataElements(_data.size()),
+        numBits(_numBits) {
+    if (numBits > numDataElements * numBitsPerElement()) {
+      throw std::invalid_argument(
+          "numBits > numDataElements * numBitsPerElement()");
+    }
+  }
+  __host__ Bitset(thrust::host_vector<T> &_data, U _numBits)
+      : data(_data.data()), numDataElements(_data.size()), numBits(_numBits) {
+    if (numBits > numDataElements * numBitsPerElement()) {
+      throw std::invalid_argument(
+          "numBits > numDataElements * numBitsPerElement()");
+    }
+  }
+
+  __host__ __device__ T maskElement(const T element, const U offset) const {
+    return element & (1 << offset);
+  }
+
+  __host__ __device__ constexpr U numBitsPerElement() const {
+    return sizeof(T) * 8;
+  }
+
+  __host__ __device__ bool hasValidNumBits() const {
+    return numBits <= numDataElements * numBitsPerElement();
+  }
+
+  // ===================================================================
+  // ====================== ELEMENT MANIPULATION =======================
+  // ===================================================================
+
+  __host__ __device__ bool isValidElementIndex(const U index) const {
+    return index < numDataElements;
+  }
+
+  __host__ __device__ T &elementAt(const U index) { return data[index]; }
+  __host__ __device__ const T &elementAt(const U index) const {
+    return data[index];
+  }
+
+  /**
+   * @brief Returns the element containing the bit index. See bitOffset() to
+   * retrieve the bit offset within the element.
+   *
+   * @param bIndex Bit index
+   * @return Element reference
+   */
+  __host__ __device__ T &elementContainingBitAt(const U bIndex) {
+    return elementAt(bIndex / numBitsPerElement());
+  }
+
+  /**
+   * @brief Returns the element containing the bit index. See bitOffset() to
+   * retrieve the bit offset within the element.
+   *
+   * @param bIndex Bit index
+   * @return Const element reference
+   */
+  __host__ __device__ const T &elementContainingBitAt(const U bIndex) const {
+    return elementAt(bIndex / numBitsPerElement());
+  }
+
+  // ===================================================================
+  // ========================== BIT MANIPULATION =======================
+  // ===================================================================
+
+  /**
+   * @brief Returns the number of bits offset inside the element containing the
+   bit index. See elementContainingBitAt() to retrieve the element itself.
+
+   * @param bIndex Bit index
+   * @return Number of bits offset
+   */
+  __host__ __device__ U bitOffset(const U bIndex) const {
+    return bIndex % numBitsPerElement();
+  }
+
+  __host__ __device__ bool isValidBitIndex(const U bIndex) const {
+    return bIndex < numBits;
+  }
+
+  __host__ __device__ bool getBitAt(const U bIndex) const {
+    const U offset = bitOffset(bIndex);
+    const T element = elementContainingBitAt(bIndex);
+    return (maskElement(element, bIndex % numBitsPerElement()) >> offset) == 1;
+  }
+
+  __host__ __device__ void setBitAt(const U bIndex, const bool value) {
+    const U offset = bitOffset(bIndex);
+    T &element = elementContainingBitAt(bIndex);
+    if (value) // set bit to 1
+      element |= (1 << offset);
+    else // set bit to 0
+      element &= ~(1 << offset);
+  }
+}; // end struct Bitset
+
+} // namespace containers

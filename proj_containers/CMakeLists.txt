@@ -19,12 +19,12 @@ target_sources(
   ${CMAKE_CURRENT_SOURCE_DIR}/../src/containers/streams.cu
 )
 
-# # -------------------- Tests
-# if (GTEST_FOUND)
-#   message("Enabling tests for proj_remap")
-#
-#   # --------------------
-#   add_executable(test_remap test_remap.cu)
-#   target_link_libraries(test_remap ${CUDA_nppc_LIBRARY} ${CUDA_nppig_LIBRARY} GTest::gtest_main)
-#   gtest_discover_tests(test_remap)
-# endif()
+# -------------------- Tests
+if (GTEST_FOUND)
+  message("Enabling tests for proj_containers")
+
+  # --------------------
+  add_executable(test_bitset test_bitset.cu)
+  target_link_libraries(test_bitset GTest::gtest_main)
+  gtest_discover_tests(test_bitset)
+endif()
