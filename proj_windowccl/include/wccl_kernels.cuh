@@ -11,8 +11,12 @@ namespace wccl {
 
 #ifndef NDEBUG
 #define dprintf(...) printf(__VA_ARGS__)
+#define d1printf(...)                                                          \
+  if (threadIdx.x == 0 && threadIdx.y == 0)                                    \
+  printf(__VA_ARGS__)
 #else
 #define dprintf(...)
+#define d1printf(...)
 #endif
 
 // NOTE: it is important that when using this as inputs to a kernel, a
@@ -51,6 +55,11 @@ template <typename T> struct DeviceImage {
   __host__ __device__ unsigned int flattenedIndex(unsigned int row,
                                                   unsigned int col) const {
     return row * width + col;
+  }
+
+  __host__ __device__ T *getPointer(const unsigned int row,
+                                    const unsigned int col) {
+    return &data[flattenedIndex(row, col)];
   }
 
   /**
@@ -107,7 +116,6 @@ struct DeviceIndexImage : public DeviceImage<Tcolrow> {
                     std::is_same_v<Tcolrow, int2>,
                 "T must be either char2, short2 or int2");
 
-  __device__ DeviceIndexImage() = default;
   __device__ DeviceIndexImage(Tcolrow *_data, int _height, int _width)
       : DeviceImage<Tcolrow>(_data, _height, _width) {}
 
@@ -197,8 +205,7 @@ __device__ Tcolrow find(const DeviceIndexImage<Tcolrow> &tile, Tcolrow idx) {
 }
 
 /**
- * @brief Global finder, may be highly warp divergent and will inevitably go
- * across global memory.
+ * @brief Finder for flattened 1D index images. May be highly warp divergent.
  */
 template <typename Tmapping>
 __device__ Tmapping *find(const DeviceImage<Tmapping> &img, Tmapping idx) {
@@ -210,6 +217,29 @@ __device__ Tmapping *find(const DeviceImage<Tmapping> &img, Tmapping idx) {
   }
   return &img.data[idx];
 }
+
+template <typename Tmapping>
+__device__ void pathcompress(DeviceImage<Tmapping> &img, Tmapping idx) {
+  Tmapping *rootPtr = find(img, idx);
+  if (img.data[idx] != *rootPtr)
+    img.data[idx] = *rootPtr;
+}
+
+// /**
+//  * @brief Finder for 2D col/row pair index images. May be highly warp
+//  divergent.
+//  */
+// template <typename Tcolrow>
+// __device__ Tcolrow *find(const DeviceIndexImage<Tcolrow> &tile, Tcolrow idx)
+// {
+//   if (tile.isInvalidAt(idx.y, idx.x))
+//     return nullptr;
+//
+//   while (!tile.isSelfRoot(idx.y, idx.x)) {
+//     idx = tile.get(idx.y, idx.x);
+//   }
+//   return tile.getPointer(idx.y, idx.x);
+// }
 
 /**
  * @brief Does a pseudo-unite between two tiles.
@@ -274,6 +304,152 @@ __device__ void pseudoUnite(const DeviceIndexImage<Tcolrow> &tile_in,
       // Write to output tile
       // printf("Wrote root (%d,%d) to (%d, %d)\n", root.y, root.x, ty, tx);
       tile_out.set(ty, tx, root);
+    }
+  }
+}
+
+// ========================================================================
+// ========================================================================
+// ====================== GLOBAL KERNELS ==================================
+// ========================================================================
+// ========================================================================
+
+template <typename Tmapping>
+__global__ void local_connect_naive_unionfind_kernel(
+    const DeviceImage<uint8_t> input, DeviceImage<Tmapping> mapping,
+    const int2 tileDims, const int2 windowDist) {
+  static_assert(std::is_signed_v<Tmapping>, "mapping type T must be signed");
+
+  // Define the tile for this block
+  const int tileXstart = blockIdx.x * tileDims.x;
+  const int tileYstart = blockIdx.y * tileDims.y;
+  // Tile may not be fully occupied at the ends
+  const int2 blockTileDims{tileXstart + tileDims.x < (int)input.width
+                               ? tileDims.x
+                               : (int)input.width - tileXstart,
+                           tileYstart + tileDims.y < (int)input.height
+                               ? tileDims.y
+                               : (int)input.height - tileYstart};
+
+  // Read entire tile and set shared memory values
+  SharedMemory<unsigned int> smem;
+  // First value is just a counter
+  unsigned int *s_counter = smem.getPointer();
+  // Rest is a single workspace
+  DeviceImage<Tmapping> s_tile((Tmapping *)&s_counter[1], blockTileDims.y,
+                               blockTileDims.x);
+
+  // Load the data into the tile
+  bool validX, validY;
+  for (int ty = threadIdx.y; ty < blockTileDims.y; ty += blockDim.y) {
+    // Define global index for reads (row)
+    int y = tileYstart + ty;
+    // Ignore out of bounds
+    validY = y < (int)input.height;
+
+    for (int tx = threadIdx.x; tx < blockTileDims.x; tx += blockDim.x) {
+      // Define global index for reads (col)
+      int x = tileXstart + tx;
+      // Ignore out of bounds
+      validX = x < (int)input.width;
+
+      // Global read; if inactive (or out of bounds), set to -1, otherwise
+      // set to flattened local index (for now)
+      const uint8_t site = (validX && validY) ? input.get(y, x) : 0;
+      if (site > 0)
+        s_tile.set(ty, tx, s_tile.flattenedIndex(ty, tx));
+      else
+        s_tile.set(ty, tx, -1);
+
+      dprintf("Init tile(%d,%d)<-input.get(%d,%d): %d\n", ty, tx, y, x,
+              s_tile.get(ty, tx));
+    }
+  }
+  // Initialize counter to 0
+  if (threadIdx.x == 0 && threadIdx.y == 0) {
+    *s_counter = 0;
+  }
+  __syncthreads();
+
+  // Now attempt to unite sets for real
+  while (true) {
+    for (int ty = threadIdx.y; ty < blockTileDims.y; ty += blockDim.y) {
+      for (int tx = threadIdx.x; tx < blockTileDims.x; tx += blockDim.x) {
+        // If not valid, ignore
+        if (s_tile.get(ty, tx) < 0)
+          continue;
+
+        // Read the current element's root address
+        Tmapping *rootPtr =
+            find(s_tile, (Tmapping)s_tile.flattenedIndex(ty, tx));
+        dprintf("Blk (%d,%d): %d, %d -> initial root %d\n", blockIdx.x,
+                blockIdx.y, tx, ty, *rootPtr);
+
+        // Iterate over window
+        for (int wy = ty - windowDist.y; wy <= ty + windowDist.y; wy++) {
+          if (wy < 0 || wy >= s_tile.height)
+            continue;
+
+          for (int wx = tx - windowDist.x; wx <= tx + windowDist.x; wx++) {
+            if (wx < 0 || wx >= s_tile.width)
+              continue;
+
+            // Ignore if the window element is invalid
+            if (s_tile.get(wy, wx) < 0)
+              continue;
+
+            // Read the window element's root address
+            Tmapping *wrootPtr =
+                find(s_tile, (Tmapping)s_tile.flattenedIndex(wy, wx));
+            dprintf("Blk (%d,%d): %d, %d -> window root %d\n", blockIdx.x,
+                    blockIdx.y, wx, wy, *rootPtr);
+            if (*wrootPtr < *rootPtr) {
+              // Change current root pointer
+              atomicMin(rootPtr, *wrootPtr);
+              atomicAdd(s_counter, 1);
+            } else if (*wrootPtr > *rootPtr) {
+              // Change window root pointer
+              atomicMin(wrootPtr, *rootPtr);
+              atomicAdd(s_counter, 1);
+            }
+          }
+        }
+      }
+    }
+
+    __syncthreads();
+
+    // All threads read the counter
+    unsigned int counter = *s_counter;
+
+    // debug prints
+    d1printf("counter: %d\n", counter);
+
+    __syncthreads();
+    if (counter == 0)
+      break;
+    else if (threadIdx.x == 0 && threadIdx.y == 0) {
+      // Reset counter
+      *s_counter = 0;
+    }
+    __syncthreads();
+  } // end while
+
+  // Path compression, then write to global
+  for (int ty = threadIdx.y; ty < blockTileDims.y; ty += blockDim.y) {
+    for (int tx = threadIdx.x; tx < blockTileDims.x; tx += blockDim.x) {
+      Tmapping element = s_tile.get(ty, tx);
+      // Path compress if valid
+      if (element >= 0) {
+        pathcompress(s_tile, (Tmapping)s_tile.flattenedIndex(ty, tx));
+        element = s_tile.get(ty, tx);
+        // Split 1D index into col and row
+        int gcol = element % s_tile.width + tileXstart;
+        int grow = element / s_tile.width + tileYstart;
+        element = (Tmapping)mapping.flattenedIndex(grow, gcol);
+      }
+      // Write the element
+      mapping.set(ty + tileYstart, tx + tileXstart, element);
     }
   }
 }
