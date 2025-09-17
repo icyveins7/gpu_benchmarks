@@ -5,6 +5,7 @@
 #include <thrust/device_vector.h>
 
 #include "accessors.cuh"
+#include "atomic_extensions.cuh"
 #include "sharedmem.cuh"
 
 namespace wccl {
@@ -335,9 +336,21 @@ __global__ void local_connect_naive_unionfind_kernel(
   SharedMemory<unsigned int> smem;
   // First value is just a counter
   unsigned int *s_counter = smem.getPointer();
-  // Rest is a single workspace
-  DeviceImage<Tmapping> s_tile((Tmapping *)&s_counter[1], blockTileDims.y,
-                               blockTileDims.x);
+  unsigned int *s_numActiveSites = &s_counter[1];
+  // Single workspace for the tile
+  DeviceImage<Tmapping> s_tile((Tmapping *)&s_numActiveSites[1],
+                               blockTileDims.y, blockTileDims.x);
+  // and a workspace to bookkeep active indices
+  Tmapping *s_activeIdx = &s_tile.data[s_tile.size()];
+
+  // Initialize counters
+  if (threadIdx.y == 0) {
+    if (threadIdx.x == 0)
+      *s_counter = 0;
+    if (threadIdx.x == 1)
+      *s_numActiveSites = 0;
+  }
+  __syncthreads();
 
   // Load the data into the tile
   bool validX, validY;
@@ -356,66 +369,73 @@ __global__ void local_connect_naive_unionfind_kernel(
       // Global read; if inactive (or out of bounds), set to -1, otherwise
       // set to flattened local index (for now)
       const uint8_t site = (validX && validY) ? input.get(y, x) : 0;
-      if (site > 0)
-        s_tile.set(ty, tx, s_tile.flattenedIndex(ty, tx));
-      else
+      if (site > 0) {
+        Tmapping flatIdx = s_tile.flattenedIndex(ty, tx);
+        s_tile.set(ty, tx, flatIdx);
+        // Add to our bookkeeper of active sites
+        s_activeIdx[atomicAggInc(s_numActiveSites)] = flatIdx;
+      } else
         s_tile.set(ty, tx, -1);
 
       dprintf("Init tile(%d,%d)<-input.get(%d,%d): %d\n", ty, tx, y, x,
               s_tile.get(ty, tx));
     }
   }
-  // Initialize counter to 0
-  if (threadIdx.x == 0 && threadIdx.y == 0) {
-    *s_counter = 0;
-  }
   __syncthreads();
 
   // Now attempt to unite sets for real
+  unsigned int numActiveSites = *s_numActiveSites;
   while (true) {
-    for (int ty = threadIdx.y; ty < blockTileDims.y; ty += blockDim.y) {
-      for (int tx = threadIdx.x; tx < blockTileDims.x; tx += blockDim.x) {
-        // If not valid, ignore
-        if (s_tile.get(ty, tx) < 0)
+    // Iterate over active sites
+    for (int i = threadIdx.y * blockDim.x + threadIdx.x;
+         i < (int)numActiveSites; i += blockDim.y * blockDim.x) {
+      int ty = s_activeIdx[i] / blockTileDims.x;
+      int tx = s_activeIdx[i] % blockTileDims.x;
+
+      // // Iterate over entire tile
+      // for (int ty = threadIdx.y; ty < blockTileDims.y; ty += blockDim.y) {
+      //   for (int tx = threadIdx.x; tx < blockTileDims.x; tx += blockDim.x) {
+      // If not valid, ignore
+      if (s_tile.get(ty, tx) < 0)
+        continue;
+
+      // Read the current element's root address
+      Tmapping *rootPtr = find(s_tile, (Tmapping)s_tile.flattenedIndex(ty, tx));
+      dprintf("Blk (%d,%d): %d, %d -> initial root %d\n", blockIdx.x,
+              blockIdx.y, tx, ty, *rootPtr);
+
+      // Iterate over window
+      for (int wy = ty - windowDist.y; wy <= ty + windowDist.y; wy++) {
+        if (wy < 0 || wy >= s_tile.height)
           continue;
 
-        // Read the current element's root address
-        Tmapping *rootPtr =
-            find(s_tile, (Tmapping)s_tile.flattenedIndex(ty, tx));
-        dprintf("Blk (%d,%d): %d, %d -> initial root %d\n", blockIdx.x,
-                blockIdx.y, tx, ty, *rootPtr);
-
-        // Iterate over window
-        for (int wy = ty - windowDist.y; wy <= ty + windowDist.y; wy++) {
-          if (wy < 0 || wy >= s_tile.height)
+        for (int wx = tx - windowDist.x; wx <= tx + windowDist.x; wx++) {
+          if (wx < 0 || wx >= s_tile.width)
             continue;
 
-          for (int wx = tx - windowDist.x; wx <= tx + windowDist.x; wx++) {
-            if (wx < 0 || wx >= s_tile.width)
-              continue;
+          // Ignore if the window element is invalid
+          if (s_tile.get(wy, wx) < 0)
+            continue;
 
-            // Ignore if the window element is invalid
-            if (s_tile.get(wy, wx) < 0)
-              continue;
-
-            // Read the window element's root address
-            Tmapping *wrootPtr =
-                find(s_tile, (Tmapping)s_tile.flattenedIndex(wy, wx));
-            dprintf("Blk (%d,%d): %d, %d -> window root %d\n", blockIdx.x,
-                    blockIdx.y, wx, wy, *rootPtr);
-            if (*wrootPtr < *rootPtr) {
-              // Change current root pointer
-              atomicMin(rootPtr, *wrootPtr);
-              atomicAdd(s_counter, 1);
-            } else if (*wrootPtr > *rootPtr) {
-              // Change window root pointer
-              atomicMin(wrootPtr, *rootPtr);
-              atomicAdd(s_counter, 1);
-            }
+          // Read the window element's root address
+          Tmapping *wrootPtr =
+              find(s_tile, (Tmapping)s_tile.flattenedIndex(wy, wx));
+          dprintf("Blk (%d,%d): %d, %d -> window root %d\n", blockIdx.x,
+                  blockIdx.y, wx, wy, *rootPtr);
+          if (*wrootPtr < *rootPtr) {
+            // Change current root pointer
+            atomicMin(rootPtr, *wrootPtr);
+            atomicAdd(s_counter, 1);
+          } else if (*wrootPtr > *rootPtr) {
+            // Change window root pointer
+            atomicMin(wrootPtr, *rootPtr);
+            atomicAdd(s_counter, 1);
           }
         }
       }
-    }
+      //   } // end loop over tile (x)
+      // } // end loop over tile (y)
+    } // end loop over active sites
 
     __syncthreads();
 
