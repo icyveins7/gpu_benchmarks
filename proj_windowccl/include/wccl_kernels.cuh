@@ -592,84 +592,89 @@ __global__ void local_connect_kernel(const DeviceImage<uint8_t> input,
   }
 }
 
-template <typename Tmapping>
-__global__ void inter_tile_neighbours_kernel(DeviceImage<Tmapping> mapping,
-                                             const int2 tileDims,
-                                             const int2 windowDist) {
-  static_assert(std::is_signed_v<Tmapping>, "mapping type T must be signed");
-
-  // Define the tile for this block
-  const int tileXstart = blockIdx.x * tileDims.x;
-  const int tileYstart = blockIdx.y * tileDims.y;
-  // We then define an enlarged tile to include the border (this is what we will
-  // load)
-  const int borderTileXstart =
-      tileXstart - windowDist.x < 0 ? 0 : tileXstart - windowDist.x;
-  const int borderTileYstart =
-      tileYstart - windowDist.y < 0 ? 0 : tileYstart - windowDist.y;
-  // Tile may not be fully occupied at the ends
-  const int2 blockTileDims{tileXstart + tileDims.x < (int)mapping.width
-                               ? tileDims.x
-                               : (int)mapping.width - tileXstart,
-                           tileYstart + tileDims.y < (int)mapping.height
-                               ? tileDims.y
-                               : (int)mapping.height - tileYstart};
-
-  const int2 borderBlockTileDims{
-      borderTileXstart + tileDims.x + 2 * windowDist.x < (int)mapping.width
-          ? tileDims.x + 2 * windowDist.x
-          : (int)mapping.width - borderTileXstart,
-      borderTileYstart + tileDims.y + 2 * windowDist.y < (int)mapping.height
-          ? tileDims.y + 2 * windowDist.y
-          : (int)mapping.height - borderTileYstart,
-  };
-
-  // Read tile with border into shared memory
-  SharedMemory<Tmapping> smem;
-  DeviceIndexImage<Tmapping> s_tiles(smem.getPointer(), borderBlockTileDims.y,
-                                     borderBlockTileDims.x);
-
-  blockRoiLoad(mapping.data, mapping.width, mapping.height, borderTileXstart,
-               borderBlockTileDims.x, borderTileYstart, borderBlockTileDims.y,
-               s_tiles.data);
-  __syncthreads();
-
-  // Now for every element, check for neighbours
-  for (int ty = threadIdx.y; ty < blockTileDims.y; ty += blockDim.y) {
-    for (int tx = threadIdx.x; tx < blockTileDims.x; tx += blockDim.x) {
-      // We read elements based on their global indices instead of the local
-      // ones, to track the internal tile WITHOUT the borders
-      int gRow = tileXstart + tx;
-      int gCol = tileYstart + ty;
-
-      Tmapping root =
-          s_tiles.get(gRow, gCol, borderTileYstart, borderTileXstart);
-
-      // Now iterate over the window, again via global indices
-      for (int gwy = gRow - windowDist.y; gwy <= gRow + windowDist.y; gwy++) {
-        for (int gwx = gCol - windowDist.x; gwx <= gCol + windowDist.x; gwx++) {
-          // If the element in the window is inside the 'main' tile then ignore
-          // it
-          if (gwy >= tileYstart && gwy < tileYstart + tileDims.y &&
-              gwx >= tileXstart && gwx < tileXstart + tileDims.x) {
-            continue;
-          }
-
-          // Otherwise it is inside the border, test it
-          Tmapping windowRoot =
-              s_tiles.get(gwy, gwx, borderTileYstart, borderTileXstart);
-
-          // Take min root
-          root = root < windowRoot ? root : windowRoot;
-
-          // TODO: this doesn't really work, i need to hold all neighbours to
-          // the current element and append them somewhere, while maintaining
-          // only unique windowRoots.. pause while i figure this out
-        }
-      }
-    }
-  }
-}
+// template <typename Tmapping>
+// __global__ void inter_tile_neighbours_kernel(DeviceImage<Tmapping> mapping,
+//                                              const int2 tileDims,
+//                                              const int2 windowDist) {
+//   static_assert(std::is_signed_v<Tmapping>, "mapping type T must be signed");
+//
+//   // Define the tile for this block
+//   const int tileXstart = blockIdx.x * tileDims.x;
+//   const int tileYstart = blockIdx.y * tileDims.y;
+//   // We then define an enlarged tile to include the border (this is what we
+//   will
+//   // load)
+//   const int borderTileXstart =
+//       tileXstart - windowDist.x < 0 ? 0 : tileXstart - windowDist.x;
+//   const int borderTileYstart =
+//       tileYstart - windowDist.y < 0 ? 0 : tileYstart - windowDist.y;
+//   // Tile may not be fully occupied at the ends
+//   const int2 blockTileDims{tileXstart + tileDims.x < (int)mapping.width
+//                                ? tileDims.x
+//                                : (int)mapping.width - tileXstart,
+//                            tileYstart + tileDims.y < (int)mapping.height
+//                                ? tileDims.y
+//                                : (int)mapping.height - tileYstart};
+//
+//   const int2 borderBlockTileDims{
+//       borderTileXstart + tileDims.x + 2 * windowDist.x < (int)mapping.width
+//           ? tileDims.x + 2 * windowDist.x
+//           : (int)mapping.width - borderTileXstart,
+//       borderTileYstart + tileDims.y + 2 * windowDist.y < (int)mapping.height
+//           ? tileDims.y + 2 * windowDist.y
+//           : (int)mapping.height - borderTileYstart,
+//   };
+//
+//   // Read tile with border into shared memory
+//   SharedMemory<Tmapping> smem;
+//   DeviceIndexImage<Tmapping> s_tiles(smem.getPointer(),
+//   borderBlockTileDims.y,
+//                                      borderBlockTileDims.x);
+//
+//   blockRoiLoad(mapping.data, mapping.width, mapping.height, borderTileXstart,
+//                borderBlockTileDims.x, borderTileYstart,
+//                borderBlockTileDims.y, s_tiles.data);
+//   __syncthreads();
+//
+//   // Now for every element, check for neighbours
+//   for (int ty = threadIdx.y; ty < blockTileDims.y; ty += blockDim.y) {
+//     for (int tx = threadIdx.x; tx < blockTileDims.x; tx += blockDim.x) {
+//       // We read elements based on their global indices instead of the local
+//       // ones, to track the internal tile WITHOUT the borders
+//       int gRow = tileXstart + tx;
+//       int gCol = tileYstart + ty;
+//
+//       Tmapping root =
+//           s_tiles.get(gRow, gCol, borderTileYstart, borderTileXstart);
+//
+//       // Now iterate over the window, again via global indices
+//       for (int gwy = gRow - windowDist.y; gwy <= gRow + windowDist.y; gwy++)
+//       {
+//         for (int gwx = gCol - windowDist.x; gwx <= gCol + windowDist.x;
+//         gwx++) {
+//           // If the element in the window is inside the 'main' tile then
+//           ignore
+//           // it
+//           if (gwy >= tileYstart && gwy < tileYstart + tileDims.y &&
+//               gwx >= tileXstart && gwx < tileXstart + tileDims.x) {
+//             continue;
+//           }
+//
+//           // Otherwise it is inside the border, test it
+//           Tmapping windowRoot =
+//               s_tiles.get(gwy, gwx, borderTileYstart, borderTileXstart);
+//
+//           // Take min root
+//           root = root < windowRoot ? root : windowRoot;
+//
+//           // TODO: this doesn't really work, i need to hold all neighbours to
+//           // the current element and append them somewhere, while maintaining
+//           // only unique windowRoots.. pause while i figure this out
+//         }
+//       }
+//     }
+//   }
+// }
 
 template <typename Tmapping>
 __global__ void naive_global_unionfind_kernel(DeviceImage<Tmapping> mapping,
@@ -765,6 +770,8 @@ __global__ void naive_global_unionfind_kernel(DeviceImage<Tmapping> mapping,
                     neighbourRootPtr, *neighbourRootPtr);
             atomicMin(rootPtr, *neighbourRootPtr);
             atomicAdd(updateCounter, 1);
+            // modify our rootPtr
+            rootPtr = neighbourRootPtr;
           }
         }
       }
