@@ -36,30 +36,40 @@ int main() {
   // };
   // // clang-format on
 
-  // ================= Example 3 (for timing)
-  constexpr int rows = 8192;
-  constexpr int cols = 1024;
-  // clang-format off
-  std::vector<uint8_t> input(rows * cols);
-  for (size_t i = 0; i < rows * cols; ++i)
-    input[i] = rand() % 2;
-  const int2 tileDims = {64, 8};
-  // const int2 tileDims = {64, 16};
-  // const int2 tileDims = {32, 8};
-  // const int2 tileDims = {32, 4};
-  // clang-format on
-
-  // // ================= Example 4
-  // constexpr int rows = 8;
-  // constexpr int cols = 64;
+  // // ================= Example 3 (for timing)
+  // constexpr int rows = 8192;
+  // constexpr int cols = 1024;
   // // clang-format off
   // std::vector<uint8_t> input(rows * cols);
   // for (size_t i = 0; i < rows * cols; ++i)
   //   input[i] = rand() % 2;
-  // const int2 tileDims = {32, 4};
+  // const int2 tileDims = {64, 8};
+  // // const int2 tileDims = {64, 16};
+  // // const int2 tileDims = {32, 8};
+  // // const int2 tileDims = {32, 4};
   // // clang-format on
 
+  // ================= Example 4
+  constexpr int rows = 8;
+  constexpr int cols = 64;
+  // clang-format off
+  std::vector<uint8_t> input(rows * cols);
+  for (size_t i = 0; i < rows * cols; ++i)
+    input[i] = rand() % 2;
+  const int2 tileDims = {32, 4};
+  // clang-format on
+
   // // ================= Example 5
+  // constexpr int rows = 8;
+  // constexpr int cols = 16;
+  // // clang-format off
+  // std::vector<uint8_t> input(rows * cols);
+  // for (size_t i = 0; i < rows * cols; ++i)
+  //   input[i] = rand() % 2;
+  // const int2 tileDims = {8, 4};
+  // // clang-format on
+
+  // // ================= Example 6
   // constexpr int rows = 12;
   // constexpr int cols = 6;
   // // clang-format off

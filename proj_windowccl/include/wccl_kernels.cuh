@@ -396,8 +396,8 @@ __global__ void local_connect_naive_unionfind_kernel(
       // for (int ty = threadIdx.y; ty < blockTileDims.y; ty += blockDim.y) {
       //   for (int tx = threadIdx.x; tx < blockTileDims.x; tx += blockDim.x) {
       // If not valid, ignore
-      if (s_tile.get(ty, tx) < 0)
-        continue;
+      // if (s_tile.get(ty, tx) < 0)
+      //   continue;
 
       // Read the current element's root address
       Tmapping *rootPtr = find(s_tile, (Tmapping)s_tile.flattenedIndex(ty, tx));
@@ -426,6 +426,8 @@ __global__ void local_connect_naive_unionfind_kernel(
             // Change current root pointer
             atomicMin(rootPtr, *wrootPtr);
             atomicAdd(s_counter, 1);
+            // we should shift our root pointer to the new root pointer
+            rootPtr = wrootPtr;
           } else if (*wrootPtr > *rootPtr) {
             // Change window root pointer
             atomicMin(wrootPtr, *rootPtr);
