@@ -139,8 +139,3 @@ class NeighbourChainer:
 
         return labels
 
-
-
-
-
-

@@ -39,11 +39,26 @@ template <typename T = unsigned int, typename U = int> struct Bitset {
     }
   }
 
+  /**
+   * @brief Returns the number of elements required for a given number of bits,
+   * for the current templated type. Useful to help in allocation size for the
+   * templated type.
+   *
+   * @param numBits Total number of desired bits
+   * @return Total number of required elements of type T
+   */
+  __host__ __device__ static U numElementsRequiredFor(const U numBits) {
+    U numElements = numBits / numBitsPerElement();
+    if (numBits % numBitsPerElement() > 0)
+      numElements++;
+    return numElements;
+  }
+
   __host__ __device__ T maskElement(const T element, const U offset) const {
     return element & (1 << offset);
   }
 
-  __host__ __device__ constexpr U numBitsPerElement() const {
+  __host__ __device__ static constexpr U numBitsPerElement() {
     return sizeof(T) * 8;
   }
 
@@ -105,12 +120,25 @@ template <typename T = unsigned int, typename U = int> struct Bitset {
     return bIndex < numBits;
   }
 
+  /**
+   * @brief Primary getter for bits.
+   *
+   * @param bIndex Bit index
+   * @return True if the bit is set
+   */
   __host__ __device__ bool getBitAt(const U bIndex) const {
     const U offset = bitOffset(bIndex);
     const T element = elementContainingBitAt(bIndex);
     return (maskElement(element, bIndex % numBitsPerElement()) >> offset) == 1;
   }
 
+  /**
+   * @brief Primary setter for bits.
+   *
+   * @param bIndex Bit index
+   * @param value Value to set. Using truthy-values like 1 or 0 directly also
+   * works.
+   */
   __host__ __device__ void setBitAt(const U bIndex, const bool value) {
     const U offset = bitOffset(bIndex);
     T &element = elementContainingBitAt(bIndex);

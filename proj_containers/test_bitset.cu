@@ -4,8 +4,8 @@
 
 TEST(Bitset, HostsideConstructors) {
   int numBits = 48;
-  thrust::host_vector<unsigned int> h_data(numBits / 32 +
-                                           (numBits % 32 > 0 ? 1 : 0));
+  thrust::host_vector<unsigned int> h_data(
+      containers::Bitset<unsigned int, int>::numElementsRequiredFor(numBits));
 
   containers::Bitset<unsigned int, int> bitset(h_data, numBits);
   // Basic checks after constructor
@@ -23,8 +23,8 @@ TEST(Bitset, HostsideConstructors) {
   EXPECT_FALSE(bitsetinvalid.hasValidNumBits());
 
   // Test similarly for device vector
-  thrust::device_vector<unsigned int> d_data(numBits / 32 +
-                                             (numBits % 32 > 0 ? 1 : 0));
+  thrust::device_vector<unsigned int> d_data(
+      containers::Bitset<unsigned int, int>::numElementsRequiredFor(numBits));
 
   containers::Bitset<unsigned int, int> bitset2(d_data, numBits);
   EXPECT_EQ(numBits, bitset2.numBits);
@@ -43,8 +43,8 @@ TEST(Bitset, HostsideConstructors) {
 
 TEST(Bitset, HostsideMethods) {
   int numBits = 48;
-  thrust::host_vector<unsigned int> h_data(numBits / 32 +
-                                           (numBits % 32 > 0 ? 1 : 0));
+  thrust::host_vector<unsigned int> h_data(
+      containers::Bitset<unsigned int, int>::numElementsRequiredFor(numBits));
 
   containers::Bitset<unsigned int, int> bitset(h_data, numBits);
 

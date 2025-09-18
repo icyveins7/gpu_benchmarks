@@ -49,4 +49,5 @@ while not chainer.isComplete:
     print(chainer.availability)
 
 labels = chainer.readout(input.shape)
+print(labels)
 wccl.pprint(labels)
