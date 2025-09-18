@@ -53,18 +53,18 @@ int main() {
 
 
   // ================= Example 3 (for timing)
-  // constexpr int rows = 8192;
-  // constexpr int cols = 1024;
-  // 
-  // std::vector<uint8_t> input(rows * cols);
-  // for (size_t i = 0; i < rows * cols; ++i)
-  //   input[i] = rand() % 2;
+  constexpr int rows = 8192;
+  constexpr int cols = 1024;
+
+  std::vector<uint8_t> input(rows * cols);
+  for (size_t i = 0; i < rows * cols; ++i)
+    input[i] = rand() % 2;
   // const int2 tileDims = {64, 8};
-  // // const int2 tileDims = {64, 16};
-  // // const int2 tileDims = {32, 8};
-  // // const int2 tileDims = {32, 4};
-  // const int2 windowDist = {1, 1};
-  // 
+  // const int2 tileDims = {64, 16};
+  // const int2 tileDims = {32, 8};
+  const int2 tileDims = {32, 4};
+  const int2 windowDist = {1, 1};
+
 
   // // ================= Example 4
   // constexpr int rows = 8;
@@ -88,26 +88,26 @@ int main() {
   // const int2 windowDist = {1, 1};
   // 
 
-  // ================= Example 6
-  constexpr int rows = 12;
-  constexpr int cols = 6;
-
-  const std::vector<uint8_t> input = {
-    0, 0, 1, 0, 1, 0,
-    0, 1, 0, 0, 0, 1,
-    0, 1, 0, 0, 0, 1,
-    0, 0, 1, 0, 1, 0,
-    0, 0, 1, 0, 1, 0,
-    0, 1, 0, 0, 0, 1,
-    0, 1, 0, 0, 0, 1,
-    0, 0, 1, 0, 1, 0,
-    1, 0, 0, 1, 0, 0,
-    1, 0, 1, 0, 1, 0,
-    0, 1, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0,
-  };
-  const int2 tileDims = {32, 4};
-  const int2 windowDist = {1, 1};
+  // // ================= Example 6
+  // constexpr int rows = 12;
+  // constexpr int cols = 6;
+  //
+  // const std::vector<uint8_t> input = {
+  //   0, 0, 1, 0, 1, 0,
+  //   0, 1, 0, 0, 0, 1,
+  //   0, 1, 0, 0, 0, 1,
+  //   0, 0, 1, 0, 1, 0,
+  //   0, 0, 1, 0, 1, 0,
+  //   0, 1, 0, 0, 0, 1,
+  //   0, 1, 0, 0, 0, 1,
+  //   0, 0, 1, 0, 1, 0,
+  //   1, 0, 0, 1, 0, 0,
+  //   1, 0, 1, 0, 1, 0,
+  //   0, 1, 0, 0, 0, 0,
+  //   0, 0, 0, 0, 0, 0,
+  // };
+  // const int2 tileDims = {32, 4};
+  // const int2 windowDist = {1, 1};
 
   typedef short2 KernelColRowType;
   typedef int MappingType;

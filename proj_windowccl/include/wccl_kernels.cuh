@@ -1001,11 +1001,11 @@ template <typename Tbitset> struct NeighbourChainer {
     // since every thread works on the same element in seedRow/gamma, there is
     // no need to syncthreads yet
 
-    // debug sync
-    __syncthreads();
-    for (int i = 0; i < gamma.numBits; ++i) {
-      d1printf("seedRow[%d]: %d\n", i, seedRow.getBitAt(i));
-    }
+    // // debug sync
+    // __syncthreads();
+    // for (int i = 0; i < gamma.numBits; ++i) {
+    //   d1printf("seedRow[%d]: %d\n", i, seedRow.getBitAt(i));
+    // }
 
     // Compute gamma
     bool gammaNonEmpty = blockComputeNeighboursOfInterest();
@@ -1090,9 +1090,7 @@ __global__ void localChainNeighboursKernel(const DeviceImage<Tbitset> input,
   // And initialize our neighbour chainer
   s_chainer.template blockInitBeta<Tmapping>(s_tile);
   __syncthreads();
-  for (int i = 0; i < s_chainer.beta.numBits; ++i) {
-    d1printf("initial beta[%d]: %d\n", i, s_chainer.beta.getBitAt(i));
-  }
+
   // Fill a register-local first beta
   s_chainer.setEarliestValidBetaIndex();
   d1printf("initial earliest beta index: %d\n",
@@ -1100,8 +1098,8 @@ __global__ void localChainNeighboursKernel(const DeviceImage<Tbitset> input,
 
   // Now run the consumption
   while (!s_chainer.isComplete()) {
-    s_chainer.blockChainNeighbours(windowDist, s_tile);
     d1printf("blockChain iteration\n");
+    s_chainer.blockChainNeighbours(windowDist, s_tile);
   }
   __syncthreads();
 
