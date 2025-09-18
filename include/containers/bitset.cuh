@@ -23,6 +23,12 @@ template <typename T = unsigned int, typename U = int> struct Bitset {
     // There is no easy way to check this inside the kernel since we cannot
     // throw, so it is expected that the numBits can fit inside numDataElements
   }
+  __host__ __device__ Bitset(T *_data, U _numBits)
+      : data(_data), numBits(_numBits) {
+    // If only bits provided, assume the data elements were allocated using
+    // numElementsRequiredFor().
+    numDataElements = this->numElementsRequiredFor(_numBits);
+  }
   __host__ Bitset(thrust::device_vector<T> &_data, U _numBits)
       : data(_data.data().get()), numDataElements(_data.size()),
         numBits(_numBits) {
@@ -104,6 +110,17 @@ template <typename T = unsigned int, typename U = int> struct Bitset {
   // ===================================================================
   // ========================== BIT MANIPULATION =======================
   // ===================================================================
+
+  /**
+   * @brief Returns the element index containing the bit at the specified bit
+   * index.
+   *
+   * @param bIndex Bit index
+   * @return Element index
+   */
+  __host__ __device__ U elementOffset(const U bIndex) const {
+    return bIndex / numBitsPerElement();
+  }
 
   /**
    * @brief Returns the number of bits offset inside the element containing the

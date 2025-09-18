@@ -6,6 +6,7 @@
 
 #include "accessors.cuh"
 #include "atomic_extensions.cuh"
+#include "containers/bitset.cuh"
 #include "sharedmem.cuh"
 
 namespace wccl {
@@ -778,5 +779,190 @@ __global__ void naive_global_unionfind_kernel(DeviceImage<Tmapping> mapping,
     }
   }
 }
+
+template <typename Tbitset> struct NeighbourChainer {
+  // single row in neighbour matrix alpha (the seed row being worked on)
+  containers::Bitset<Tbitset, int> seedRow;
+  // single row in neighbour matrix alpha (the row of the neighbour)
+  containers::Bitset<Tbitset, int> neighbourRow;
+  containers::Bitset<Tbitset, int> beta;  // availability vector
+  containers::Bitset<Tbitset, int> gamma; // neighbour of interest vector
+  int earliestValidBetaIndex = 0;
+
+  __host__ __device__ NeighbourChainer() {};
+  __host__ __device__ NeighbourChainer(Tbitset *_seedRow,
+                                       Tbitset *_neighbourRow, Tbitset *_beta,
+                                       Tbitset *_gamma, const int numPixels)
+      : seedRow(_seedRow, numPixels), neighbourRow(_neighbourRow, numPixels),
+        beta(_beta, numPixels), gamma(_gamma, numPixels) {}
+
+  __host__ __device__ bool validFor(const DeviceImage<uint8_t> &img) const {
+    return img.size() == seedRow.numBits;
+  }
+
+  __device__ void setEarliestValidBetaIndex() {
+    // TODO: not sure if really need to do parallel reduction just for this?
+    Tbitset element;
+    int index = -1;
+    // We start at the previous earliestValidBetaIndex
+    for (int i = earliestValidBetaIndex; i < beta.numDataElements; ++i) {
+      const Tbitset element = beta.elementAt(i);
+      if (element != 0) {
+        for (int j = 0; j < beta.numBitsPerElement(); j++) {
+          int bitIndex = i * beta.numBitsPerElement() + j;
+          bool bit = beta.getBitAt(bitIndex);
+          if (bit) {
+            earliestValidBetaIndex = bitIndex;
+            return;
+          }
+        }
+      }
+    }
+    // If we didn't return, then we didn't find an active bit
+    earliestValidBetaIndex = beta.numBits;
+  }
+
+  __device__ bool isComplete() const {
+    return earliestValidBetaIndex == beta.numBits;
+  }
+
+  __device__ void blockInitBeta(const DeviceImage<uint8_t> &img) {
+    for (int i = threadIdx.y * blockDim.x + threadIdx.x;
+         i < beta.numDataElements; i += blockDim.y * blockDim.x) {
+      // Each thread works on one element word of the bitset (so its 8/16/32/64
+      // bits depending on Tbitset)
+
+      // Set individual bits if active (no need to initialize, we write
+      // everything)
+      // TODO: should optimise this to prevent shared mem bank conflicts
+      for (int j = 0; j < beta.numBitsPerElement(); j++) {
+        int pixelFlatIdx = i * beta.numBitsPerElement() + j;
+        if (pixelFlatIdx < img.size())
+          beta.setBitAt(pixelFlatIdx, img.data[pixelFlatIdx] > 0);
+        else
+          beta.setBitAt(pixelFlatIdx, 0);
+      }
+    }
+  }
+
+  /**
+   * @brief Queries the availability vector for the specified row. If the row is
+   * not available, it should not be computed via blockComputeAlphaRow().
+   *
+   * @param rowIndex Target row index
+   * @return True if the row is available
+   */
+  __device__ bool isAvailable(const int rowIndex) {
+    return beta.getBitAt(rowIndex);
+  }
+
+  /**
+   * @brief Computes a single row in the alpha matrix. Used to fill either the
+   * alphaRow or workspaceRow. You may need to syncthreads() after this.
+   *
+   * @param img Binary input image to read from
+   * @param windowDist Window distance, to determine neighbours
+   * @param targetIndex Target index inside the alpha matrix. For
+   */
+  __device__ void
+  blockComputeAlphaRow(const DeviceImage<uint8_t> &img, const int2 windowDist,
+                       const int targetIndex,
+                       containers::Bitset<Tbitset, int> &alphaRow) {
+    int targetRow = targetIndex / img.width;
+    int targetCol = targetIndex % img.width;
+
+    // Each thread computes an element in the row
+    for (int i = threadIdx.y * blockDim.x + threadIdx.x;
+         i < alphaRow.numDataElements; i += blockDim.y * blockDim.x) {
+      for (int j = 0; j < alphaRow.numBitsPerElement(); j++) {
+        int pixelFlatIdx = i * alphaRow.numBitsPerElement() + j;
+        // Ignore out of bounds, or if inactive
+        if (pixelFlatIdx > img.size() || img.data[pixelFlatIdx] == 0) {
+          alphaRow.setBitAt(pixelFlatIdx, 0);
+          continue;
+        }
+        int pixelRow = pixelFlatIdx / img.width;
+        int pixelCol = pixelFlatIdx % img.width;
+
+        // Set 1 if this is within the window
+        if (abs(pixelRow - targetRow) < windowDist.y &&
+            abs(pixelCol - targetCol) < windowDist.x)
+          alphaRow.setBitAt(pixelFlatIdx, 1);
+        else
+          alphaRow.setBitAt(pixelFlatIdx, 0);
+      }
+    }
+  }
+
+  __device__ void consumeAlphaRow(const int rowIndex) {
+    if (threadIdx.x == 0 && threadIdx.y == 0)
+      beta.setBitAt(rowIndex, 0);
+  }
+
+  __device__ void blockComputeNeighboursOfInterest() {
+    for (int i = threadIdx.y * blockDim.x + threadIdx.x;
+         i < gamma.numDataElements; i += blockDim.y * blockDim.x) {
+      // Simply bitwise AND everything
+      gamma.elementAt(i) = seedRow.elementAt(i) & beta.elementAt(i);
+    }
+  }
+
+  __device__ void blockMergeRows() {
+    for (int i = threadIdx.y * blockDim.x + threadIdx.x;
+         i < gamma.numDataElements; i += blockDim.y * blockDim.x) {
+      // Simply bitwise OR everything
+      seedRow.elementAt(i) = seedRow.elementAt(i) | neighbourRow.elementAt(i);
+    }
+  }
+
+  template <typename Tmapping>
+  __device__ void blockChainNeighbours(const DeviceImage<uint8_t> &img,
+                                       const int2 windowDist,
+                                       DeviceImage<Tmapping> &output) {
+    static_assert(std::is_signed_v<Tmapping>, "Tmapping must be signed");
+    // Compute the current seed row
+    blockComputeAlphaRow(img, windowDist, earliestValidBetaIndex, seedRow);
+    consumeAlphaRow(0);
+    // since every thread works on the same element in seedRow/gamma, there is
+    // no need to syncthreads yet
+
+    // Compute gamma
+    blockComputeNeighboursOfInterest();
+    __syncthreads();
+    // we sync here because the whole block needs to know the neighbours of
+    // interest
+
+    // Iterate over gamma for this seed row
+    for (int n = 0; n < gamma.numBits; ++n) {
+      // If not of interest, ignore
+      if (!gamma.getBitAt(n))
+        continue;
+
+      // Otherwise we compute the row for this neighbour
+      blockComputeAlphaRow(img, windowDist, n, neighbourRow);
+      consumeAlphaRow(n);
+
+      // And then we bitwise OR it into the seed row
+      blockMergeRows();
+      // no need to sync, each row is independent, and again, threads work on
+      // same index on all rows
+    }
+    // Once gamma is complete, our seed row is fully merged and ready to be
+    // output
+    __syncthreads(); // the iteration scheme for the output is different from
+                     // the binary matrix rows used, so we must sync first
+    for (int i = threadIdx.y; i < output.height; i += blockDim.y) {
+      for (int j = threadIdx.x; j < output.width; j += blockDim.x) {
+        int idx = i * output.width + j;
+        if (seedRow.getBitAt(idx))
+          output.set(i, j,
+                     earliestValidBetaIndex); // set all to the flattened index
+      }
+    }
+
+    // Update the earliest index to find next one
+    setEarliestValidBetaIndex();
+  }
+}; // end struct NeighbourChainer
 
 } // namespace wccl
