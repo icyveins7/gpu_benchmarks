@@ -996,7 +996,7 @@ template <typename Tbitset> struct NeighbourChainer {
     static_assert(std::is_signed_v<Tmapping>, "Tmapping must be signed");
     // Compute the current seed row
     blockComputeAlphaRow(img, windowDist, earliestValidBetaIndex, seedRow);
-    consumeAlphaRow(0);
+    consumeAlphaRow(earliestValidBetaIndex);
     d1printf("seed row at %d\n", earliestValidBetaIndex);
     // since every thread works on the same element in seedRow/gamma, there is
     // no need to syncthreads yet
