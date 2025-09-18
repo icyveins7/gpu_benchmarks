@@ -310,6 +310,62 @@ __device__ void pseudoUnite(const DeviceIndexImage<Tcolrow> &tile_in,
   }
 }
 
+/**
+ * @brief Loads and initializes the tile in shared memory with flattened indices
+ * based on the input's active sites. Additionally updates the book-keeper with
+ * active site indices.
+ *
+ * @tparam Tmapping Type of the mapping indices
+ * @param input Input image, from global memory
+ * @param s_tile Shared memory tile struct
+ * @param blockTileDims Dimensions of the tile for this block (accounting for
+ * edge)
+ * @param tileXstart X (col) offset of the tile
+ * @param tileYstart Y (row) offset of the tile
+ * @param s_activeIdx Shared memory book-keeper for active indices (appending
+ * list). Ignored if nullptr (default).
+ * @param s_numActiveSites Shared memory book-keeper for number of active sites
+ * (length of list). Ignored if nullptr (default).
+ */
+template <typename Tmapping>
+__device__ void initializeShmemTile(const DeviceImage<uint8_t> &input,
+                                    DeviceImage<Tmapping> &s_tile,
+                                    const int2 blockTileDims,
+                                    const int tileXstart, const int tileYstart,
+                                    Tmapping *s_activeIdx = nullptr,
+                                    unsigned int *s_numActiveSites = nullptr) {
+  // Load the data into the tile
+  bool validX, validY;
+  for (int ty = threadIdx.y; ty < blockTileDims.y; ty += blockDim.y) {
+    // Define global index for reads (row)
+    int y = tileYstart + ty;
+    // Ignore out of bounds
+    validY = y < (int)input.height;
+
+    for (int tx = threadIdx.x; tx < blockTileDims.x; tx += blockDim.x) {
+      // Define global index for reads (col)
+      int x = tileXstart + tx;
+      // Ignore out of bounds
+      validX = x < (int)input.width;
+
+      // Global read; if inactive (or out of bounds), set to -1, otherwise
+      // set to flattened local index (for now)
+      const uint8_t site = (validX && validY) ? input.get(y, x) : 0;
+      if (site > 0) {
+        Tmapping flatIdx = s_tile.flattenedIndex(ty, tx);
+        s_tile.set(ty, tx, flatIdx);
+        if (s_activeIdx != nullptr && s_numActiveSites != nullptr)
+          // Add to our bookkeeper of active sites
+          s_activeIdx[atomicAggInc(s_numActiveSites)] = flatIdx;
+      } else
+        s_tile.set(ty, tx, -1);
+
+      dprintf("Init tile(%d,%d)<-input.get(%d,%d): %d\n", ty, tx, y, x,
+              s_tile.get(ty, tx));
+    }
+  }
+}
+
 // ========================================================================
 // ========================================================================
 // ====================== GLOBAL KERNELS ==================================
@@ -354,34 +410,8 @@ __global__ void local_connect_naive_unionfind_kernel(
   __syncthreads();
 
   // Load the data into the tile
-  bool validX, validY;
-  for (int ty = threadIdx.y; ty < blockTileDims.y; ty += blockDim.y) {
-    // Define global index for reads (row)
-    int y = tileYstart + ty;
-    // Ignore out of bounds
-    validY = y < (int)input.height;
-
-    for (int tx = threadIdx.x; tx < blockTileDims.x; tx += blockDim.x) {
-      // Define global index for reads (col)
-      int x = tileXstart + tx;
-      // Ignore out of bounds
-      validX = x < (int)input.width;
-
-      // Global read; if inactive (or out of bounds), set to -1, otherwise
-      // set to flattened local index (for now)
-      const uint8_t site = (validX && validY) ? input.get(y, x) : 0;
-      if (site > 0) {
-        Tmapping flatIdx = s_tile.flattenedIndex(ty, tx);
-        s_tile.set(ty, tx, flatIdx);
-        // Add to our bookkeeper of active sites
-        s_activeIdx[atomicAggInc(s_numActiveSites)] = flatIdx;
-      } else
-        s_tile.set(ty, tx, -1);
-
-      dprintf("Init tile(%d,%d)<-input.get(%d,%d): %d\n", ty, tx, y, x,
-              s_tile.get(ty, tx));
-    }
-  }
+  initializeShmemTile(input, s_tile, blockTileDims, tileXstart, tileYstart,
+                      s_activeIdx, s_numActiveSites);
   __syncthreads();
 
   // Now attempt to unite sets for real
@@ -720,6 +750,13 @@ __global__ void naive_global_unionfind_kernel(DeviceImage<Tmapping> mapping,
       int gx = tileXstart + tx;
       dprintf("Blk (%d,%d): %d, %d == %d, %d\n", blockIdx.x, blockIdx.y, tx, ty,
               gx, gy);
+
+      // Ignore out of range of global image
+      if (gy < 0 || gy >= (int)mapping.height || gx < 0 ||
+          gx >= (int)mapping.width) {
+        continue;
+      }
+
       // Read the value, which is the tile root
       Tmapping *rootPtr = find(
           mapping, (Tmapping)(gy * mapping.width + gx)); // this will not change
@@ -795,6 +832,30 @@ template <typename Tbitset> struct NeighbourChainer {
                                        Tbitset *_gamma, const int numPixels)
       : seedRow(_seedRow, numPixels), neighbourRow(_neighbourRow, numPixels),
         beta(_beta, numPixels), gamma(_gamma, numPixels) {}
+  /**
+   * @brief Constructs a NeighbourChainer object with some remaining buffer,
+   usually the shared memory workspace.
+   * This assumes that the remaining buffer has sufficient allocation for all 4
+   (identically sized) Bitsets, which should be determined from the
+   numElementsRequiredFor static method.
+   *
+   * @param _data Pointer to remaining buffer (e.g. in shared memory)
+   * @param numPixels Number of pixels (bits) in the image (bitset)
+   */
+  __host__ __device__ NeighbourChainer(Tbitset *_data, const int numPixels)
+      : seedRow(_data, numPixels),
+        neighbourRow(
+            &_data[containers::Bitset<Tbitset, int>::numElementsRequiredFor(
+                numPixels)],
+            numPixels),
+        beta(&_data[containers::Bitset<Tbitset, int>::numElementsRequiredFor(
+                        numPixels) *
+                    2],
+             numPixels),
+        gamma(&_data[containers::Bitset<Tbitset, int>::numElementsRequiredFor(
+                         numPixels) *
+                     3],
+              numPixels) {}
 
   __host__ __device__ bool validFor(const DeviceImage<uint8_t> &img) const {
     return img.size() == seedRow.numBits;
@@ -802,31 +863,22 @@ template <typename Tbitset> struct NeighbourChainer {
 
   __device__ void setEarliestValidBetaIndex() {
     // TODO: not sure if really need to do parallel reduction just for this?
-    Tbitset element;
-    int index = -1;
-    // We start at the previous earliestValidBetaIndex
-    for (int i = earliestValidBetaIndex; i < beta.numDataElements; ++i) {
-      const Tbitset element = beta.elementAt(i);
-      if (element != 0) {
-        for (int j = 0; j < beta.numBitsPerElement(); j++) {
-          int bitIndex = i * beta.numBitsPerElement() + j;
-          bool bit = beta.getBitAt(bitIndex);
-          if (bit) {
-            earliestValidBetaIndex = bitIndex;
-            return;
-          }
-        }
-      }
+
+    // We start at the previous earliestValidBetaIndex + 1
+    while (earliestValidBetaIndex < beta.numBits) {
+      if (beta.getBitAt(earliestValidBetaIndex))
+        break;
+
+      earliestValidBetaIndex++;
     }
-    // If we didn't return, then we didn't find an active bit
-    earliestValidBetaIndex = beta.numBits;
   }
 
   __device__ bool isComplete() const {
     return earliestValidBetaIndex == beta.numBits;
   }
 
-  __device__ void blockInitBeta(const DeviceImage<uint8_t> &img) {
+  template <typename Tmapping>
+  __device__ void blockInitBeta(const DeviceImage<Tmapping> &img) {
     for (int i = threadIdx.y * blockDim.x + threadIdx.x;
          i < beta.numDataElements; i += blockDim.y * blockDim.x) {
       // Each thread works on one element word of the bitset (so its 8/16/32/64
@@ -838,7 +890,7 @@ template <typename Tbitset> struct NeighbourChainer {
       for (int j = 0; j < beta.numBitsPerElement(); j++) {
         int pixelFlatIdx = i * beta.numBitsPerElement() + j;
         if (pixelFlatIdx < img.size())
-          beta.setBitAt(pixelFlatIdx, img.data[pixelFlatIdx] > 0);
+          beta.setBitAt(pixelFlatIdx, img.data[pixelFlatIdx] >= 0);
         else
           beta.setBitAt(pixelFlatIdx, 0);
       }
@@ -860,14 +912,17 @@ template <typename Tbitset> struct NeighbourChainer {
    * @brief Computes a single row in the alpha matrix. Used to fill either the
    * alphaRow or workspaceRow. You may need to syncthreads() after this.
    *
-   * @param img Binary input image to read from
+   * @param img Initial input image to read from (identical to union find method
+   * load)
    * @param windowDist Window distance, to determine neighbours
    * @param targetIndex Target index inside the alpha matrix. For
    */
+  template <typename Tmapping>
   __device__ void
-  blockComputeAlphaRow(const DeviceImage<uint8_t> &img, const int2 windowDist,
+  blockComputeAlphaRow(const DeviceImage<Tmapping> &img, const int2 windowDist,
                        const int targetIndex,
                        containers::Bitset<Tbitset, int> &alphaRow) {
+    // Position inside the 2D image
     int targetRow = targetIndex / img.width;
     int targetCol = targetIndex % img.width;
 
@@ -877,7 +932,7 @@ template <typename Tbitset> struct NeighbourChainer {
       for (int j = 0; j < alphaRow.numBitsPerElement(); j++) {
         int pixelFlatIdx = i * alphaRow.numBitsPerElement() + j;
         // Ignore out of bounds, or if inactive
-        if (pixelFlatIdx > img.size() || img.data[pixelFlatIdx] == 0) {
+        if (pixelFlatIdx > img.size() || img.data[pixelFlatIdx] < 0) {
           alphaRow.setBitAt(pixelFlatIdx, 0);
           continue;
         }
@@ -885,11 +940,18 @@ template <typename Tbitset> struct NeighbourChainer {
         int pixelCol = pixelFlatIdx % img.width;
 
         // Set 1 if this is within the window
-        if (abs(pixelRow - targetRow) < windowDist.y &&
-            abs(pixelCol - targetCol) < windowDist.x)
+        if (abs(pixelRow - targetRow) <= windowDist.y &&
+            abs(pixelCol - targetCol) <= windowDist.x) {
+
           alphaRow.setBitAt(pixelFlatIdx, 1);
-        else
+          dprintf("Examining if %d is neighbour to row %d: yes\n", pixelFlatIdx,
+                  targetIndex);
+        } else {
+
           alphaRow.setBitAt(pixelFlatIdx, 0);
+          dprintf("Examining if %d is neighbour to row %d: no\n", pixelFlatIdx,
+                  targetIndex);
+        }
       }
     }
   }
@@ -899,12 +961,25 @@ template <typename Tbitset> struct NeighbourChainer {
       beta.setBitAt(rowIndex, 0);
   }
 
-  __device__ void blockComputeNeighboursOfInterest() {
+  /**
+   * @brief Computes the gamma vector (neighbours of interest). Explicitly
+   * performs the syncthreads() internally, since this is required to determine
+   * if it is non-empty.
+   *
+   * @return True if gamma is non-empty.
+   */
+  __device__ bool blockComputeNeighboursOfInterest() {
+    int threadFoundNeighbours = 0;
     for (int i = threadIdx.y * blockDim.x + threadIdx.x;
          i < gamma.numDataElements; i += blockDim.y * blockDim.x) {
       // Simply bitwise AND everything
       gamma.elementAt(i) = seedRow.elementAt(i) & beta.elementAt(i);
+      if (gamma.elementAt(i) != 0)
+        threadFoundNeighbours = 1;
     }
+    int hasNeighbours = __syncthreads_or(threadFoundNeighbours);
+
+    return hasNeighbours != 0;
   }
 
   __device__ void blockMergeRows() {
@@ -916,53 +991,134 @@ template <typename Tbitset> struct NeighbourChainer {
   }
 
   template <typename Tmapping>
-  __device__ void blockChainNeighbours(const DeviceImage<uint8_t> &img,
-                                       const int2 windowDist,
-                                       DeviceImage<Tmapping> &output) {
+  __device__ void blockChainNeighbours(const int2 windowDist,
+                                       DeviceImage<Tmapping> &img) {
     static_assert(std::is_signed_v<Tmapping>, "Tmapping must be signed");
     // Compute the current seed row
     blockComputeAlphaRow(img, windowDist, earliestValidBetaIndex, seedRow);
     consumeAlphaRow(0);
+    d1printf("seed row at %d\n", earliestValidBetaIndex);
     // since every thread works on the same element in seedRow/gamma, there is
     // no need to syncthreads yet
 
-    // Compute gamma
-    blockComputeNeighboursOfInterest();
+    // debug sync
     __syncthreads();
+    for (int i = 0; i < gamma.numBits; ++i) {
+      d1printf("seedRow[%d]: %d\n", i, seedRow.getBitAt(i));
+    }
+
+    // Compute gamma
+    bool gammaNonEmpty = blockComputeNeighboursOfInterest();
     // we sync here because the whole block needs to know the neighbours of
     // interest
+    for (int i = 0; i < gamma.numBits; ++i) {
+      d1printf("gamma[%d]: %d\n", i, gamma.getBitAt(i));
+    }
 
-    // Iterate over gamma for this seed row
-    for (int n = 0; n < gamma.numBits; ++n) {
-      // If not of interest, ignore
-      if (!gamma.getBitAt(n))
-        continue;
+    while (gammaNonEmpty) {
+      // Iterate over gamma for this seed row
+      for (int n = 0; n < gamma.numBits; ++n) {
+        // If not of interest, ignore
+        if (!gamma.getBitAt(n))
+          continue;
+        d1printf("gamma neighbour for row %d -> %d\n", earliestValidBetaIndex,
+                 n);
 
-      // Otherwise we compute the row for this neighbour
-      blockComputeAlphaRow(img, windowDist, n, neighbourRow);
-      consumeAlphaRow(n);
+        // Otherwise we compute the row for this neighbour
+        blockComputeAlphaRow(img, windowDist, n, neighbourRow);
+        consumeAlphaRow(n);
 
-      // And then we bitwise OR it into the seed row
-      blockMergeRows();
-      // no need to sync, each row is independent, and again, threads work on
-      // same index on all rows
+        // And then we bitwise OR it into the seed row
+        blockMergeRows();
+        // no need to sync, each row is independent, and again, threads work on
+        // same index on all rows
+      }
+      __syncthreads();
+
+      // Recompute gamma again
+      gammaNonEmpty = blockComputeNeighboursOfInterest();
     }
     // Once gamma is complete, our seed row is fully merged and ready to be
-    // output
-    __syncthreads(); // the iteration scheme for the output is different from
-                     // the binary matrix rows used, so we must sync first
-    for (int i = threadIdx.y; i < output.height; i += blockDim.y) {
-      for (int j = threadIdx.x; j < output.width; j += blockDim.x) {
-        int idx = i * output.width + j;
+    // output. NOTE: gamma calculation already synced for us
+    for (int i = threadIdx.y; i < img.height; i += blockDim.y) {
+      for (int j = threadIdx.x; j < img.width; j += blockDim.x) {
+        int idx = i * img.width + j;
         if (seedRow.getBitAt(idx))
-          output.set(i, j,
-                     earliestValidBetaIndex); // set all to the flattened index
+          img.set(i, j,
+                  earliestValidBetaIndex); // set all to the flattened index
       }
     }
 
     // Update the earliest index to find next one
     setEarliestValidBetaIndex();
+    d1printf("after blockChainNeighbours, new earliest index: %d\n",
+             earliestValidBetaIndex);
   }
 }; // end struct NeighbourChainer
+
+template <typename Tbitset, typename Tmapping>
+__global__ void localChainNeighboursKernel(const DeviceImage<Tbitset> input,
+                                           const int2 windowDist,
+                                           const int2 tileDims,
+                                           DeviceImage<Tmapping> output) {
+  static_assert(std::is_signed_v<Tmapping>, "mapping type T must be signed");
+
+  // Define the tile for this block
+  const int tileXstart = blockIdx.x * tileDims.x;
+  const int tileYstart = blockIdx.y * tileDims.y;
+  // Tile may not be fully occupied at the ends
+  const int2 blockTileDims{tileXstart + tileDims.x < (int)input.width
+                               ? tileDims.x
+                               : (int)input.width - tileXstart,
+                           tileYstart + tileDims.y < (int)input.height
+                               ? tileDims.y
+                               : (int)input.height - tileYstart};
+
+  // Read entire tile and set shared memory values
+  SharedMemory<Tmapping> smem;
+  // Workspace for the tile
+  DeviceImage<Tmapping> s_tile(smem.getPointer(), blockTileDims.y,
+                               blockTileDims.x);
+  // Workspaces for the neighbour chainer struct
+  NeighbourChainer<Tbitset> s_chainer((Tbitset *)&s_tile.data[s_tile.size()],
+                                      blockTileDims.x * blockTileDims.y);
+
+  // Read the tile and populate (same as unionfind)
+  initializeShmemTile(input, s_tile, blockTileDims, tileXstart, tileYstart);
+  __syncthreads();
+
+  // And initialize our neighbour chainer
+  s_chainer.template blockInitBeta<Tmapping>(s_tile);
+  __syncthreads();
+  for (int i = 0; i < s_chainer.beta.numBits; ++i) {
+    d1printf("initial beta[%d]: %d\n", i, s_chainer.beta.getBitAt(i));
+  }
+  // Fill a register-local first beta
+  s_chainer.setEarliestValidBetaIndex();
+  d1printf("initial earliest beta index: %d\n",
+           s_chainer.earliestValidBetaIndex);
+
+  // Now run the consumption
+  while (!s_chainer.isComplete()) {
+    s_chainer.blockChainNeighbours(windowDist, s_tile);
+    d1printf("blockChain iteration\n");
+  }
+  __syncthreads();
+
+  // Then once done we output back to global
+  for (int ty = threadIdx.y; ty < blockTileDims.y; ty += blockDim.y) {
+    for (int tx = threadIdx.x; tx < blockTileDims.x; tx += blockDim.x) {
+      Tmapping element = s_tile.get(ty, tx);
+      if (element >= 0) {
+        // Split 1D index into col and row
+        int gcol = element % s_tile.width + tileXstart;
+        int grow = element / s_tile.width + tileYstart;
+        element = (Tmapping)output.flattenedIndex(grow, gcol);
+      }
+      // Write the element
+      output.set(ty + tileYstart, tx + tileXstart, element);
+    }
+  }
+}
 
 } // namespace wccl

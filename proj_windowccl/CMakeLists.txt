@@ -51,6 +51,25 @@ target_sources(
   ${PROJECT_SOURCE_DIR}/src/wccl_experiment_cuda.cu
 )
 
+# And a third one also
+add_executable(wccl_experiment_cuda_neighbourchainlocal)
+target_compile_options(
+  wccl_experiment_cuda_neighbourchainlocal
+  PRIVATE
+  -DUSE_NEIGHBOURCHAINER
+)
+target_include_directories(
+  wccl_experiment_cuda_neighbourchainlocal
+  PRIVATE
+  ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+target_sources(
+  wccl_experiment_cuda_neighbourchainlocal PRIVATE
+  ${PROJECT_SOURCE_DIR}/src/wccl_experiment_cuda.cu
+)
+
+
 # -------------------- Tests
 if (GTEST_FOUND)
   message("Enabling tests for proj_windowccl")

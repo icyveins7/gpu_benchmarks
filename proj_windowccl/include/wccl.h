@@ -19,13 +19,11 @@ std::string idxstring(const T* data,
                       const int height,
                       const int width,
                       const char* fmt="%d ",
-                      const char* cfmt="%c ",
-                      const int tileWidth = -1,
-                      const int tileHeight = -1) {
+                      const char* cfmt="%c ") {
   std::string s;
   char temp[8];
-  for (uint32_t i = 0; i < height; ++i){
-    for (uint32_t j = 0; j < width; ++j){
+  for (int i = 0; i < height; ++i){
+    for (int j = 0; j < width; ++j){
       if (data[i * width + j] == -1){
         snprintf(temp, 8, cfmt, '-');
         s += temp;
