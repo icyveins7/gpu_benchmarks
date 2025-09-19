@@ -75,8 +75,8 @@ if (GTEST_FOUND)
   message("Enabling tests for proj_windowccl")
 
   # --------------------
+  set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/test/test_wccl.cpp PROPERTIES LANGUAGE CUDA)
   add_executable(test_wccl test/test_wccl.cpp src/wccl.cpp)
-  # target_link_libraries(test_wccl ${CUDA_nppc_LIBRARY} ${CUDA_nppig_LIBRARY} GTest::gtest_main)
   target_link_libraries(test_wccl GTest::gtest_main)
   target_include_directories(
     test_wccl PRIVATE

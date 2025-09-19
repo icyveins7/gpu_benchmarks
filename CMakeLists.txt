@@ -40,7 +40,10 @@ set(CMAKE_CUDA_USE_RESPONSE_FILE_FOR_LIBRARIES 0)
 set(CMAKE_CUDA_USE_RESPONSE_FILE_FOR_OBJECTS 0)
 
 # Common includes for all
-include_directories(include/)
+include_directories(
+  include/
+  cxxopts/include/
+)
 
 # Check if MatX projects should be built
 if (BUILD_MATX_PROJECTS)
