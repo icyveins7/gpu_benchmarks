@@ -396,7 +396,7 @@ __device__ void unite(DeviceImage<Tmapping> &s_tile, Tmapping *rootPtr,
 // ========================================================================
 // ========================================================================
 
-template <typename Tmapping>
+template <typename Tmapping, bool useActiveSitesInWindow = true>
 __global__ void local_connect_naive_unionfind_kernel(
     const DeviceImage<uint8_t> input, DeviceImage<Tmapping> mapping,
     const int2 tileDims, const int2 windowDist) {
@@ -463,21 +463,43 @@ __global__ void local_connect_naive_unionfind_kernel(
       dprintf("Blk (%d,%d): %d, %d -> initial root %d\n", blockIdx.x,
               blockIdx.y, tx, ty, *rootPtr);
 
-      // Iterate over window
-      for (int wy = ty - windowDist.y; wy <= ty + windowDist.y; wy++) {
-        if (wy < 0 || wy >= s_tile.height)
-          continue;
+      if constexpr (useActiveSitesInWindow) {
+        // Use the active sites list instead of scouring window
+        // This may be faster when active sites are very sparse
+        for (int a = 0; a < (int)numActiveSites; a++) {
+          if (a == i)
+            continue; // skip self
 
-        for (int wx = tx - windowDist.x; wx <= tx + windowDist.x; wx++) {
-          if (wx < 0 || wx >= s_tile.width)
+          // Convert back to coordinates for the window
+          int wy = s_activeIdx[a] / blockTileDims.x;
+          int wx = s_activeIdx[a] % blockTileDims.x;
+
+          // Check if window is in reach
+          if ((abs(wy - ty) <= windowDist.y) &&
+              (abs(wx - tx) <= windowDist.x)) {
+            // Unite
+            unite(s_tile, rootPtr, (Tmapping)s_tile.flattenedIndex(wy, wx),
+                  counter);
+          }
+        }
+
+      } else {
+        // Iterate over window manually
+        for (int wy = ty - windowDist.y; wy <= ty + windowDist.y; wy++) {
+          if (wy < 0 || wy >= s_tile.height)
             continue;
 
-          // Ignore if the window element is invalid
-          if (s_tile.get(wy, wx) < 0)
-            continue;
+          for (int wx = tx - windowDist.x; wx <= tx + windowDist.x; wx++) {
+            if (wx < 0 || wx >= s_tile.width)
+              continue;
 
-          unite(s_tile, rootPtr, (Tmapping)s_tile.flattenedIndex(wy, wx),
-                counter);
+            // Ignore if the window element is invalid
+            if (s_tile.get(wy, wx) < 0)
+              continue;
+
+            unite(s_tile, rootPtr, (Tmapping)s_tile.flattenedIndex(wy, wx),
+                  counter);
+          }
         }
       }
       //   } // end loop over tile (x)
