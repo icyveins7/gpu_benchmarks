@@ -511,11 +511,9 @@ dim3 local_connect_naive_unionfind(const DeviceImage<uint8_t> input,
                                    const dim3 tpb) {
   dim3 bpg(input.width / tileDims.x + (input.width % tileDims.x > 0 ? 1 : 0),
            input.height / tileDims.y + (input.height % tileDims.y > 0 ? 1 : 0));
-  size_t shmem =
-      tileDims.x * tileDims.y *
-          (sizeof(Tmapping) * 2) + // tile + active index bookkeeping
-      2 * sizeof(
-              unsigned int); // counter for atomics + counter for active indices
+  size_t shmem = tileDims.x * tileDims.y *
+                     (sizeof(Tmapping) * 2) + // tile + active index bookkeeping
+                 1 * sizeof(unsigned int);    // counter for active indices
 
   wccl::local_connect_naive_unionfind_kernel<Tmapping>
       <<<bpg, tpb, shmem>>>(input, mapping, tileDims, windowDist);
