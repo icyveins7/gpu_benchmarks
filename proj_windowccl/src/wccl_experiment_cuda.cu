@@ -70,7 +70,9 @@ int main(int argc, char* argv[]) {
   else {
     const double fraction = result["fraction"].as<double>();
     std::cout << "Generating random input with fraction: " << fraction << std::endl;
-    std::fill(input.begin(), input.begin() + (int)(fraction*rows*cols), 1);
+    const int totalMarked = (int)(fraction*rows*cols);
+    std::cout << "Total marked: " << totalMarked << "/" << rows*cols << std::endl;
+    std::fill(input.begin(), input.begin() + totalMarked, 1);
     std::fill(input.begin() + (int)(fraction*rows*cols), input.end(), 0);
     std::random_shuffle(input.begin(), input.end());
   }
