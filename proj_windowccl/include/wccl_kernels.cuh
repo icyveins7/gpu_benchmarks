@@ -511,6 +511,31 @@ __global__ void local_connect_naive_unionfind_kernel(
   }
 }
 
+/**
+ * @brief Helper wrapper function to handle grid dimensions and shared memory
+ * for local_connect_naive_unionfind_kernel.
+ *
+ * @return Grid dimensions, which contains the number of tiles calculated.
+ */
+template <typename Tmapping>
+dim3 local_connect_naive_unionfind(const DeviceImage<uint8_t> input,
+                                   DeviceImage<Tmapping> mapping,
+                                   const int2 tileDims, const int2 windowDist,
+                                   const dim3 tpb) {
+  dim3 bpg(input.width / tileDims.x + (input.width % tileDims.x > 0 ? 1 : 0),
+           input.height / tileDims.y + (input.height % tileDims.y > 0 ? 1 : 0));
+  size_t shmem =
+      tileDims.x * tileDims.y *
+          (sizeof(Tmapping) * 2) + // tile + active index bookkeeping
+      2 * sizeof(
+              unsigned int); // counter for atomics + counter for active indices
+
+  wccl::local_connect_naive_unionfind_kernel<Tmapping>
+      <<<bpg, tpb, shmem>>>(input, mapping, tileDims, windowDist);
+
+  return bpg;
+}
+
 template <typename Tmapping, typename Tcolrow>
 __global__ void local_connect_kernel(const DeviceImage<uint8_t> input,
                                      DeviceImage<Tmapping> mapping,
