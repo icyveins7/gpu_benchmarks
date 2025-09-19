@@ -366,6 +366,30 @@ __device__ void initializeShmemTile(const DeviceImage<uint8_t> &input,
   }
 }
 
+template <typename Tmapping>
+__device__ void unite(DeviceImage<Tmapping> &s_tile, Tmapping *rootPtr,
+                      Tmapping windowIndex, Tmapping &counter) {
+  // Read the window element's root address
+  Tmapping *wrootPtr = find(s_tile, windowIndex);
+  dprintf("Blk (%d,%d): %d, %d -> window root %d\n", blockIdx.x, blockIdx.y, wx,
+          wy, *rootPtr);
+  // // Mini path compression (not much difference?)
+  // if (s_tile.get(wy, wx) > *wrootPtr)
+  //   atomicMin(s_tile.getPointer(wy, wx), *wrootPtr);
+
+  if (*wrootPtr < *rootPtr) {
+    // Change current root pointer
+    atomicMin(rootPtr, *wrootPtr);
+    counter++;
+    // we should shift our root pointer to the new root pointer
+    rootPtr = wrootPtr;
+  } else if (*wrootPtr > *rootPtr) {
+    // Change window root pointer
+    atomicMin(wrootPtr, *rootPtr);
+    counter++;
+  }
+}
+
 // ========================================================================
 // ========================================================================
 // ====================== GLOBAL KERNELS ==================================
@@ -432,6 +456,9 @@ __global__ void local_connect_naive_unionfind_kernel(
 
       // Read the current element's root address
       Tmapping *rootPtr = find(s_tile, (Tmapping)s_tile.flattenedIndex(ty, tx));
+      // // Mini path compression (not much difference?)
+      // if (s_tile.get(ty, tx) > *rootPtr)
+      //   atomicMin(s_tile.getPointer(ty, tx), *rootPtr);
 
       dprintf("Blk (%d,%d): %d, %d -> initial root %d\n", blockIdx.x,
               blockIdx.y, tx, ty, *rootPtr);
@@ -449,23 +476,8 @@ __global__ void local_connect_naive_unionfind_kernel(
           if (s_tile.get(wy, wx) < 0)
             continue;
 
-          // Read the window element's root address
-          Tmapping *wrootPtr =
-              find(s_tile, (Tmapping)s_tile.flattenedIndex(wy, wx));
-          dprintf("Blk (%d,%d): %d, %d -> window root %d\n", blockIdx.x,
-                  blockIdx.y, wx, wy, *rootPtr);
-
-          if (*wrootPtr < *rootPtr) {
-            // Change current root pointer
-            atomicMin(rootPtr, *wrootPtr);
-            counter++;
-            // we should shift our root pointer to the new root pointer
-            rootPtr = wrootPtr;
-          } else if (*wrootPtr > *rootPtr) {
-            // Change window root pointer
-            atomicMin(wrootPtr, *rootPtr);
-            counter++;
-          }
+          unite(s_tile, rootPtr, (Tmapping)s_tile.flattenedIndex(wy, wx),
+                counter);
         }
       }
       //   } // end loop over tile (x)
