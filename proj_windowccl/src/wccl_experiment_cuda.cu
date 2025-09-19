@@ -24,7 +24,7 @@ int main(int argc, char* argv[]) {
     ("rows", "Input rows", cxxopts::value<int>()->default_value("8192"))
     ("cols", "Input columns", cxxopts::value<int>()->default_value("1024"))
     ("tilewidth", "Tile width", cxxopts::value<int>()->default_value("32"))
-    ("tileheight", "Tile height", cxxopts::value<int>()->default_value("32"))
+    ("tileheight", "Tile height", cxxopts::value<int>()->default_value("8"))
     ("blockwidth", "Block width", cxxopts::value<int>()->default_value("32"))
     ("blockheight", "Block height", cxxopts::value<int>()->default_value("4"))
     ("windowhdist", "Window horizontal distance (+/-)", cxxopts::value<int>()->default_value("1"))

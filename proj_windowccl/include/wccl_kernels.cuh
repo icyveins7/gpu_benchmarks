@@ -392,8 +392,7 @@ __global__ void local_connect_naive_unionfind_kernel(
   // Read entire tile and set shared memory values
   SharedMemory<unsigned int> smem;
   // First value is just a counter
-  unsigned int *s_counter = smem.getPointer();
-  unsigned int *s_numActiveSites = &s_counter[1];
+  unsigned int *s_numActiveSites = smem.getPointer();
   // Single workspace for the tile
   DeviceImage<Tmapping> s_tile((Tmapping *)&s_numActiveSites[1],
                                blockTileDims.y, blockTileDims.x);
@@ -403,8 +402,6 @@ __global__ void local_connect_naive_unionfind_kernel(
   // Initialize counters
   if (threadIdx.y == 0) {
     if (threadIdx.x == 0)
-      *s_counter = 0;
-    if (threadIdx.x == 1)
       *s_numActiveSites = 0;
   }
   __syncthreads();
@@ -416,7 +413,10 @@ __global__ void local_connect_naive_unionfind_kernel(
 
   // Now attempt to unite sets for real
   unsigned int numActiveSites = *s_numActiveSites;
-  while (true) {
+  int counter = 0; // local thread-register counter
+  bool continueIterations = true;
+  while (continueIterations) {
+    counter = 0; // reset local thread-register counter
     // Iterate over active sites
     for (int i = threadIdx.y * blockDim.x + threadIdx.x;
          i < (int)numActiveSites; i += blockDim.y * blockDim.x) {
@@ -456,13 +456,13 @@ __global__ void local_connect_naive_unionfind_kernel(
           if (*wrootPtr < *rootPtr) {
             // Change current root pointer
             atomicMin(rootPtr, *wrootPtr);
-            atomicAdd(s_counter, 1);
+            counter++;
             // we should shift our root pointer to the new root pointer
             rootPtr = wrootPtr;
           } else if (*wrootPtr > *rootPtr) {
             // Change window root pointer
             atomicMin(wrootPtr, *rootPtr);
-            atomicAdd(s_counter, 1);
+            counter++;
           }
         }
       }
@@ -470,22 +470,9 @@ __global__ void local_connect_naive_unionfind_kernel(
       // } // end loop over tile (y)
     } // end loop over active sites
 
-    __syncthreads();
-
-    // All threads read the counter
-    unsigned int counter = *s_counter;
-
-    // debug prints
-    d1printf("counter: %d\n", counter);
-
-    __syncthreads();
-    if (counter == 0)
-      break;
-    else if (threadIdx.x == 0 && threadIdx.y == 0) {
-      // Reset counter
-      *s_counter = 0;
-    }
-    __syncthreads();
+    // Check if any thread in the block has made any changes
+    int blocksynced = __syncthreads_or(counter);
+    continueIterations = blocksynced != 0;
   } // end while
 
   // Path compression, then write to global
