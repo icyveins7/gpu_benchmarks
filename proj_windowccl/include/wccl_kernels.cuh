@@ -432,6 +432,7 @@ __global__ void local_connect_naive_unionfind_kernel(
 
       // Read the current element's root address
       Tmapping *rootPtr = find(s_tile, (Tmapping)s_tile.flattenedIndex(ty, tx));
+
       dprintf("Blk (%d,%d): %d, %d -> initial root %d\n", blockIdx.x,
               blockIdx.y, tx, ty, *rootPtr);
 
@@ -453,6 +454,7 @@ __global__ void local_connect_naive_unionfind_kernel(
               find(s_tile, (Tmapping)s_tile.flattenedIndex(wy, wx));
           dprintf("Blk (%d,%d): %d, %d -> window root %d\n", blockIdx.x,
                   blockIdx.y, wx, wy, *rootPtr);
+
           if (*wrootPtr < *rootPtr) {
             // Change current root pointer
             atomicMin(rootPtr, *wrootPtr);

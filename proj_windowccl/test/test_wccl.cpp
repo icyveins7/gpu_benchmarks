@@ -6,8 +6,12 @@
 #include <thrust/device_vector.h>
 #include <thrust/host_vector.h>
 
+#define ERROR_EXPECTED_INACTIVE_GOT_ACTIVE 1
+#define ERROR_EXPECTED_ACTIVE_GOT_INACTIVE 2
+#define ERROR_NEIGHBOUR_MISMATCH           3
+
 template <typename T>
-bool validatePointBasic(
+int validatePointBasic(
   const uint8_t* input,
   const T* mapping,
   const int height,
@@ -18,35 +22,46 @@ bool validatePointBasic(
   const int j
 ){
   T centre = mapping[i * width + j];
-  T inputVal = input[i * width + j];
-  // Check that if input is inactive then this should be nactive
+  uint8_t inputVal = input[i * width + j];
+  // Mapping (output) point is inactive
   if (centre < 0)
   {
+    // Input point is also inactive, correct
     if (inputVal == 0)
-      return true;
+      return 0;
     else
-      return false; // output is wrongly classified as inactive
+      return ERROR_EXPECTED_ACTIVE_GOT_INACTIVE; // output is wrongly classified as inactive
   }
+  // Mapping point is active
   else{
+    // Input point is inactive, wrong
     if (inputVal == 0)
-      return false; // output is wrongly classified as active
+      return ERROR_EXPECTED_INACTIVE_GOT_ACTIVE; // output is wrongly classified as active
   }
 
   // If active, check all neighbours
-  for (int x = i - hDist; x <= i + hDist; ++x){
-    for (int y = j - vDist; y <= j + vDist; ++y){
-      if (x < 0 || x >= height || y < 0 || y >= width)
+  for (int y = i - vDist; y <= i + vDist; ++y){
+    if (y < 0 || y >= height)
+      continue;
+    for (int x = j - hDist; x <= j + hDist; ++x){
+      if (x < 0 || x >= width)
         continue;
-      if (mapping[y * width + x] >= 0 && mapping[y * width + x] != centre)
-        return false;
+      // Read neighbour
+      T neighbourValue = mapping[y * width + x];
+      // Ignore inactive neighbours
+      if (neighbourValue < 0)
+        continue;
+      // Active neighbours must match
+      if (mapping[y * width + x] != centre)
+        return ERROR_NEIGHBOUR_MISMATCH;
     }
   }
   // All pass then true
-  return true;
+  return 0;
 }
 
 template <typename T>
-bool validatePoint(
+int validatePoint(
   const std::vector<uint8_t>& input,
   const wccl::CPUMapping<T>& mapping,
   const int hDist,
@@ -63,7 +78,7 @@ void validate(const std::vector<uint8_t>& input, const wccl::CPUMapping<T>& mapp
     for (int j = 0; j < (int)mapping.width; ++j){
       if (mapping.data[i * mapping.width + j] < 0)
         continue;
-      EXPECT_TRUE(validatePoint(input, mapping, hDist, vDist, i, j)) << mapping.tostring();
+      EXPECT_EQ(validatePoint(input, mapping, hDist, vDist, i, j), 0) << mapping.tostring();
     }
   }
 }
@@ -114,11 +129,27 @@ void localTileCudaTest(
       std::vector<T> tilemappingvec(tileDims.x * tileDims.y);
       copyTile<T>(h_mappingvec.data(), cols, rows, tilemappingvec.data(), tileDims.x, tileDims.y, startRow, startCol, -1);
 
+      std::string tilestr;
+      char tmp[8];
+      if (tileDims.x <= 64 && tileDims.y <= 64){
+        for (int ti = 0; ti < (int)tileDims.y; ++ti){
+          for (int tj = 0; tj < (int)tileDims.x; ++tj){
+            snprintf(tmp, 8, "%2d", tilemappingvec[ti * tileDims.x + tj]);
+            tilestr += std::string(tmp) + " ";
+          }
+          tilestr += "\n";
+        }
+      }
+
       for (int ii = 0; ii < (int)tileDims.y; ++ii){
         for (int jj = 0; jj < (int)tileDims.x; ++jj){
-          EXPECT_TRUE(validatePointBasic(
-            tileinputvec.data(), tilemappingvec.data(), rows, cols, windowDist.x, windowDist.y, ii, jj
-          ));
+          char errmsg[2048];
+          snprintf(errmsg, sizeof(errmsg),
+                   "tile (%d,%d), idx (%d,%d) = %d // input is %hhu\n",
+                   i, j, ii, jj, tilemappingvec[ii * tileDims.x + jj], tileinputvec[ii * tileDims.x + jj]);
+          ASSERT_EQ(validatePointBasic(
+            tileinputvec.data(), tilemappingvec.data(), tileDims.y, tileDims.x, windowDist.x, windowDist.y, ii, jj
+          ), 0) << errmsg + tilestr;
         }
       }
     }
@@ -236,6 +267,55 @@ TEST(CudaWindowCCL, NaiveLocal_basic5){
     0, 1, 0, 0, 0, 0,
     0, 0, 0, 0, 0, 0,
   };
+  const int2 tileDims = {32, 4};
+  const int2 windowDist = {1, 1};
+  dim3 tpb(32,4);
+  localTileCudaTest<int>(img, rows, cols, tpb, tileDims, windowDist);
+}
+
+TEST(CudaWindowCCL, NaiveLocal_random64x64_1percent){
+  constexpr int rows = 64;
+  constexpr int cols = 64;
+
+  std::vector<uint8_t> img(rows * cols);
+  const double fraction = 0.01;
+  std::fill(img.begin(), img.begin() + (int)(fraction * rows * cols), 1);
+  std::fill(img.begin() + (int)(fraction * rows * cols), img.end(), 0);
+  std::random_shuffle(img.begin(), img.end());
+
+  const int2 tileDims = {32, 4};
+  const int2 windowDist = {1, 1};
+  dim3 tpb(32,4);
+  localTileCudaTest<int>(img, rows, cols, tpb, tileDims, windowDist);
+}
+
+
+TEST(CudaWindowCCL, NaiveLocal_random8192x1024_1percent){
+  constexpr int rows = 8192;
+  constexpr int cols = 1024;
+
+  std::vector<uint8_t> img(rows * cols);
+  const double fraction = 0.01;
+  std::fill(img.begin(), img.begin() + (int)(fraction * rows * cols), 1);
+  std::fill(img.begin() + (int)(fraction * rows * cols), img.end(), 0);
+  std::random_shuffle(img.begin(), img.end());
+
+  const int2 tileDims = {32, 4};
+  const int2 windowDist = {1, 1};
+  dim3 tpb(32,4);
+  localTileCudaTest<int>(img, rows, cols, tpb, tileDims, windowDist);
+}
+
+TEST(CudaWindowCCL, NaiveLocal_random8192x1024_50percent){
+  constexpr int rows = 8192;
+  constexpr int cols = 1024;
+
+  std::vector<uint8_t> img(rows * cols);
+  const double fraction = 0.50;
+  std::fill(img.begin(), img.begin() + (int)(fraction * rows * cols), 1);
+  std::fill(img.begin() + (int)(fraction * rows * cols), img.end(), 0);
+  std::random_shuffle(img.begin(), img.end());
+
   const int2 tileDims = {32, 4};
   const int2 windowDist = {1, 1};
   dim3 tpb(32,4);
