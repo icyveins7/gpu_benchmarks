@@ -9,8 +9,77 @@
 #include "containers/bitset.cuh"
 #include "pinnedalloc.cuh"
 
+#include "cxxopts.hpp"
+#include <fstream>
+#include <iostream>
+
 // clang-format off
 int main(int argc, char* argv[]) {
+  // Parse command line args
+  cxxopts::Options options("wccl_experiment_cuda", "Cuda experiment of wccl for benchmarks");
+  options.add_options()
+    ("i,input", "Input file (if not specified, will generate random values). Format is a uint8_t binary map.", cxxopts::value<std::string>())
+    ("f,fraction", "Fraction of input to use (for random generated input)", cxxopts::value<double>()->default_value("0.5"))
+    ("o,output", "Output file (if output is to be dumped)", cxxopts::value<std::string>())
+    ("rows", "Input rows", cxxopts::value<int>()->default_value("8192"))
+    ("cols", "Input columns", cxxopts::value<int>()->default_value("1024"))
+    ("tilewidth", "Tile width", cxxopts::value<int>()->default_value("32"))
+    ("tileheight", "Tile height", cxxopts::value<int>()->default_value("32"))
+    ("blockwidth", "Block width", cxxopts::value<int>()->default_value("32"))
+    ("blockheight", "Block height", cxxopts::value<int>()->default_value("4"))
+    ("windowhdist", "Window horizontal distance (+/-)", cxxopts::value<int>()->default_value("1"))
+    ("windowvdist", "Window vertical distance (+/-)", cxxopts::value<int>()->default_value("1"))
+    ("h,help", "Print usage")
+  ;
+
+  auto result = options.parse(argc, argv);
+  if (result.count("help")) {
+    std::cout << options.help() << std::endl;
+    return 0;
+  }
+
+  const int rows = result["rows"].as<int>();
+  const int cols = result["cols"].as<int>();
+
+  const int tileWidth = result["tilewidth"].as<int>();
+  const int tileHeight = result["tileheight"].as<int>();
+  const int2 tileDims = {tileWidth, tileHeight};
+  printf("Tile dims: (%d, %d)\n", tileDims.x, tileDims.y);
+
+  const int blockWidth = result["blockwidth"].as<int>();
+  const int blockHeight = result["blockheight"].as<int>();
+  const dim3 tpb(blockWidth, blockHeight);
+  printf("Block dims: (%d, %d)\n", blockWidth, blockHeight);
+
+  const int windowHDist = result["windowhdist"].as<int>();
+  const int windowVDist = result["windowvdist"].as<int>();
+  const int2 windowDist = {windowHDist, windowVDist};
+  printf("Window dims: (horz: +/-%d, vert: +/-%d)\n", windowDist.x, windowDist.y);
+
+  std::vector<uint8_t> input(rows*cols);
+  if (result.count("input")){
+    std::cout << "Using input file: " << result["input"].as<std::string>() << std::endl;
+    std::ifstream inputfile(result["input"].as<std::string>().c_str(), std::ios::in | std::ios::binary);
+    if (!inputfile.is_open()) {
+      std::cerr << "Failed to open input file: " << result["input"].as<std::string>() << std::endl;
+      return -1;
+    }
+    inputfile.read((char*)input.data(), rows*cols);
+    inputfile.close();
+  }
+  else {
+    const double fraction = result["fraction"].as<double>();
+    std::cout << "Generating random input with fraction: " << fraction << std::endl;
+    std::fill(input.begin(), input.begin() + (int)(fraction*rows*cols), 1);
+    std::fill(input.begin() + (int)(fraction*rows*cols), input.end(), 0);
+    std::random_shuffle(input.begin(), input.end());
+  }
+  std::string outputFilename;
+  if (result.count("output")) {
+    outputFilename = result["output"].as<std::string>();
+  }
+
+
   // // ================= Example 1
   // constexpr int rows = 4;
   // constexpr int cols = 5;
@@ -52,73 +121,26 @@ int main(int argc, char* argv[]) {
   // const int2 windowDist = {1, 1};
   // const int2 tileDims = {32, 4};
 
-
-  // // ================= Example 3 (for timing)
-  // constexpr int rows = 8192;
-  // constexpr int cols = 1024;
+  // // ================= Example 6
+  // constexpr int rows = 12;
+  // constexpr int cols = 6;
   //
-  // std::vector<uint8_t> input(rows * cols);
-  //
-  // // // complete rand, ~50%?
-  // // for (size_t i = 0; i < rows * cols; ++i)
-  // //   input[i] = rand() % 2;
-  //
-  // // Use some fraction and then fisher yates shuffle
-  // double fraction = 0.01;
-  // printf("Timing fraction active = %f\n", fraction);
-  // for (size_t i = 0; i < (size_t)(fraction * rows * cols); ++i)
-  //   input[i] = 1;
-  // std::random_shuffle(input.begin(), input.end());
-  //
-  // const int2 tileDims = {64, 8};
-  // // const int2 tileDims = {64, 16};
-  // // const int2 tileDims = {32, 8};
-  // // const int2 tileDims = {32, 4};
-  // const int2 windowDist = {1, 1};
-
-
-  // // ================= Example 4
-  // constexpr int rows = 8;
-  // constexpr int cols = 64;
-  // 
-  // std::vector<uint8_t> input(rows * cols);
-  // for (size_t i = 0; i < rows * cols; ++i)
-  //   input[i] = rand() % 2;
+  // const std::vector<uint8_t> input = {
+  //   0, 0, 1, 0, 1, 0,
+  //   0, 1, 0, 0, 0, 1,
+  //   0, 1, 0, 0, 0, 1,
+  //   0, 0, 1, 0, 1, 0,
+  //   0, 0, 1, 0, 1, 0,
+  //   0, 1, 0, 0, 0, 1,
+  //   0, 1, 0, 0, 0, 1,
+  //   0, 0, 1, 0, 1, 0,
+  //   1, 0, 0, 1, 0, 0,
+  //   1, 0, 1, 0, 1, 0,
+  //   0, 1, 0, 0, 0, 0,
+  //   0, 0, 0, 0, 0, 0,
+  // };
   // const int2 tileDims = {32, 4};
   // const int2 windowDist = {1, 1};
-  // 
-
-  // // ================= Example 5
-  // constexpr int rows = 8;
-  // constexpr int cols = 16;
-  // 
-  // std::vector<uint8_t> input(rows * cols);
-  // for (size_t i = 0; i < rows * cols; ++i)
-  //   input[i] = rand() % 2;
-  // const int2 tileDims = {8, 4};
-  // const int2 windowDist = {1, 1};
-  // 
-
-  // ================= Example 6
-  constexpr int rows = 12;
-  constexpr int cols = 6;
-
-  const std::vector<uint8_t> input = {
-    0, 0, 1, 0, 1, 0,
-    0, 1, 0, 0, 0, 1,
-    0, 1, 0, 0, 0, 1,
-    0, 0, 1, 0, 1, 0,
-    0, 0, 1, 0, 1, 0,
-    0, 1, 0, 0, 0, 1,
-    0, 1, 0, 0, 0, 1,
-    0, 0, 1, 0, 1, 0,
-    1, 0, 0, 1, 0, 0,
-    1, 0, 1, 0, 1, 0,
-    0, 1, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0,
-  };
-  const int2 tileDims = {32, 4};
-  const int2 windowDist = {1, 1};
 
   typedef short2 KernelColRowType;
   typedef int MappingType;
@@ -131,8 +153,6 @@ int main(int argc, char* argv[]) {
   thrust::copy(input.begin(), input.end(), h_input.begin());
   thrust::device_vector<uint8_t> d_input(rows * cols);
   thrust::copy(h_input.begin(), h_input.end(), d_input.begin());
-  // Copy back to check?
-  thrust::copy(d_input.begin(), d_input.end(), h_input.begin());
 
   thrust::device_vector<MappingType> d_mapping_vec(rows * cols);
 
@@ -143,10 +163,6 @@ int main(int argc, char* argv[]) {
   // ========== Kernel 1. Local tile merge (using non atomics)
 #ifdef USE_NEIGHBOURCHAINER
   printf("Using neighbour chainer\n");
-  dim3 tpb(32, 4);
-  if ((int)tpb.x > tileDims.x || (int)tpb.y > tileDims.y) {
-    throw std::runtime_error("tpb exceeds tileDims");
-  }
   dim3 bpg(d_image.width / tileDims.x + (d_image.width % tileDims.x ? 1 : 0),
            d_image.height / tileDims.y + (d_image.height % tileDims.y ? 1 : 0));
   size_t shmem = tileDims.x * tileDims.y * sizeof(MappingType);
@@ -163,10 +179,6 @@ int main(int argc, char* argv[]) {
 
 #elif USE_ATOMICFREE_LOCAL
   printf("Using atomic-free local merge\n");
-  dim3 tpb(32, 4);
-  if ((int)tpb.x > tileDims.x || (int)tpb.y > tileDims.y) {
-    throw std::runtime_error("tpb exceeds tileDims");
-  }
   dim3 bpg(d_image.width / tileDims.x + (d_image.width % tileDims.x ? 1 : 0),
            d_image.height / tileDims.y + (d_image.height % tileDims.y ? 1 : 0));
   // NOTE: for now on Linux or at least <CUDA 12.9, putting wrong shared mem
@@ -178,10 +190,6 @@ int main(int argc, char* argv[]) {
       <<<bpg, tpb, shmem>>>(d_image, d_mapping, tileDims, windowDist);
 #else
   // ========= Kernel 1. Local tile merge (using atomics)
-  dim3 tpb(32, 4);
-  if (tpb.x > tileDims.x || tpb.y > tileDims.y) {
-    throw std::runtime_error("tpb exceeds tileDims");
-  }
   dim3 bpg(d_image.width / tileDims.x + (d_image.width % tileDims.x ? 1 : 0),
            d_image.height / tileDims.y + (d_image.height % tileDims.y ? 1 : 0));
 
