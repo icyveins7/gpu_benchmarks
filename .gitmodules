@@ -4,3 +4,6 @@
 [submodule "py2cpptest"]
 	path = py2cpptest
 	url = https://github.com/icyveins7/py2cpptest
+[submodule "cxxopts"]
+	path = cxxopts
+	url = https://github.com/jarro2783/cxxopts
