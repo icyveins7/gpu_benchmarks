@@ -101,7 +101,7 @@ void copyTile(const T* src, const int srcWidth, const int srcHeight, T* dst, con
   }
 }
 
-template <typename Tmapping, int method = METHOD_LOCAL_NAIVE>
+template <typename Tmapping, int method = METHOD_LOCAL_NAIVE, typename Tbitset = unsigned int>
 void localTileCudaTest(
   const std::vector<uint8_t>& img,
   const int rows,
@@ -126,7 +126,7 @@ void localTileCudaTest(
     bpg = wccl::local_connect_naive_unionfind<Tmapping>(d_img, d_mapping, tileDims, windowDist, tpb);
   }
   else if constexpr(method == METHOD_LOCAL_NEIGHBOURCHAIN){
-    bpg = wccl::local_chain_neighbours<unsigned int, Tmapping>(d_img, d_mapping, tileDims, windowDist, tpb);
+    bpg = wccl::local_chain_neighbours<Tbitset, Tmapping>(d_img, d_mapping, tileDims, windowDist, tpb);
   }
 
   thrust::host_vector<Tmapping> h_mappingvec = d_mappingvec;
@@ -438,4 +438,20 @@ TEST(CudaWindowCCL, NeighbourChainerLocal_random8192x1024_50percent){
   const int2 windowDist = {1, 1};
   dim3 tpb(32,4);
   localTileCudaTest<int, METHOD_LOCAL_NEIGHBOURCHAIN>(img, rows, cols, tpb, tileDims, windowDist);
+}
+
+TEST(CudaWindowCCL, NeighbourChainerLocal_uchar_random8192x1024_50percent){
+  constexpr int rows = 8192;
+  constexpr int cols = 1024;
+
+  std::vector<uint8_t> img(rows * cols);
+  const double fraction = 0.50;
+  std::fill(img.begin(), img.begin() + (int)(fraction * rows * cols), 1);
+  std::fill(img.begin() + (int)(fraction * rows * cols), img.end(), 0);
+  std::random_shuffle(img.begin(), img.end());
+
+  const int2 tileDims = {32, 4};
+  const int2 windowDist = {1, 1};
+  dim3 tpb(32,4);
+  localTileCudaTest<int, METHOD_LOCAL_NEIGHBOURCHAIN, unsigned char>(img, rows, cols, tpb, tileDims, windowDist);
 }

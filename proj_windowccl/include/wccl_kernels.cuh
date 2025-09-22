@@ -1029,8 +1029,6 @@ template <typename Tbitset> struct NeighbourChainer {
   __device__ void consumeAlphaRow(const int rowIndex) {
     if (threadIdx.x == 0 && threadIdx.y == 0) {
       beta.setBitAt(rowIndex, 0);
-      // printf("Block %d,%d consuming row %d\n", blockIdx.x, blockIdx.y,
-      //        rowIndex);
     }
   }
 
@@ -1069,58 +1067,20 @@ template <typename Tbitset> struct NeighbourChainer {
   __noinline__ __device__ void
   blockChainNeighbours(const int2 windowDist, DeviceImage<Tmapping> &img) {
     static_assert(std::is_signed_v<Tmapping>, "Tmapping must be signed");
-    // int numActiveInBeta = 0;
-    // if (threadIdx.x == 0 && threadIdx.y == 0) {
-    //   for (int i = 0; i < beta.numBits; ++i) {
-    //     if (beta.getBitAt(i))
-    //       numActiveInBeta++;
-    //   }
-    // }
-    __syncthreads();
-
     // Compute the current seed row
     blockComputeAlphaRow(img, windowDist, earliestValidBetaIndex, seedRow);
     consumeAlphaRow(earliestValidBetaIndex);
 
-    // if (threadIdx.x == 0 && threadIdx.y == 1) {
-    //   printf("blk %d,%d seedrow %d\n", blockIdx.x, blockIdx.y,
-    //          earliestValidBetaIndex);
-    // }
-    // since every thread works on the same element in seedRow/gamma, there is
-    // no need to syncthreads yet
-
-    // // debug sync
-    // __syncthreads();
-    // for (int i = 0; i < gamma.numBits; ++i) {
-    //   d1printf("seedRow[%d]: %d\n", i, seedRow.getBitAt(i));
-    // }
-
     // Compute gamma
     bool gammaNonEmpty = blockComputeNeighboursOfInterest();
-    // we sync here because the whole block needs to know the neighbours of
-    // interest
-    // for (int i = 0; i < gamma.numBits; ++i) {
-    //   d1printf("gamma[%d]: %d\n", i, gamma.getBitAt(i));
-    // }
+    // this method is already internally synced
 
-    int gammaCount = 0;
     while (gammaNonEmpty) {
-      // if (threadIdx.x == 0 && threadIdx.y == 1)
-      //   printf("blk %d,%d gammaNonEmpty\n", blockIdx.x, blockIdx.y);
       // Iterate over gamma for this seed row
       for (int n = 0; n < gamma.numBits; ++n) {
         // If not of interest, ignore
         if (!gamma.getBitAt(n))
           continue;
-
-        gammaCount++;
-
-        // d1printf("gamma neighbour for row %d -> %d\n",
-        // earliestValidBetaIndex,
-        //          n);
-        // if (threadIdx.x == 0 && threadIdx.y == 1) {
-        //   printf("blk %d,%d gamma %d\n", blockIdx.x, blockIdx.y, n);
-        // }
 
         // Otherwise we compute the row for this neighbour
         blockComputeAlphaRow(img, windowDist, n, neighbourRow);
@@ -1136,20 +1096,6 @@ template <typename Tbitset> struct NeighbourChainer {
       // Recompute gamma again
       gammaNonEmpty = blockComputeNeighboursOfInterest();
     }
-
-    // // debug print of beta
-    // if (threadIdx.x == 0 && threadIdx.y == 0) {
-    //   int finalnumActiveInBeta = 0;
-    //   for (int i = 0; i < beta.numBits; ++i) {
-    //     if (beta.getBitAt(i))
-    //       finalnumActiveInBeta++;
-    //   }
-    //   if (finalnumActiveInBeta != numActiveInBeta || gammaCount != 0)
-    //     printf("Blk %d,%d active beta count: %d -> %d (gamma count %d)\n",
-    //            blockIdx.x, blockIdx.y, numActiveInBeta, finalnumActiveInBeta,
-    //            gammaCount);
-    // }
-    // __syncthreads();
 
     // Once gamma is complete, our seed row is fully merged and ready to be
     // output. NOTE: gamma calculation already synced for us
@@ -1213,12 +1159,10 @@ __global__ void localChainNeighboursKernel(const DeviceImage<Tbitset> input,
 
   // Fill a register-local first beta
   s_chainer.setEarliestValidBetaIndex();
-  // d1printf("initial earliest beta index: %d\n",
-  //          s_chainer.earliestValidBetaIndex);
-  // if (threadIdx.x == 0 && threadIdx.y == 1) {
-  //   printf("blk %d,%d earliest beta index %d\n", blockIdx.x, blockIdx.y,
-  //          s_chainer.earliestValidBetaIndex);
-  // }
+  __syncthreads();
+  // NOTE: DO NOT REMOVE THIS SYNCTHREADS, else different warps will see
+  // different earliest beta index
+  // on the first iteration
 
   // Now run the consumption
   while (!s_chainer.isComplete()) {
@@ -1226,18 +1170,17 @@ __global__ void localChainNeighboursKernel(const DeviceImage<Tbitset> input,
   }
   // you don't need sync threads here, all threads that wrote the elements will
   // read the same element out
-  // __syncthreads();
 
   // Then once done we output back to global
   for (int ty = threadIdx.y; ty < s_tile.height; ty += blockDim.y) {
     for (int tx = threadIdx.x; tx < s_tile.width; tx += blockDim.x) {
       Tmapping element = s_tile.get(ty, tx);
-      // if (element >= 0) {
-      //   // Split 1D index into col and row
-      //   int gcol = element % s_tile.width + tileXstart;
-      //   int grow = element / s_tile.width + tileYstart;
-      //   element = (Tmapping)output.flattenedIndex(grow, gcol);
-      // }
+      if (element >= 0) {
+        // Split 1D index into col and row
+        int gcol = element % s_tile.width + tileXstart;
+        int grow = element / s_tile.width + tileYstart;
+        element = (Tmapping)output.flattenedIndex(grow, gcol);
+      }
       // Write the element
       output.set(ty + tileYstart, tx + tileXstart, element);
     }
