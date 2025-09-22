@@ -57,6 +57,9 @@ target_compile_options(
   wccl_experiment_cuda_neighbourchainlocal
   PRIVATE
   -DUSE_NEIGHBOURCHAINER
+  -g
+  # -G
+  -lineinfo
 )
 target_include_directories(
   wccl_experiment_cuda_neighbourchainlocal
