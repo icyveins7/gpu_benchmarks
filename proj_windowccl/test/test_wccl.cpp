@@ -141,27 +141,36 @@ void localTileCudaTest(
       std::vector<Tmapping> tilemappingvec(tileDims.x * tileDims.y);
       copyTile<Tmapping>(h_mappingvec.data(), cols, rows, tilemappingvec.data(), tileDims.x, tileDims.y, startRow, startCol, -1);
 
-      std::string tilestr;
+      std::string tilemappingstr;
       char tmp[8];
       if (tileDims.x <= 64 && tileDims.y <= 64){
         for (int ti = 0; ti < (int)tileDims.y; ++ti){
           for (int tj = 0; tj < (int)tileDims.x; ++tj){
             snprintf(tmp, 8, "%2d", tilemappingvec[ti * tileDims.x + tj]);
-            tilestr += std::string(tmp) + " ";
+            tilemappingstr += std::string(tmp) + " ";
           }
-          tilestr += "\n";
+          tilemappingstr += "\n";
         }
+      }
+
+      std::string tileinputstr;
+      for (int ti = 0; ti < (int)tileDims.y; ++ti){
+        for (int tj = 0; tj < (int)tileDims.x; ++tj){
+          snprintf(tmp, 8, "%2d", tileinputvec[ti * tileDims.x + tj]);
+          tileinputstr += std::string(tmp) + " ";
+        }
+        tileinputstr += "\n";
       }
 
       for (int ii = 0; ii < (int)tileDims.y; ++ii){
         for (int jj = 0; jj < (int)tileDims.x; ++jj){
           char errmsg[2048];
           snprintf(errmsg, sizeof(errmsg),
-                   "tile (%d,%d), idx (%d,%d) = %d // input is %hhu\n",
-                   i, j, ii, jj, tilemappingvec[ii * tileDims.x + jj], tileinputvec[ii * tileDims.x + jj]);
+                   "tile (%d,%d), idx (%d,%d), coords (%d,%d) = %d // input is %hhu\n",
+                   i, j, ii, jj, i*tileDims.y + ii, j*tileDims.x + jj, tilemappingvec[ii * tileDims.x + jj], tileinputvec[ii * tileDims.x + jj]);
           ASSERT_EQ(validatePointBasic(
             tileinputvec.data(), tilemappingvec.data(), tileDims.y, tileDims.x, windowDist.x, windowDist.y, ii, jj
-          ), 0) << errmsg + tilestr;
+          ), 0) << errmsg + tilemappingstr + "\n-------------------------------------------------------------\n" + tileinputstr;
         }
       }
     }
@@ -334,6 +343,22 @@ TEST(CudaWindowCCL, NaiveLocal_random8192x1024_50percent){
   localTileCudaTest<int>(img, rows, cols, tpb, tileDims, windowDist);
 }
 
+TEST(CudaWindowCCL, NeighbourChainerLocal_custom1){
+  constexpr int rows = 4;
+  constexpr int cols = 32;
+
+  const std::vector<uint8_t> img = {
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0
+  };
+  const int2 tileDims = {32, 4};
+  const int2 windowDist = {1, 1};
+  dim3 tpb(32,4);
+  localTileCudaTest<int>(img, rows, cols, tpb, tileDims, windowDist);
+}
+
 TEST(CudaWindowCCL, NeighbourChainerLocal_random64x64_1percent){
   constexpr int rows = 64;
   constexpr int cols = 64;
@@ -366,12 +391,12 @@ TEST(CudaWindowCCL, NeighbourChainerLocal_random64x64_50percent){
   localTileCudaTest<int, METHOD_LOCAL_NEIGHBOURCHAIN>(img, rows, cols, tpb, tileDims, windowDist);
 }
 
-TEST(CudaWindowCCL, NeighbourChainerLocal_random256x256_50percent){
-  constexpr int rows = 256;
-  constexpr int cols = 256;
+TEST(CudaWindowCCL, NeighbourChainerLocal_random512x512_1percent){
+  constexpr int rows = 512;
+  constexpr int cols = 512;
 
   std::vector<uint8_t> img(rows * cols);
-  const double fraction = 0.5;
+  const double fraction = 0.01;
   std::fill(img.begin(), img.begin() + (int)(fraction * rows * cols), 1);
   std::fill(img.begin() + (int)(fraction * rows * cols), img.end(), 0);
   std::random_shuffle(img.begin(), img.end());

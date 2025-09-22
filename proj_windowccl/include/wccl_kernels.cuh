@@ -938,6 +938,7 @@ template <typename Tbitset> struct NeighbourChainer {
 
   template <typename Tmapping>
   __device__ void blockInitBeta(const DeviceImage<Tmapping> &img) {
+    int threadBetaCounter = 0;
     for (int i = threadIdx.y * blockDim.x + threadIdx.x;
          i < beta.numDataElements; i += blockDim.y * blockDim.x) {
       // Each thread works on one element word of the bitset (so its 8/16/32/64
@@ -948,12 +949,20 @@ template <typename Tbitset> struct NeighbourChainer {
       // TODO: should optimise this to prevent shared mem bank conflicts
       for (int j = 0; j < beta.numBitsPerElement(); j++) {
         int pixelFlatIdx = i * beta.numBitsPerElement() + j;
+        bool bitValue = img.data[pixelFlatIdx] >= 0;
+        if (bitValue)
+          threadBetaCounter++;
+
         if (pixelFlatIdx < img.size())
-          beta.setBitAt(pixelFlatIdx, img.data[pixelFlatIdx] >= 0);
+          beta.setBitAt(pixelFlatIdx, bitValue);
         else
           beta.setBitAt(pixelFlatIdx, 0);
       }
     }
+    // if (threadBetaCounter > 0)
+    //   printf("Blk %d,%d thread %d,%d beta counter %d\n", blockIdx.x,
+    //   blockIdx.y,
+    //          threadIdx.x, threadIdx.y, threadBetaCounter);
   }
 
   /**
@@ -1018,8 +1027,11 @@ template <typename Tbitset> struct NeighbourChainer {
   }
 
   __device__ void consumeAlphaRow(const int rowIndex) {
-    if (threadIdx.x == 0 && threadIdx.y == 0)
+    if (threadIdx.x == 0 && threadIdx.y == 0) {
       beta.setBitAt(rowIndex, 0);
+      // printf("Block %d,%d consuming row %d\n", blockIdx.x, blockIdx.y,
+      //        rowIndex);
+    }
   }
 
   /**
@@ -1047,9 +1059,6 @@ template <typename Tbitset> struct NeighbourChainer {
     for (int i = threadIdx.y * blockDim.x + threadIdx.x;
          i < gamma.numDataElements; i += blockDim.y * blockDim.x) {
       // Simply bitwise OR everything
-      // if (threadIdx.x == 0 && threadIdx.y == 1) {
-      //   printf("i = %d\n", i);
-      // }
       // if (!seedRow.isValidElementIndex(i))
       //   printf("invalid element index %d\n", i);
       seedRow.elementAt(i) = seedRow.elementAt(i) | neighbourRow.elementAt(i);
@@ -1060,9 +1069,19 @@ template <typename Tbitset> struct NeighbourChainer {
   __noinline__ __device__ void
   blockChainNeighbours(const int2 windowDist, DeviceImage<Tmapping> &img) {
     static_assert(std::is_signed_v<Tmapping>, "Tmapping must be signed");
+    // int numActiveInBeta = 0;
+    // if (threadIdx.x == 0 && threadIdx.y == 0) {
+    //   for (int i = 0; i < beta.numBits; ++i) {
+    //     if (beta.getBitAt(i))
+    //       numActiveInBeta++;
+    //   }
+    // }
+    __syncthreads();
+
     // Compute the current seed row
     blockComputeAlphaRow(img, windowDist, earliestValidBetaIndex, seedRow);
     consumeAlphaRow(earliestValidBetaIndex);
+
     // if (threadIdx.x == 0 && threadIdx.y == 1) {
     //   printf("blk %d,%d seedrow %d\n", blockIdx.x, blockIdx.y,
     //          earliestValidBetaIndex);
@@ -1084,6 +1103,7 @@ template <typename Tbitset> struct NeighbourChainer {
     //   d1printf("gamma[%d]: %d\n", i, gamma.getBitAt(i));
     // }
 
+    int gammaCount = 0;
     while (gammaNonEmpty) {
       // if (threadIdx.x == 0 && threadIdx.y == 1)
       //   printf("blk %d,%d gammaNonEmpty\n", blockIdx.x, blockIdx.y);
@@ -1092,6 +1112,9 @@ template <typename Tbitset> struct NeighbourChainer {
         // If not of interest, ignore
         if (!gamma.getBitAt(n))
           continue;
+
+        gammaCount++;
+
         // d1printf("gamma neighbour for row %d -> %d\n",
         // earliestValidBetaIndex,
         //          n);
@@ -1113,23 +1136,40 @@ template <typename Tbitset> struct NeighbourChainer {
       // Recompute gamma again
       gammaNonEmpty = blockComputeNeighboursOfInterest();
     }
+
+    // // debug print of beta
+    // if (threadIdx.x == 0 && threadIdx.y == 0) {
+    //   int finalnumActiveInBeta = 0;
+    //   for (int i = 0; i < beta.numBits; ++i) {
+    //     if (beta.getBitAt(i))
+    //       finalnumActiveInBeta++;
+    //   }
+    //   if (finalnumActiveInBeta != numActiveInBeta || gammaCount != 0)
+    //     printf("Blk %d,%d active beta count: %d -> %d (gamma count %d)\n",
+    //            blockIdx.x, blockIdx.y, numActiveInBeta, finalnumActiveInBeta,
+    //            gammaCount);
+    // }
+    // __syncthreads();
+
     // Once gamma is complete, our seed row is fully merged and ready to be
     // output. NOTE: gamma calculation already synced for us
     for (int i = threadIdx.y; i < img.height; // same as blockTileDims height
          i += blockDim.y) {
       for (int j = threadIdx.x; j < img.width; // same as blockTileDims width
            j += blockDim.x) {
-        int idx = i * img.width + j;
+        Tmapping idx = img.flattenedIndex(i, j);
         if (seedRow.getBitAt(idx))
-          img.set(i, j,
-                  earliestValidBetaIndex); // set all to the flattened index
+          img.data[idx] = earliestValidBetaIndex;
       }
     }
+    __syncthreads();
 
     // Update the earliest index to find next one
     setEarliestValidBetaIndex();
     d1printf("after blockChainNeighbours, new earliest index: %d\n",
              earliestValidBetaIndex);
+
+    __syncthreads();
   }
 }; // end struct NeighbourChainer
 
@@ -1182,7 +1222,6 @@ __global__ void localChainNeighboursKernel(const DeviceImage<Tbitset> input,
 
   // Now run the consumption
   while (!s_chainer.isComplete()) {
-    d1printf("blockChain iteration\n");
     s_chainer.blockChainNeighbours(windowDist, s_tile);
   }
   // you don't need sync threads here, all threads that wrote the elements will
@@ -1190,15 +1229,15 @@ __global__ void localChainNeighboursKernel(const DeviceImage<Tbitset> input,
   // __syncthreads();
 
   // Then once done we output back to global
-  for (int ty = threadIdx.y; ty < blockTileDims.y; ty += blockDim.y) {
-    for (int tx = threadIdx.x; tx < blockTileDims.x; tx += blockDim.x) {
+  for (int ty = threadIdx.y; ty < s_tile.height; ty += blockDim.y) {
+    for (int tx = threadIdx.x; tx < s_tile.width; tx += blockDim.x) {
       Tmapping element = s_tile.get(ty, tx);
-      if (element >= 0) {
-        // Split 1D index into col and row
-        int gcol = element % s_tile.width + tileXstart;
-        int grow = element / s_tile.width + tileYstart;
-        element = (Tmapping)output.flattenedIndex(grow, gcol);
-      }
+      // if (element >= 0) {
+      //   // Split 1D index into col and row
+      //   int gcol = element % s_tile.width + tileXstart;
+      //   int grow = element / s_tile.width + tileYstart;
+      //   element = (Tmapping)output.flattenedIndex(grow, gcol);
+      // }
       // Write the element
       output.set(ty + tileYstart, tx + tileXstart, element);
     }
