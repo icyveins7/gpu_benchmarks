@@ -33,7 +33,25 @@ target_sources(
   wccl_experiment_cuda PRIVATE
   ${PROJECT_SOURCE_DIR}/src/wccl_experiment_cuda.cu
 )
-# Add second one with a preprocessor flag
+# Add extra one to swap between active site / window search
+add_executable(wccl_experiment_cuda_useactivesitesinwindow)
+target_include_directories(
+  wccl_experiment_cuda_useactivesitesinwindow
+  PRIVATE
+  ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+target_compile_options(
+  wccl_experiment_cuda_useactivesitesinwindow
+  PRIVATE
+  -DUSE_ACTIVESITES_IN_WINDOW
+)
+target_sources(
+  wccl_experiment_cuda_useactivesitesinwindow PRIVATE
+  ${PROJECT_SOURCE_DIR}/src/wccl_experiment_cuda.cu
+)
+
+# Add another one with a preprocessor flag for atomic free
 add_executable(wccl_experiment_cuda_atomicfreelocal)
 target_compile_options(
   wccl_experiment_cuda_atomicfreelocal
@@ -51,7 +69,7 @@ target_sources(
   ${PROJECT_SOURCE_DIR}/src/wccl_experiment_cuda.cu
 )
 
-# And a third one also
+# And another one also for neighbour chaining
 add_executable(wccl_experiment_cuda_neighbourchainlocal)
 target_compile_options(
   wccl_experiment_cuda_neighbourchainlocal

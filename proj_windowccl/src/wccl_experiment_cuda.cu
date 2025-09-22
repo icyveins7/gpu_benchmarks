@@ -192,19 +192,11 @@ int main(int argc, char* argv[]) {
       <<<bpg, tpb, shmem>>>(d_image, d_mapping, tileDims, windowDist);
 #else
   // ========= Kernel 1. Local tile merge (using atomics)
-  dim3 bpg(d_image.width / tileDims.x + (d_image.width % tileDims.x ? 1 : 0),
-           d_image.height / tileDims.y + (d_image.height % tileDims.y ? 1 : 0));
-
-  size_t shmem =
-      tileDims.x * tileDims.y *
-          (sizeof(MappingType) * 2) + // tile + active index bookkeeping
-      2 * sizeof(
-              unsigned int); // counter for atomics + counter for active indices
-  printf("Launching (%d, %d) blks (%d, %d) threads kernel (atomics) with shmem "
-         "= %zu\n",
-         bpg.x, bpg.y, tpb.x, tpb.y, shmem);
-  wccl::local_connect_naive_unionfind_kernel<MappingType>
-      <<<bpg, tpb, shmem>>>(d_image, d_mapping, tileDims, windowDist);
+  #ifdef USE_ACTIVESITES_IN_WINDOW
+  dim3 bpg = wccl::local_connect_naive_unionfind<MappingType, true>(d_image, d_mapping, tileDims, windowDist, tpb);
+  #else
+  dim3 bpg = wccl::local_connect_naive_unionfind<MappingType, false>(d_image, d_mapping, tileDims, windowDist, tpb);
+  #endif
 #endif
 
   // Pull data and check

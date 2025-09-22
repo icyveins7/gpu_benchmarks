@@ -396,7 +396,7 @@ __device__ void unite(DeviceImage<Tmapping> &s_tile, Tmapping *rootPtr,
 // ========================================================================
 // ========================================================================
 
-template <typename Tmapping, bool useActiveSitesInWindow = true>
+template <typename Tmapping, bool useActiveSitesInWindow = false>
 __global__ void local_connect_naive_unionfind_kernel(
     const DeviceImage<uint8_t> input, DeviceImage<Tmapping> mapping,
     const int2 tileDims, const int2 windowDist) {
@@ -540,7 +540,7 @@ __global__ void local_connect_naive_unionfind_kernel(
  *
  * @return Grid dimensions, which contains the number of tiles calculated.
  */
-template <typename Tmapping>
+template <typename Tmapping, bool useActiveSitesInWindow = true>
 dim3 local_connect_naive_unionfind(const DeviceImage<uint8_t> input,
                                    DeviceImage<Tmapping> mapping,
                                    const int2 tileDims, const int2 windowDist,
@@ -551,7 +551,12 @@ dim3 local_connect_naive_unionfind(const DeviceImage<uint8_t> input,
                      (sizeof(Tmapping) * 2) + // tile + active index bookkeeping
                  1 * sizeof(unsigned int);    // counter for active indices
 
-  wccl::local_connect_naive_unionfind_kernel<Tmapping>
+  dprintf("Launching (%d, %d) blks (%d, %d) threads (local connect naive union "
+          "find) kernel "
+          "with shmem = %zu\n",
+          bpg.x, bpg.y, tpb.x, tpb.y, shmem);
+
+  wccl::local_connect_naive_unionfind_kernel<Tmapping, useActiveSitesInWindow>
       <<<bpg, tpb, shmem>>>(input, mapping, tileDims, windowDist);
 
   return bpg;
