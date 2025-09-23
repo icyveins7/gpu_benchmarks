@@ -164,6 +164,32 @@ template <typename T = unsigned int, typename U = int> struct Bitset {
     else // set bit to 0
       element &= ~(1 << offset);
   }
+
+  /**
+   * @brief Setter for bits atomically. Use this if multiple threads will write
+   * to the same element.
+   *
+   * @param bIndex Bit index
+   * @param value Value to set. Using truthy-values like 1 or 0 directly also
+   * works.
+   */
+  __device__ void setBitAtAtomically(const U bIndex, const bool value) {
+    const U offset = bitOffset(bIndex);
+    T &element = elementContainingBitAt(bIndex);
+    if (value) // set bit to 1
+      atomicOr(&element, (1 << offset));
+    else // set bit to 0
+      atomicAnd(&element, ~(1 << offset));
+  }
+
+  __device__ void atomicOrBitAt(const U bIndex, const bool value) {
+    const U offset = bitOffset(bIndex);
+    T &element = elementContainingBitAt(bIndex);
+    if (value) // set bit to 1
+      atomicOr(&element, (1 << offset));
+    else // set bit to 0
+      atomicAnd(&element, ~(1 << offset));
+  }
 }; // end struct Bitset
 
 } // namespace containers

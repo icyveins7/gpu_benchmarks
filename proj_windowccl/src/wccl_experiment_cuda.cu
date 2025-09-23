@@ -176,7 +176,7 @@ int main(int argc, char* argv[]) {
          "with shmem = %zu\n",
          bpg.x, bpg.y, tpb.x, tpb.y, shmem);
 
-  wccl::localChainNeighboursKernel<<<bpg, tpb, shmem>>>(d_image, windowDist,
+  wccl::localChainNeighboursKernel<BitsetType, MappingType><<<bpg, tpb, shmem>>>(d_image, windowDist,
                                                         tileDims, d_mapping);
 
 #elif USE_ATOMICFREE_LOCAL

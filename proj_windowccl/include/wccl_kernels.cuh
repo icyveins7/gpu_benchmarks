@@ -1031,6 +1031,45 @@ template <typename Tbitset> struct NeighbourChainer {
     }
   }
 
+  template <typename Tmapping>
+  __device__ void blockMergeAlphaRowViaWindow(const DeviceImage<Tmapping> &img,
+                                              const int2 windowDist,
+                                              const int targetIndex) {
+
+    // Position inside the 2D image
+    const int targetRow = targetIndex / img.width;
+    const int targetCol = targetIndex % img.width;
+
+    // Each thread iterates over an element in the window
+    const int totalWindowWidth = (windowDist.x * 2 + 1);
+    const int totalWindowHeight = (windowDist.y * 2 + 1);
+    const int totalWindowPoints = totalWindowWidth * totalWindowHeight;
+    const int startWindowX = targetCol - windowDist.x;
+    const int startWindowY = targetRow - windowDist.y;
+    for (int i = threadIdx.y * blockDim.x + threadIdx.x; i < totalWindowPoints;
+         i += blockDim.y * blockDim.x) {
+      // Compute the row/col index within the window
+      int wrow = i / totalWindowWidth;
+      int wcol = i % totalWindowWidth;
+      // Then convert it to the actual row/col in the image
+      wrow = wrow + startWindowY;
+      wcol = wcol + startWindowX;
+
+      // Default value is inactive
+      Tmapping val = -1;
+      // Check if it's in bounds and retrieve
+      bool windowPixelInBounds =
+          wrow >= 0 && wrow < img.height && wcol >= 0 && wcol < img.width;
+      if (windowPixelInBounds) {
+        val = img.get(wrow, wcol);
+      }
+
+      // Atomically OR into the seed row
+      if (windowPixelInBounds)
+        seedRow.atomicOrBitAt(wrow * img.width + wcol, val >= 0);
+    }
+  }
+
   __device__ void consumeAlphaRow(const int rowIndex) {
     if (threadIdx.x == 0 && threadIdx.y == 0) {
       beta.setBitAt(rowIndex, 0);
@@ -1087,14 +1126,17 @@ template <typename Tbitset> struct NeighbourChainer {
         if (!gamma.getBitAt(n))
           continue;
 
-        // Otherwise we compute the row for this neighbour
-        blockComputeAlphaRow(img, windowDist, n, neighbourRow);
-        consumeAlphaRow(n);
-
-        // And then we bitwise OR it into the seed row
-        blockMergeRows();
+        // // Otherwise we compute the row for this neighbour
+        // blockComputeAlphaRow(img, windowDist, n, neighbourRow);
+        //
+        // // And then we bitwise OR it into the seed row
+        // blockMergeRows();
         // no need to sync, each row is independent, and again,
         // threads work on same index on all rows
+
+        blockMergeAlphaRowViaWindow(img, windowDist, n);
+
+        consumeAlphaRow(n);
       }
       __syncthreads();
 
@@ -1125,7 +1167,7 @@ template <typename Tbitset> struct NeighbourChainer {
 }; // end struct NeighbourChainer
 
 template <typename Tbitset, typename Tmapping>
-__global__ void localChainNeighboursKernel(const DeviceImage<Tbitset> input,
+__global__ void localChainNeighboursKernel(const DeviceImage<uint8_t> input,
                                            const int2 windowDist,
                                            const int2 tileDims,
                                            DeviceImage<Tmapping> output) {
@@ -1207,8 +1249,8 @@ dim3 local_chain_neighbours(const DeviceImage<uint8_t> input,
           "with shmem = %zu\n",
           bpg.x, bpg.y, tpb.x, tpb.y, shmem);
 
-  localChainNeighboursKernel<<<bpg, tpb, shmem>>>(input, windowDist, tileDims,
-                                                  mapping);
+  localChainNeighboursKernel<Tbitset, Tmapping>
+      <<<bpg, tpb, shmem>>>(input, windowDist, tileDims, mapping);
 
   return bpg;
 }

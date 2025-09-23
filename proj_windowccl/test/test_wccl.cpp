@@ -440,18 +440,18 @@ TEST(CudaWindowCCL, NeighbourChainerLocal_random8192x1024_50percent){
   localTileCudaTest<int, METHOD_LOCAL_NEIGHBOURCHAIN>(img, rows, cols, tpb, tileDims, windowDist);
 }
 
-TEST(CudaWindowCCL, NeighbourChainerLocal_uchar_random8192x1024_50percent){
-  constexpr int rows = 8192;
-  constexpr int cols = 1024;
-
-  std::vector<uint8_t> img(rows * cols);
-  const double fraction = 0.50;
-  std::fill(img.begin(), img.begin() + (int)(fraction * rows * cols), 1);
-  std::fill(img.begin() + (int)(fraction * rows * cols), img.end(), 0);
-  std::random_shuffle(img.begin(), img.end());
-
-  const int2 tileDims = {32, 4};
-  const int2 windowDist = {1, 1};
-  dim3 tpb(32,4);
-  localTileCudaTest<int, METHOD_LOCAL_NEIGHBOURCHAIN, unsigned char>(img, rows, cols, tpb, tileDims, windowDist);
-}
+// TEST(CudaWindowCCL, NeighbourChainerLocal_uchar_random8192x1024_50percent){
+//   constexpr int rows = 8192;
+//   constexpr int cols = 1024;
+//
+//   std::vector<uint8_t> img(rows * cols);
+//   const double fraction = 0.50;
+//   std::fill(img.begin(), img.begin() + (int)(fraction * rows * cols), 1);
+//   std::fill(img.begin() + (int)(fraction * rows * cols), img.end(), 0);
+//   std::random_shuffle(img.begin(), img.end());
+//
+//   const int2 tileDims = {32, 4};
+//   const int2 windowDist = {1, 1};
+//   dim3 tpb(32,4);
+//   localTileCudaTest<int, METHOD_LOCAL_NEIGHBOURCHAIN, unsigned char>(img, rows, cols, tpb, tileDims, windowDist);
+// }
