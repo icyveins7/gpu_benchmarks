@@ -943,7 +943,6 @@ template <typename Tbitset> struct NeighbourChainer {
 
   template <typename Tmapping>
   __device__ void blockInitBeta(const DeviceImage<Tmapping> &img) {
-    int threadBetaCounter = 0;
     for (int i = threadIdx.y * blockDim.x + threadIdx.x;
          i < beta.numDataElements; i += blockDim.y * blockDim.x) {
       // Each thread works on one element word of the bitset (so its 8/16/32/64
@@ -955,8 +954,6 @@ template <typename Tbitset> struct NeighbourChainer {
       for (int j = 0; j < beta.numBitsPerElement(); j++) {
         int pixelFlatIdx = i * beta.numBitsPerElement() + j;
         bool bitValue = img.data[pixelFlatIdx] >= 0;
-        if (bitValue)
-          threadBetaCounter++;
 
         if (pixelFlatIdx < img.size())
           beta.setBitAt(pixelFlatIdx, bitValue);
@@ -964,10 +961,6 @@ template <typename Tbitset> struct NeighbourChainer {
           beta.setBitAt(pixelFlatIdx, 0);
       }
     }
-    // if (threadBetaCounter > 0)
-    //   printf("Blk %d,%d thread %d,%d beta counter %d\n", blockIdx.x,
-    //   blockIdx.y,
-    //          threadIdx.x, threadIdx.y, threadBetaCounter);
   }
 
   /**
@@ -1121,22 +1114,28 @@ template <typename Tbitset> struct NeighbourChainer {
 
     while (gammaNonEmpty) {
       // Iterate over gamma for this seed row
-      for (int n = 0; n < gamma.numBits; ++n) {
-        // If not of interest, ignore
-        if (!gamma.getBitAt(n))
-          continue;
+      for (int nEle = 0; nEle < gamma.numDataElements; ++nEle) {
+        Tbitset gammaElement = gamma.elementAt(nEle);
+        if (gammaElement == 0)
+          continue; // just exit
 
-        // // Otherwise we compute the row for this neighbour
-        // blockComputeAlphaRow(img, windowDist, n, neighbourRow);
-        //
-        // // And then we bitwise OR it into the seed row
-        // blockMergeRows();
-        // no need to sync, each row is independent, and again,
-        // threads work on same index on all rows
+        for (int nBit = 0; nBit < gamma.numBitsPerElement(); ++nBit) {
+          int n = nEle * gamma.numBitsPerElement() + nBit;
+          // If not of interest, ignore
+          if (!gamma.getBitAt(n))
+            continue;
+          // // Otherwise we compute the row for this neighbour
+          // blockComputeAlphaRow(img, windowDist, n, neighbourRow);
+          //
+          // // And then we bitwise OR it into the seed row
+          // blockMergeRows();
+          // no need to sync, each row is independent, and again,
+          // threads work on same index on all rows
 
-        blockMergeAlphaRowViaWindow(img, windowDist, n);
+          blockMergeAlphaRowViaWindow(img, windowDist, n);
 
-        consumeAlphaRow(n);
+          consumeAlphaRow(n);
+        }
       }
       __syncthreads();
 
