@@ -21,6 +21,8 @@ namespace wccl {
 #define d1printf(...)
 #endif
 
+// #define NEIGHBOUR_GAMMAIDXLIST
+
 // NOTE: it is important that when using this as inputs to a kernel, a
 // reference/pointer is not used, since it is merely a container for a copy of
 // the pointers and sizes i.e. just a handy substitute for using 4 separate
@@ -870,13 +872,15 @@ __global__ void naive_global_unionfind_kernel(DeviceImage<Tmapping> mapping,
 }
 
 template <typename Tbitset> struct NeighbourChainer {
+#ifndef NEIGHBOUR_GAMMAIDXLIST
   // Old method with a bitset
-  // containers::Bitset<Tbitset, int> gamma; // neighbour of interest vector
-
+  containers::Bitset<Tbitset, int> gamma; // neighbour of interest vector
+#else
   // New method with indexed changes
   unsigned int *gammalistSize;
   unsigned int *gammalist; // neighbour of interest vector
   int gammalistCapacity = 0;
+#endif
 
   // single row in neighbour matrix alpha (the seed row being worked on)
   containers::Bitset<Tbitset, int> seedRow;
@@ -888,6 +892,39 @@ template <typename Tbitset> struct NeighbourChainer {
 
   __host__ __device__ NeighbourChainer() {};
 
+  // ========== OLD CODE USING BITSET GAMMA ===============
+
+#ifndef NEIGHBOUR_GAMMAIDXLIST
+  __host__ __device__ NeighbourChainer(Tbitset *_seedRow,
+                                       Tbitset *_neighbourRow, Tbitset *_beta,
+                                       Tbitset *_gamma, const int numPixels)
+      : seedRow(_seedRow, numPixels), neighbourRow(_neighbourRow, numPixels),
+        beta(_beta, numPixels), gamma(_gamma, numPixels) {}
+  /**
+   * @brief Constructs a NeighbourChainer object with some remaining buffer,
+   usually the shared memory workspace.
+   * This assumes that the remaining buffer has sufficient allocation for all
+   4 (identically sized) Bitsets, which should be determined from the
+   numElementsRequiredFor static method.
+   *
+   * @param _data Pointer to remaining buffer (e.g. in shared memory)
+   * @param numPixels Number of pixels (bits) in the image (bitset)
+   */
+  __host__ __device__ NeighbourChainer(Tbitset *_data, const int numPixels)
+      : seedRow(_data, numPixels),
+        neighbourRow(
+            &_data[containers::Bitset<Tbitset, int>::numElementsRequiredFor(
+                numPixels)],
+            numPixels),
+        beta(&_data[containers::Bitset<Tbitset, int>::numElementsRequiredFor(
+                        numPixels) *
+                    2],
+             numPixels),
+        gamma(&_data[containers::Bitset<Tbitset, int>::numElementsRequiredFor(
+                         numPixels) *
+                     3],
+              numPixels) {}
+#else
   __device__ NeighbourChainer(unsigned int *_data, const int numPixels)
       : gammalistSize(_data), gammalist(&_data[1]),
         gammalistCapacity(numPixels) {
@@ -904,40 +941,7 @@ template <typename Tbitset> struct NeighbourChainer {
 
     // NOTE: onus is on you to syncthreads() after this!
   }
-
-  // ========== OLD CODE USING BITSET GAMMA ===============
-
-  // __host__ __device__ NeighbourChainer(Tbitset *_seedRow,
-  //                                      Tbitset *_neighbourRow, Tbitset
-  //                                      *_beta, Tbitset *_gamma, const int
-  //                                      numPixels)
-  //     : seedRow(_seedRow, numPixels), neighbourRow(_neighbourRow, numPixels),
-  //       beta(_beta, numPixels), gamma(_gamma, numPixels) {}
-  // /**
-  //  * @brief Constructs a NeighbourChainer object with some remaining buffer,
-  //  usually the shared memory workspace.
-  //  * This assumes that the remaining buffer has sufficient allocation for all
-  //  4 (identically sized) Bitsets, which should be determined from the
-  //  numElementsRequiredFor static method.
-  //  *
-  //  * @param _data Pointer to remaining buffer (e.g. in shared memory)
-  //  * @param numPixels Number of pixels (bits) in the image (bitset)
-  //  */
-  // __host__ __device__ NeighbourChainer(Tbitset *_data, const int numPixels)
-  //     : seedRow(_data, numPixels),
-  //       neighbourRow(
-  //           &_data[containers::Bitset<Tbitset, int>::numElementsRequiredFor(
-  //               numPixels)],
-  //           numPixels),
-  //       beta(&_data[containers::Bitset<Tbitset, int>::numElementsRequiredFor(
-  //                       numPixels) *
-  //                   2],
-  //            numPixels),
-  //       gamma(&_data[containers::Bitset<Tbitset,
-  //       int>::numElementsRequiredFor(
-  //                        numPixels) *
-  //                    3],
-  //             numPixels) {}
+#endif
 
   /**
    * @brief Returns the required size for this struct. Used when allocating
@@ -947,15 +951,18 @@ template <typename Tbitset> struct NeighbourChainer {
    * @return Size in bytes
    */
   __host__ static size_t requiredSize(const int numPixels) {
+
+#ifndef NEIGHBOUR_GAMMAIDXLIST
+    // Old code using bitset for gamma
+    return containers::Bitset<Tbitset, int>::numElementsRequiredFor(numPixels) *
+           4 * sizeof(Tbitset);
+#else
     return containers::Bitset<Tbitset, int>::numElementsRequiredFor(numPixels) *
                3 * sizeof(Tbitset) +
            sizeof(unsigned int) *
                (numPixels + 1); // +1 for counter i.e. gammalistSize
 
-    // Old code using bitset for gamma
-    // return containers::Bitset<Tbitset,
-    // int>::numElementsRequiredFor(numPixels) *
-    //        4 * sizeof(Tbitset);
+#endif
   }
 
   __host__ __device__ bool validFor(const DeviceImage<uint8_t> &img) const {
@@ -1107,6 +1114,7 @@ template <typename Tbitset> struct NeighbourChainer {
     }
   }
 
+#ifndef NEIGHBOUR_GAMMAIDXLIST
   /**
    * @brief Computes the gamma vector (neighbours of interest). Explicitly
    * performs the syncthreads() internally, since this is required to determine
@@ -1114,29 +1122,30 @@ template <typename Tbitset> struct NeighbourChainer {
    *
    * @return True if gamma is non-empty.
    */
-  // __device__ bool blockComputeNeighboursOfInterest() {
-  //   int threadFoundNeighbours = 0;
-  //   for (int i = threadIdx.y * blockDim.x + threadIdx.x;
-  //        i < gamma.numDataElements; i += blockDim.y * blockDim.x) {
-  //     // Simply bitwise AND everything
-  //     gamma.elementAt(i) = seedRow.elementAt(i) & beta.elementAt(i);
-  //     if (gamma.elementAt(i) != 0) {
-  //       threadFoundNeighbours = 1;
-  //
-  //       // // DEBUG:List the gamma indices
-  //       // for (int j = 0; j < gamma.numBitsPerElement(); j++) {
-  //       //   if (gamma.getBitAt(i * gamma.numBitsPerElement() + j)) {
-  //       //     printf("Blk %d,%d has gamma %d\n", blockIdx.x, blockIdx.y,
-  //       //            i * gamma.numBitsPerElement() + j);
-  //       //   }
-  //       // }
-  //     }
-  //   }
-  //   int hasNeighbours = __syncthreads_or(threadFoundNeighbours);
-  //
-  //   return hasNeighbours != 0;
-  // }
+  __device__ bool blockComputeNeighboursOfInterest() {
+    int threadFoundNeighbours = 0;
+    for (int i = threadIdx.y * blockDim.x + threadIdx.x;
+         i < gamma.numDataElements; i += blockDim.y * blockDim.x) {
+      // Simply bitwise AND everything
+      gamma.elementAt(i) = seedRow.elementAt(i) & beta.elementAt(i);
+      if (gamma.elementAt(i) != 0) {
+        threadFoundNeighbours = 1;
 
+        // // DEBUG:List the gamma indices
+        // for (int j = 0; j < gamma.numBitsPerElement(); j++) {
+        //   if (gamma.getBitAt(i * gamma.numBitsPerElement() + j)) {
+        //     printf("Blk %d,%d has gamma %d\n", blockIdx.x, blockIdx.y,
+        //            i * gamma.numBitsPerElement() + j);
+        //   }
+        // }
+      }
+    }
+    int hasNeighbours = __syncthreads_or(threadFoundNeighbours);
+
+    return hasNeighbours != 0;
+  }
+
+#else
   __device__ bool blockComputeNeighboursOfInterest() {
     int threadFoundNeighbours = 0;
     for (int i = threadIdx.y * blockDim.x + threadIdx.x;
@@ -1156,6 +1165,7 @@ template <typename Tbitset> struct NeighbourChainer {
 
     return hasNeighbours != 0;
   }
+#endif
 
   __device__ void blockMergeRows() {
     for (int i = threadIdx.y * blockDim.x + threadIdx.x;
@@ -1176,40 +1186,44 @@ template <typename Tbitset> struct NeighbourChainer {
     consumeAlphaRow(earliestValidBetaIndex);
 
     // Compute gamma
+#ifdef NEIGHBOUR_GAMMAIDXLIST
     unsigned int initialGammaCounter = *gammalistSize;
     __syncthreads(); // all threads must read the initial size first
+#endif
     bool gammaNonEmpty = blockComputeNeighboursOfInterest();
     // this method is already internally synced
 
     while (gammaNonEmpty) {
+#ifndef NEIGHBOUR_GAMMAIDXLIST
       // Iterate over gamma for this seed row
-      // for (int nEle = 0; nEle < gamma.numDataElements; ++nEle) {
-      //   Tbitset gammaElement = gamma.elementAt(nEle);
-      //   if (gammaElement == 0)
-      //     continue; // just exit
-      //
-      //   for (int nBit = 0; nBit < gamma.numBitsPerElement(); ++nBit) {
-      //     int n = nEle * gamma.numBitsPerElement() + nBit;
-      //     // If not of interest, ignore
-      //     if (!gamma.getBitAt(n))
-      //       continue;
-      //     // // Otherwise we compute the row for this neighbour
-      //     // blockComputeAlphaRow(img, windowDist, n, neighbourRow);
-      //     //
-      //     // // And then we bitwise OR it into the seed row
-      //     // blockMergeRows();
-      //     // no need to sync, each row is independent, and again,
-      //     // threads work on same index on all rows
-      //
-      //     // Directly atomically OR the required values into the seed row
-      //     // NOTE: this seems to improvely only very slightly at low
-      //     // activity, but at high activity this can be up to an observed 3x
-      //     // speedup e.g. at 0.5 fraction
-      //     blockMergeAlphaRowViaWindow(img, windowDist, n);
-      //
-      //     consumeAlphaRow(n);
-      //   }
-      // }
+      for (int nEle = 0; nEle < gamma.numDataElements; ++nEle) {
+        Tbitset gammaElement = gamma.elementAt(nEle);
+        if (gammaElement == 0)
+          continue; // just exit
+
+        for (int nBit = 0; nBit < gamma.numBitsPerElement(); ++nBit) {
+          int n = nEle * gamma.numBitsPerElement() + nBit;
+          // If not of interest, ignore
+          if (!gamma.getBitAt(n))
+            continue;
+          // // Otherwise we compute the row for this neighbour
+          // blockComputeAlphaRow(img, windowDist, n, neighbourRow);
+          //
+          // // And then we bitwise OR it into the seed row
+          // blockMergeRows();
+          // no need to sync, each row is independent, and again,
+          // threads work on same index on all rows
+
+          // Directly atomically OR the required values into the seed row
+          // NOTE: this seems to improvely only very slightly at low
+          // activity, but at high activity this can be up to an observed 3x
+          // speedup e.g. at 0.5 fraction
+          blockMergeAlphaRowViaWindow(img, windowDist, n);
+
+          consumeAlphaRow(n);
+        }
+      }
+#else
 
       // Iterate over gamma for this seed row (using the gamma index list)
       for (int g = initialGammaCounter; g < *gammalistSize; ++g) {
@@ -1219,6 +1233,7 @@ template <typename Tbitset> struct NeighbourChainer {
       }
       // Everyone stores the new initial gamma counter
       initialGammaCounter = *gammalistSize;
+#endif
 
       __syncthreads();
       // NOTE: you cannot perform the above iteration with the window of the
