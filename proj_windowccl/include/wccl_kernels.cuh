@@ -925,7 +925,7 @@ template <typename Tbitset> struct NeighbourChainer {
     return img.size() == seedRow.numBits;
   }
 
-  __noinline__ __device__ void setEarliestValidBetaIndex() {
+  __device__ void setEarliestValidBetaIndex() {
     // TODO: not sure if really need to do parallel reduction just for this?
 
     // We start at the previous earliestValidBetaIndex + 1
@@ -984,7 +984,7 @@ template <typename Tbitset> struct NeighbourChainer {
    * @param targetIndex Target index inside the alpha matrix. For
    */
   template <typename Tmapping>
-  __noinline__ __device__ void
+  __device__ void
   blockComputeAlphaRow(const DeviceImage<Tmapping> &img, const int2 windowDist,
                        const int targetIndex,
                        containers::Bitset<Tbitset, int> &alphaRow) {
@@ -1066,6 +1066,7 @@ template <typename Tbitset> struct NeighbourChainer {
   __device__ void consumeAlphaRow(const int rowIndex) {
     if (threadIdx.x == 0 && threadIdx.y == 0) {
       beta.setBitAt(rowIndex, 0);
+      printf("Blk %d,%d consumed row %d\n", blockIdx.x, blockIdx.y, rowIndex);
     }
   }
 
@@ -1076,21 +1077,50 @@ template <typename Tbitset> struct NeighbourChainer {
    *
    * @return True if gamma is non-empty.
    */
-  __noinline__ __device__ bool blockComputeNeighboursOfInterest() {
+  __device__ bool blockComputeNeighboursOfInterest() {
     int threadFoundNeighbours = 0;
     for (int i = threadIdx.y * blockDim.x + threadIdx.x;
          i < gamma.numDataElements; i += blockDim.y * blockDim.x) {
       // Simply bitwise AND everything
       gamma.elementAt(i) = seedRow.elementAt(i) & beta.elementAt(i);
-      if (gamma.elementAt(i) != 0)
+      if (gamma.elementAt(i) != 0) {
         threadFoundNeighbours = 1;
+
+        // // DEBUG:List the gamma indices
+        // for (int j = 0; j < gamma.numBitsPerElement(); j++) {
+        //   if (gamma.getBitAt(i * gamma.numBitsPerElement() + j)) {
+        //     printf("Blk %d,%d has gamma %d\n", blockIdx.x, blockIdx.y,
+        //            i * gamma.numBitsPerElement() + j);
+        //   }
+        // }
+      }
     }
     int hasNeighbours = __syncthreads_or(threadFoundNeighbours);
 
     return hasNeighbours != 0;
   }
 
-  __noinline__ __device__ void blockMergeRows() {
+  // __device__ bool blockAppendNeighboursOfInterest() {
+  //   int threadFoundNeighbours = 0;
+  //   for (int i = threadIdx.y * blockDim.x + threadIdx.x;
+  //        i < seedRow.numDataElements; i += blockDim.y * blockDim.x) {
+  //     // Simply bitwise AND everything
+  //     auto andVal = seedRow.elementAt(i) & beta.elementAt(i);
+  //     if (andVal != 0) {
+  //       threadFoundNeighbours = 1;
+  //       // List the gamma indices
+  //       for (int j = 0; j < seedRow.numBitsPerElement(); j++) {
+  //         gammalist[atomicAggInc(&gammaCounter)] =
+  //             i * seedRow.numBitsPerElement() + j;
+  //       }
+  //     }
+  //   }
+  //   int hasNeighbours = __syncthreads_or(threadFoundNeighbours);
+  //
+  //   return hasNeighbours != 0;
+  // }
+
+  __device__ void blockMergeRows() {
     for (int i = threadIdx.y * blockDim.x + threadIdx.x;
          i < gamma.numDataElements; i += blockDim.y * blockDim.x) {
       // Simply bitwise OR everything
@@ -1101,8 +1131,8 @@ template <typename Tbitset> struct NeighbourChainer {
   }
 
   template <typename Tmapping>
-  __noinline__ __device__ void
-  blockChainNeighbours(const int2 windowDist, DeviceImage<Tmapping> &img) {
+  __device__ void blockChainNeighbours(const int2 windowDist,
+                                       DeviceImage<Tmapping> &img) {
     static_assert(std::is_signed_v<Tmapping>, "Tmapping must be signed");
     // Compute the current seed row
     blockComputeAlphaRow(img, windowDist, earliestValidBetaIndex, seedRow);
@@ -1132,12 +1162,19 @@ template <typename Tbitset> struct NeighbourChainer {
           // no need to sync, each row is independent, and again,
           // threads work on same index on all rows
 
+          // Directly atomically OR the required values into the seed row
+          // NOTE: this seems to improvely only very slightly at low
+          // activity, but at high activity this can be up to an observed 3x
+          // speedup e.g. at 0.5 fraction
           blockMergeAlphaRowViaWindow(img, windowDist, n);
 
           consumeAlphaRow(n);
         }
       }
       __syncthreads();
+      // NOTE: you cannot perform the above iteration with the window of the
+      // seedrow, as once the seedrow expands/propagates, the valid gamma will
+      // no longer be within the seedrow's window
 
       // Recompute gamma again
       gammaNonEmpty = blockComputeNeighboursOfInterest();

@@ -148,7 +148,7 @@ int main(int argc, char* argv[]) {
   typedef int MappingType;
   typedef uint32_t BitsetType;
 
-  if (input.size() != rows * cols) {
+  if (input.size() != (size_t)rows * cols) {
     throw std::runtime_error("input size is not equal to rows * cols");
   }
   thrust::host_vector<uint8_t> h_input(rows * cols);
@@ -198,6 +198,7 @@ int main(int argc, char* argv[]) {
   dim3 bpg = wccl::local_connect_naive_unionfind<MappingType, false>(d_image, d_mapping, tileDims, windowDist, tpb);
   #endif
 #endif
+  printf("Blocks per grid = (%d, %d)\n", bpg.x, bpg.y);
 
   // Pull data and check
   thrust::host_vector<MappingType> h_mapping_vec = d_mapping_vec;
