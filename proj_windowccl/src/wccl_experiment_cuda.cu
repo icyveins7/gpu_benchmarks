@@ -165,19 +165,8 @@ int main(int argc, char* argv[]) {
   // ========== Kernel 1. Local tile merge (using non atomics)
 #ifdef USE_NEIGHBOURCHAINER
   printf("Using neighbour chainer\n");
-  dim3 bpg(d_image.width / tileDims.x + (d_image.width % tileDims.x ? 1 : 0),
-           d_image.height / tileDims.y + (d_image.height % tileDims.y ? 1 : 0));
-  size_t shmem = tileDims.x * tileDims.y * sizeof(MappingType);
-  size_t numBytesForBitset = containers::Bitset<BitsetType, int>::numElementsRequiredFor(
-    tileDims.x * tileDims.y) * sizeof(BitsetType);
-  printf("Num bytes for bitsets = %zu\n", numBytesForBitset);
-  shmem += numBytesForBitset * 4;
-  printf("Launching (%d, %d) blks (%d, %d) threads (neighbour chain) kernel "
-         "with shmem = %zu\n",
-         bpg.x, bpg.y, tpb.x, tpb.y, shmem);
-
-  wccl::localChainNeighboursKernel<BitsetType, MappingType><<<bpg, tpb, shmem>>>(d_image, windowDist,
-                                                        tileDims, d_mapping);
+  dim3 bpg = wccl::local_chain_neighbours<BitsetType, MappingType>(
+    d_image, d_mapping, tileDims, windowDist, tpb);
 
 #elif USE_ATOMICFREE_LOCAL
   printf("Using atomic-free local merge\n");
