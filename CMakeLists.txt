@@ -18,8 +18,33 @@ if("${CMAKE_BUILD_TYPE}" STREQUAL "")
   message("CMAKE_BUILD_TYPE set to ${CMAKE_BUILD_TYPE}")
 endif()
 
-# Default to native architecture alone
-set(CMAKE_CUDA_ARCHITECTURES native)
+# Check if CUDA_VISIBLE_DEVICES is defined
+if (NOT DEFINED ENV{CUDA_VISIBLE_DEVICES})
+  message(WARNING
+  "CUDA_VISIBLE_DEVICES not set, defaulting to 0. "
+  "If you'd like to build for another GPU (or multiple GPU)'s compute capability, set this explicitly and rerun CMake.")
+  set(cmake_cuda_devices 0)
+
+else()
+  set(cmake_cuda_devices $ENV{CUDA_VISIBLE_DEVICES})
+endif()
+message(STATUS "CUDA_VISIBLE_DEVICES set to ${cmake_cuda_devices}")
+
+# Run nvidia-smi to try to get the native architecture
+execute_process(
+  COMMAND nvidia-smi --query-gpu=compute_cap --format=csv,noheader -i ${cmake_cuda_devices}
+  OUTPUT_VARIABLE cmake_gpu_arch
+  OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+string(REGEX REPLACE "\\." "" cmake_gpu_arch ${cmake_gpu_arch})
+string(REPLACE "\n" ";" cmake_gpu_arch ${cmake_gpu_arch})
+list(JOIN cmake_gpu_arch "," cmake_gpu_arch)
+message(STATUS "CMAKE_CUDA_ARCHITECTURES: ${cmake_gpu_arch}")
+
+
+# Default to native architecture alone for the selected GPUs
+# set(CMAKE_CUDA_ARCHITECTURES native)
+set(CMAKE_CUDA_ARCHITECTURES ${cmake_gpu_arch})
 message(STATUS "Default to native CMAKE_CUDA_ARCHITECTURES: ${CMAKE_CUDA_ARCHITECTURES}")
 
 # if(CMAKE_CUDA_ARCHITECTURES LESS 60)
@@ -64,6 +89,14 @@ else()
   message(STATUS "GoogleTest not found, disabling tests")
 endif()
 
+# -------------------- Add some automatic detection of virtualenv's pybind11
+execute_process(
+  COMMAND python -c "import site; import os; print(os.path.join(site.getsitepackages()[0], 'pybind11', 'share', 'cmake', 'pybind11'))"
+  OUTPUT_VARIABLE pybind11_DIR
+  OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+message(STATUS "Automatically detected pybind11_DIR: ${pybind11_DIR}")
+message(STATUS "If the above directory is incorrect, please specify it yourself.")
 
 # -------------------- Include individual project directories
 add_subdirectory(proj_grid_polynomials)
