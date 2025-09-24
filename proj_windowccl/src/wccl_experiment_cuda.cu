@@ -204,47 +204,47 @@ int main(int argc, char* argv[]) {
                        .c_str());
   }
 
-  // // Kernel 2. Cross-tile merge
-  // thrust::pinned_host_vector<unsigned int> h_counter(1);
-  // h_counter[0] = 0;
-  // thrust::device_vector<unsigned int> d_counter(1);
-  // thrust::copy(h_counter.begin(), h_counter.end(), d_counter.begin());
-  // unsigned int prevCounter;
-  // size_t numUnionFindIters = 0;
-  //
-  // do {
-  //   prevCounter = h_counter[0];
-  //   wccl::naive_global_unionfind_kernel<MappingType>
-  //       <<<bpg, tpb>>>(d_mapping, tileDims, windowDist, d_counter.data().get());
-  //   thrust::copy(d_counter.begin(), d_counter.end(), h_counter.begin());
-  //   // printf("Update count: %u\n", h_counter[0]);
-  //   numUnionFindIters++;
-  //
-  //   // We can print to see it evolve
-  //   if (rows <= 64 && cols <= 64) {
-  //     h_mapping_vec = d_mapping_vec;
-  //     printf("%s\n ========================== \n",
-  //            wccl::idxstring<MappingType>(
-  //                thrust::raw_pointer_cast(h_mapping_vec.data()), rows, cols,
-  //                "%2d ", "%2c ")
-  //                .c_str());
-  //   }
-  // } while (prevCounter != h_counter[0]);
-  //
-  // printf("numUnionFindIters = %zu\n", numUnionFindIters);
-  // h_mapping_vec = d_mapping_vec;
-  //
-  // if (rows <= 64 && cols <= 64) {
-  //   printf("%s\n ========================== \n",
-  //          wccl::idxstring<MappingType>(
-  //              thrust::raw_pointer_cast(h_mapping_vec.data()), rows, cols,
-  //              "%2d ", "%2c ")
-  //              .c_str());
-  //   printf("%s\n", wccl::prettystring<MappingType>(
-  //                      thrust::raw_pointer_cast(h_mapping_vec.data()), rows,
-  //                      cols, tileDims.x, tileDims.y)
-  //                      .c_str());
-  // }
+  // Kernel 2. Cross-tile merge
+  thrust::pinned_host_vector<unsigned int> h_counter(1);
+  h_counter[0] = 0;
+  thrust::device_vector<unsigned int> d_counter(1);
+  thrust::copy(h_counter.begin(), h_counter.end(), d_counter.begin());
+  unsigned int prevCounter;
+  size_t numUnionFindIters = 0;
+
+  do {
+    prevCounter = h_counter[0];
+    wccl::naive_global_unionfind_kernel<MappingType>
+        <<<bpg, tpb>>>(d_mapping, tileDims, windowDist, d_counter.data().get());
+    thrust::copy(d_counter.begin(), d_counter.end(), h_counter.begin());
+    // printf("Update count: %u\n", h_counter[0]);
+    numUnionFindIters++;
+
+    // We can print to see it evolve
+    if (rows <= 64 && cols <= 64) {
+      h_mapping_vec = d_mapping_vec;
+      printf("%s\n ========================== \n",
+             wccl::idxstring<MappingType>(
+                 thrust::raw_pointer_cast(h_mapping_vec.data()), rows, cols,
+                 "%2d ", "%2c ")
+                 .c_str());
+    }
+  } while (prevCounter != h_counter[0]);
+
+  printf("numUnionFindIters = %zu\n", numUnionFindIters);
+  h_mapping_vec = d_mapping_vec;
+
+  if (rows <= 64 && cols <= 64) {
+    printf("%s\n ========================== \n",
+           wccl::idxstring<MappingType>(
+               thrust::raw_pointer_cast(h_mapping_vec.data()), rows, cols,
+               "%2d ", "%2c ")
+               .c_str());
+    printf("%s\n", wccl::prettystring<MappingType>(
+                       thrust::raw_pointer_cast(h_mapping_vec.data()), rows,
+                       cols, tileDims.x, tileDims.y)
+                       .c_str());
+  }
   return 0;
 }
 // clang-format on
