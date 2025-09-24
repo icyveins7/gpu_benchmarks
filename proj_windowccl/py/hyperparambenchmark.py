@@ -1,5 +1,6 @@
 import nsyspy as nsys
 from pprint import pprint
+import pickle
 
 # Fix blockwidth to 32, so not shown here
 targets = [
@@ -50,10 +51,13 @@ for configuration in configurations:
             makeTarget(configuration),
             verbose=True
         ))
-        kernels = db.getKernels("local_connect")
+        # kernels = db.getKernels("local_connect")
         configuration['dbpath'] = db.dbpath
-        configuration['duration_us'] = kernels[0].duration() / 1e3
+        # configuration['duration_us'] = kernels[0].duration() / 1e3
         pprint(configuration)
     except Exception as e:
         print(e)
 
+
+with open('configurations.pkl', 'wb') as f:
+    pickle.dump(configurations, f)
