@@ -2,7 +2,7 @@ import nsyspy as nsys
 from pprint import pprint
 import pickle
 
-# Fix blockwidth to 32, so not shown here
+# All hyperparameters
 targets = [
     './wccl_experiment_cuda',
     './wccl_experiment_cuda_useactivesitesinwindow',
@@ -10,20 +10,17 @@ targets = [
 ]
 # windows = [1, 3, 8, 16]
 windows = [1, 16]
+# Fix blockwidth to 32, so not shown here
 blockheights = [1, 2, 4, 8, 16, 32]
-mintilewidth = 32
-maxtilewidth = 64
-mintileheight = 2
-maxtileheight = 64
+tilewidths = [32, 64]
+tileheights = [2, 4, 8, 16, 32, 64]
 
 configurations = list()
 for target in targets:
     for window in windows:
         for blockheight in blockheights:
-            tilewidth = mintilewidth
-            while tilewidth <= maxtilewidth:
-                tileheight = mintileheight
-                while tileheight <= maxtileheight:
+            for tilewidth in tilewidths:
+                for tileheight in tileheights:
                     configurations.append({
                         'target': target,
                         'tilewidth': tilewidth,
@@ -31,10 +28,9 @@ for target in targets:
                         'blockwidth': 32,
                         'blockheight': blockheight,
                         'windowhdist': window,
-                        'windowvdist': window
+                        'windowvdist': window,
+                        'fraction': 0.01, # manually changed
                     })
-                    tileheight *= 2
-                tilewidth *= 2
 
 def makeTarget(config: dict):
     args = [config['target']]
