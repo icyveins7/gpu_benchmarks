@@ -29,7 +29,7 @@ for target in targets:
                         'blockheight': blockheight,
                         'windowhdist': window,
                         'windowvdist': window,
-                        'fraction': 0.01, # manually changed
+                        'fraction': 0.10, # manually changed
                     })
 
 def makeTarget(config: dict):
