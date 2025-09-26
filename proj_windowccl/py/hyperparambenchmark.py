@@ -8,8 +8,9 @@ targets = [
     './wccl_experiment_cuda_useactivesitesinwindow',
     './wccl_experiment_cuda_neighbourchainlocal'
 ]
-# windows = [1, 3, 8, 16]
-windows = [1, 16]
+windows = [1, 3, 8, 16]
+# windows = [1, 16]
+fractions = [0.01, 0.1, 0.5, 0.9]
 # Fix blockwidth to 32, so not shown here
 blockheights = [1, 2, 4, 8, 16, 32]
 tilewidths = [32, 64]
@@ -21,16 +22,17 @@ for target in targets:
         for blockheight in blockheights:
             for tilewidth in tilewidths:
                 for tileheight in tileheights:
-                    configurations.append({
-                        'target': target,
-                        'tilewidth': tilewidth,
-                        'tileheight': tileheight,
-                        'blockwidth': 32,
-                        'blockheight': blockheight,
-                        'windowhdist': window,
-                        'windowvdist': window,
-                        'fraction': 0.10, # manually changed
-                    })
+                    for fraction in fractions:
+                        configurations.append({
+                            'target': target,
+                            'tilewidth': tilewidth,
+                            'tileheight': tileheight,
+                            'blockwidth': 32,
+                            'blockheight': blockheight,
+                            'windowhdist': window,
+                            'windowvdist': window,
+                            'fraction': fraction
+                        })
 
 def makeTarget(config: dict):
     args = [config['target']]
