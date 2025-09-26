@@ -1099,12 +1099,11 @@ template <typename Tbitset> struct NeighbourChainer {
           wrow >= 0 && wrow < img.height && wcol >= 0 && wcol < img.width;
       if (windowPixelInBounds) {
         val = img.get(wrow, wcol);
-      }
-
-      // Atomically OR into the seed row
-      int bitIdx = wrow * img.width + wcol;
-      if (windowPixelInBounds && !seedRow.getBitAt(bitIdx))
+        int bitIdx = wrow * img.width + wcol;
+        // Atomically OR into the seed row (don't bother checking,
+        // small 3% improvement to not read and just do it)
         seedRow.atomicOrBitAt(bitIdx, val >= 0);
+      }
     }
   }
 
@@ -1171,8 +1170,6 @@ template <typename Tbitset> struct NeighbourChainer {
     for (int i = threadIdx.y * blockDim.x + threadIdx.x;
          i < seedRow.numDataElements; i += blockDim.y * blockDim.x) {
       // Simply bitwise OR everything
-      // if (!seedRow.isValidElementIndex(i))
-      //   printf("invalid element index %d\n", i);
       seedRow.elementAt(i) = seedRow.elementAt(i) | neighbourRow.elementAt(i);
     }
   }
@@ -1204,15 +1201,13 @@ template <typename Tbitset> struct NeighbourChainer {
         for (int nBit = 0; nBit < gamma.numBitsPerElement(); ++nBit) {
           int n = nEle * gamma.numBitsPerElement() + nBit;
           // If not of interest, ignore
-          if (!gamma.getBitAt(n))
+          // Examine the element you already retrieved (rather than reading the
+          // bit again from array) This appears to be another 6-7% speedup at
+          // fraction 0.5, window 16x16
+          // TODO: refactor bitset to have an element struct and an array struct
+          // separately
+          if (!(gammaElement & (1 << nBit)))
             continue;
-          // // Otherwise we compute the row for this neighbour
-          // blockComputeAlphaRow(img, windowDist, n, neighbourRow);
-          //
-          // // And then we bitwise OR it into the seed row
-          // blockMergeRows();
-          // no need to sync, each row is independent, and again,
-          // threads work on same index on all rows
 
           // Directly atomically OR the required values into the seed row
           // NOTE: this seems to improvely only very slightly at low
@@ -1255,7 +1250,8 @@ template <typename Tbitset> struct NeighbourChainer {
           img.data[idx] = earliestValidBetaIndex;
       }
     }
-    __syncthreads();
+    // NOTE: you do not need to syncthreads here, since earliestValidBetaIndex
+    // is a thread-local register variable
 
     // Update the earliest index to find next one
     setEarliestValidBetaIndex();
@@ -1267,10 +1263,10 @@ template <typename Tbitset> struct NeighbourChainer {
 }; // end struct NeighbourChainer
 
 template <typename Tbitset, typename Tmapping>
-__global__ void localChainNeighboursKernel(const DeviceImage<uint8_t> input,
-                                           const int2 windowDist,
-                                           const int2 tileDims,
-                                           DeviceImage<Tmapping> output) {
+__global__ void local_chain_neighbours_kernel(const DeviceImage<uint8_t> input,
+                                              const int2 windowDist,
+                                              const int2 tileDims,
+                                              DeviceImage<Tmapping> output) {
   static_assert(std::is_signed_v<Tmapping>, "mapping type T must be signed");
 
   // Define the tile for this block
@@ -1351,7 +1347,7 @@ dim3 local_chain_neighbours(const DeviceImage<uint8_t> input,
          "with shmem = %zu\n",
          bpg.x, bpg.y, tpb.x, tpb.y, shmem);
 
-  localChainNeighboursKernel<Tbitset, Tmapping>
+  local_chain_neighbours_kernel<Tbitset, Tmapping>
       <<<bpg, tpb, shmem>>>(input, windowDist, tileDims, mapping);
 
   return bpg;
