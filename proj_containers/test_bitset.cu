@@ -4,7 +4,7 @@
 
 TEST(BitsetArray, HostsideConstructors) {
   int numBits = 48;
-  thrust::host_vector<unsigned int> h_data(
+  thrust::host_vector<containers::Bitset<unsigned int, int>> h_data(
       containers::BitsetArray<unsigned int, int>::numElementsRequiredFor(
           numBits));
 
@@ -24,7 +24,7 @@ TEST(BitsetArray, HostsideConstructors) {
   EXPECT_FALSE(bitsetinvalid.hasValidNumBits());
 
   // Test similarly for device vector
-  thrust::device_vector<unsigned int> d_data(
+  thrust::device_vector<containers::Bitset<unsigned int, int>> d_data(
       containers::BitsetArray<unsigned int, int>::numElementsRequiredFor(
           numBits));
 
@@ -45,7 +45,7 @@ TEST(BitsetArray, HostsideConstructors) {
 
 TEST(Bitset, HostsideMethods) {
   int numBits = 48;
-  thrust::host_vector<unsigned int> h_data(
+  thrust::host_vector<containers::Bitset<unsigned int, int>> h_data(
       containers::BitsetArray<unsigned int, int>::numElementsRequiredFor(
           numBits));
 

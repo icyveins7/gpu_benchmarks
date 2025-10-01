@@ -1051,9 +1051,11 @@ template <typename Tbitset> struct NeighbourChainer {
   // ========== OLD CODE USING BITSET GAMMA ===============
 
 #ifndef NEIGHBOUR_GAMMAIDXLIST
-  __host__ __device__ NeighbourChainer(Tbitset *_seedRow,
-                                       Tbitset *_neighbourRow, Tbitset *_beta,
-                                       Tbitset *_gamma, const int numPixels)
+  __host__ __device__
+  NeighbourChainer(containers::Bitset<Tbitset> *_seedRow,
+                   containers::Bitset<Tbitset> *_neighbourRow,
+                   containers::Bitset<Tbitset> *_beta,
+                   containers::Bitset<Tbitset> *_gamma, const int numPixels)
       : seedRow(_seedRow, numPixels), neighbourRow(_neighbourRow, numPixels),
         beta(_beta, numPixels), gamma(_gamma, numPixels) {}
   /**
@@ -1066,7 +1068,8 @@ template <typename Tbitset> struct NeighbourChainer {
    * @param _data Pointer to remaining buffer (e.g. in shared memory)
    * @param numPixels Number of pixels (bits) in the image (bitset)
    */
-  __host__ __device__ NeighbourChainer(Tbitset *_data, const int numPixels)
+  __host__ __device__ NeighbourChainer(containers::Bitset<Tbitset> *_data,
+                                       const int numPixels)
       : seedRow(_data, numPixels),
         neighbourRow(&_data[containers::BitsetArray<
                          Tbitset, int>::numElementsRequiredFor(numPixels)],
@@ -1282,8 +1285,9 @@ template <typename Tbitset> struct NeighbourChainer {
     for (int i = threadIdx.y * blockDim.x + threadIdx.x;
          i < gamma.numDataElements; i += blockDim.y * blockDim.x) {
       // Simply bitwise AND everything
-      gamma.elementAt(i) = seedRow.elementAt(i) & beta.elementAt(i);
-      if (gamma.elementAt(i) != 0) {
+      gamma.elementAt(i).value =
+          seedRow.elementAt(i).value & beta.elementAt(i).value;
+      if (gamma.elementAt(i).value != 0) {
         threadFoundNeighbours = 1;
 
         // // DEBUG:List the gamma indices
@@ -1350,7 +1354,7 @@ template <typename Tbitset> struct NeighbourChainer {
 #ifndef NEIGHBOUR_GAMMAIDXLIST
       // Iterate over gamma for this seed row
       for (int nEle = 0; nEle < gamma.numDataElements; ++nEle) {
-        Tbitset gammaElement = gamma.elementAt(nEle);
+        Tbitset gammaElement = gamma.elementAt(nEle).value;
         if (gammaElement == 0)
           continue; // just exit
 
@@ -1443,8 +1447,9 @@ __global__ void local_chain_neighbours_kernel(const DeviceImage<uint8_t> input,
       smem.getPointer(), blockTileDims.y,
       blockTileDims.x); // blockTileDims.x * blockTileDims.y * sizeof(Tmapping)
   // Workspaces for the neighbour chainer struct
-  NeighbourChainer<Tbitset> s_chainer((Tbitset *)&s_tile.data[s_tile.size()],
-                                      blockTileDims.x * blockTileDims.y);
+  NeighbourChainer<Tbitset> s_chainer(
+      (containers::Bitset<Tbitset> *)&s_tile.data[s_tile.size()],
+      blockTileDims.x * blockTileDims.y);
 
   // Read the tile and populate (same as unionfind)
   initializeShmemTile(input, s_tile, blockTileDims, tileXstart, tileYstart);
@@ -1485,6 +1490,169 @@ __global__ void local_chain_neighbours_kernel(const DeviceImage<uint8_t> input,
       output.set(ty + tileYstart, tx + tileXstart, element);
     }
   }
+}
+
+template <typename Tbitset> struct NeighbourChainerV2 {
+  // neighbour of interest vector
+  containers::BitsetArray<Tbitset, int> gamma;
+  // single row in neighbour matrix alpha (the seed row being worked on)
+  containers::BitsetArray<Tbitset, int> seedRow;
+  // single row in neighbour matrix alpha (the row of the neighbour)
+  containers::BitsetArray<Tbitset, int> neighbourRow;
+  // // availability vector
+  // containers::BitsetArray<Tbitset, int> beta;
+  // NOTE: we may actually not need beta, since we have already made a tile
+  // bitset which acts just like beta thread-local tracker
+  int betaIndex = 0;
+
+  __host__ __device__ NeighbourChainerV2() {};
+  __host__ __device__ NeighbourChainerV2(containers::Bitset<Tbitset, int> *data,
+                                         const int numPixels)
+      : gamma(containers::BitsetArray<Tbitset, int>(data, numPixels)),
+        seedRow(
+            containers::BitsetArray<Tbitset, int>(&data[numPixels], numPixels)),
+        neighbourRow(containers::BitsetArray<Tbitset, int>(&data[2 * numPixels],
+                                                           numPixels)) //,
+  // beta(containers::BitsetArray<Tbitset, int>(&data[3 * numPixels],
+  //                                            numPixels))
+  {}
+
+  __host__ __device__ void
+  calculateSeedRow(containers::BitsetArray<Tbitset, int> &s_beta,
+                   const int2 &windowDist, const int2 &tileDims) {
+    // Define boundaries
+    int betaRow = betaIndex / s_beta.numPixels;
+    int betaCol = betaIndex % s_beta.numPixels;
+    // Min bound (top left)
+    int2 minBound = make_int2(max(betaCol - windowDist.x, 0),
+                              max(betaRow - windowDist.y, 0));
+    // (Exclusive) Max bound (bottom right)
+    int2 maxBound = make_int2(min(betaCol + windowDist.x, s_beta.numPixels),
+                              min(betaRow + windowDist.y, s_beta.numPixels));
+
+    // Number of elements per row
+    int elementsPerRow = tileDims.x / s_beta.numBitsPerElement();
+
+    for (int i = threadIdx.y * blockDim.x + threadIdx.x;
+         i < s_beta.numDataElements; i += blockDim.x * blockDim.y) {
+      int elemRow = i / elementsPerRow;
+      int elemCol = i % elementsPerRow;
+      int leftBit = elemCol * s_beta.numBitsPerElement();
+      int rightBit = leftBit + s_beta.numBitsPerElement();
+
+      // Instantiate all 0s (most likely outcome, especially for small windows)
+      containers::Bitset<Tbitset, int> bs(0);
+
+      if (elemRow >= minBound.y && elemRow < maxBound.y &&
+          (leftBit < maxBound.x && rightBit >= minBound.x)) {
+        int leftBound = max(minBound.x, leftBit);
+        int rightBound = min(maxBound.x, rightBit);
+        // TODO: create mask for this element
+
+        // TODO: then read element from s_tilebits with the mask
+      }
+    }
+  }
+};
+
+template <typename Tbitset, typename Tmapping>
+__global__ void
+local_chain_neighbours_v2_kernel(const DeviceImage<uint8_t> input,
+                                 const int2 windowDist, const int2 tileDims,
+                                 DeviceImage<Tmapping> output) {
+
+  // In v2, we use a bit more shared memory to store the tile as a binary
+  // bitset map directly. We use the indexed mapping image form just as a
+  // staging area before global writing to maintain coalescing, but otherwise
+  // during the computation it is untouched.
+  static_assert(std::is_signed_v<Tmapping>, "mapping type T must be signed");
+
+  // Define the tile for this block
+  const int tileXstart = blockIdx.x * tileDims.x;
+  const int tileYstart = blockIdx.y * tileDims.y;
+  // Tile may not be fully occupied at the ends
+  const int2 blockTileDims{tileXstart + tileDims.x < (int)input.width
+                               ? tileDims.x
+                               : (int)input.width - tileXstart,
+                           tileYstart + tileDims.y < (int)input.height
+                               ? tileDims.y
+                               : (int)input.height - tileYstart};
+
+  // Read entire tile and set shared memory values
+  SharedMemory<uint8_t> smem;
+  // Workspace for the tile
+  DeviceImage<Tmapping> s_tile(
+      (Tmapping *)smem.getPointer(), blockTileDims.y,
+      blockTileDims.x); // blockTileDims.x * blockTileDims.y * sizeof(Tmapping)
+
+  // NOTE: it is important that the tile dimensions are an integer multiple of
+  // the Tbitset size, so that subsequent lookups can access each row via an
+  // integer number of elements.
+  // E.g. for 64x64 tile, using Tbitset = uint32, we should have exactly 2
+  // elements per row, and 64 rows.
+  // E.g. for 128x128 tile, using Tbitset = uint32, we should have exactly 4
+  // elements per row, and 128 rows.
+  // Deviating from this requirement will result in many more checks required
+  // to determine the correct element index to access from the array.
+  containers::BitsetArray<Tbitset> s_tilebits(
+      (containers::Bitset<Tbitset> &)&s_tile
+          .data[tileDims.x *
+                tileDims.y], // even though we might have used less space (due
+                             // to blockTileDims being smaller at the edge),
+                             // we just move all the way out to our max
+                             // allocation
+      tileDims.x * tileDims.y);
+
+  // TODO: define workspaces for neighbour chainer struct v2
+  // // Workspaces for the neighbour chainer struct
+  // NeighbourChainer<Tbitset> s_chainer(
+  //     (containers::Bitset<Tbitset> *)&s_tile.data[s_tile.size()],
+  //     blockTileDims.x * blockTileDims.y);
+
+  // We reuse s_tile as a temporary workspace before we fill it, so that our
+  // warps can globally coalesce reads
+  uint8_t *temp = smem.getPointer();
+  for (int i = threadIdx.y; i < tileDims.y; i += blockDim.y) {
+    for (int j = threadIdx.x; j < tileDims.x; j += blockDim.x) {
+      temp[i * tileDims.x + j] = input.get(tileYstart + i, tileXstart + j);
+    }
+  }
+  __syncthreads();
+  // Now use this temporary staging area to fill our bitset, one thread per
+  // element (not per bit)
+  for (int elemIdx = threadIdx.y * blockDim.x + threadIdx.x;
+       elemIdx < s_tilebits.numDataElements;
+       elemIdx += blockDim.x * blockDim.y) {
+    // Instantiate with all 0s
+    containers::Bitset<Tbitset> bs(0);
+    // Iterate over internal bit offset
+    // TODO: there's actually a fancy way to avoid shared bank conflicts here,
+    // but let's leave it to later; tldr, it should just start from
+    // sizeof(Tbitset)/sizeof(uint8_t) on each thread e.g. for Tbitset =
+    // uint32_t, thread 0 reads element 0, but thread 1 reads from element 4
+    // (then loops back)
+    for (int offset = 0; offset < s_tilebits.numBitsPerElement(); offset++) {
+      // Calculate the array-wide bit index (where we will read from)
+      int bIdx = elemIdx * s_tilebits.numBitsPerElement() + offset;
+      bs.setBitAt(offset, temp[bIdx]);
+    }
+    // Write the full element to our shared memory
+    s_tilebits.elementAt(elemIdx) = bs;
+  }
+  __syncthreads();
+
+  // Initialize tile to all -1s
+  for (int i = threadIdx.y; i < blockTileDims.y; i += blockDim.y) {
+    for (int j = threadIdx.x; j < blockTileDims.x; j += blockDim.x) {
+      s_tile.set(i, j, -1);
+    }
+  }
+  __syncthreads();
+
+  // Using the raw bitset allows us to perform our window checks by simple
+  // indexing alone, rather than explicit comparisons. Hence the idea now is
+  // to perform alpha/beta/gamma calculations by indexing rows and columns of
+  // our s_tilebits instead
 }
 
 template <typename Tbitset, typename Tmapping>
