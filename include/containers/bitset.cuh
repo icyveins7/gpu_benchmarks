@@ -10,26 +10,26 @@ namespace containers {
 /**
  * @brief A container that represents a view over some data containing raw bits.
  */
-template <typename T = unsigned int, typename U = int> struct Bitset {
+template <typename T = unsigned int, typename U = int> struct BitsetArray {
   static_assert(std::is_unsigned<T>::value, "T must be unsigned");
 
   T *data = nullptr;
   U numDataElements = 0;
   U numBits = 0;
 
-  __host__ __device__ Bitset() {};
-  __host__ __device__ Bitset(T *_data, U _numDataElements, U _numBits)
+  __host__ __device__ BitsetArray() {};
+  __host__ __device__ BitsetArray(T *_data, U _numDataElements, U _numBits)
       : data(_data), numDataElements(_numDataElements), numBits(_numBits) {
     // There is no easy way to check this inside the kernel since we cannot
     // throw, so it is expected that the numBits can fit inside numDataElements
   }
-  __host__ __device__ Bitset(T *_data, U _numBits)
+  __host__ __device__ BitsetArray(T *_data, U _numBits)
       : data(_data), numBits(_numBits) {
     // If only bits provided, assume the data elements were allocated using
     // numElementsRequiredFor().
     numDataElements = this->numElementsRequiredFor(_numBits);
   }
-  __host__ Bitset(thrust::device_vector<T> &_data, U _numBits)
+  __host__ BitsetArray(thrust::device_vector<T> &_data, U _numBits)
       : data(_data.data().get()), numDataElements(_data.size()),
         numBits(_numBits) {
     if (numBits > numDataElements * numBitsPerElement()) {
@@ -37,7 +37,7 @@ template <typename T = unsigned int, typename U = int> struct Bitset {
           "numBits > numDataElements * numBitsPerElement()");
     }
   }
-  __host__ Bitset(thrust::host_vector<T> &_data, U _numBits)
+  __host__ BitsetArray(thrust::host_vector<T> &_data, U _numBits)
       : data(_data.data()), numDataElements(_data.size()), numBits(_numBits) {
     if (numBits > numDataElements * numBitsPerElement()) {
       throw std::invalid_argument(

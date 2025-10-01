@@ -1030,7 +1030,7 @@ dim3 naive_global_readout(
 template <typename Tbitset> struct NeighbourChainer {
 #ifndef NEIGHBOUR_GAMMAIDXLIST
   // Old method with a bitset
-  containers::Bitset<Tbitset, int> gamma; // neighbour of interest vector
+  containers::BitsetArray<Tbitset, int> gamma; // neighbour of interest vector
 #else
   // New method with indexed changes
   unsigned int *gammalistSize;
@@ -1039,10 +1039,10 @@ template <typename Tbitset> struct NeighbourChainer {
 #endif
 
   // single row in neighbour matrix alpha (the seed row being worked on)
-  containers::Bitset<Tbitset, int> seedRow;
+  containers::BitsetArray<Tbitset, int> seedRow;
   // single row in neighbour matrix alpha (the row of the neighbour)
-  containers::Bitset<Tbitset, int> neighbourRow;
-  containers::Bitset<Tbitset, int> beta; // availability vector
+  containers::BitsetArray<Tbitset, int> neighbourRow;
+  containers::BitsetArray<Tbitset, int> beta; // availability vector
 
   int earliestValidBetaIndex = 0;
 
@@ -1068,16 +1068,15 @@ template <typename Tbitset> struct NeighbourChainer {
    */
   __host__ __device__ NeighbourChainer(Tbitset *_data, const int numPixels)
       : seedRow(_data, numPixels),
-        neighbourRow(
-            &_data[containers::Bitset<Tbitset, int>::numElementsRequiredFor(
-                numPixels)],
-            numPixels),
-        beta(&_data[containers::Bitset<Tbitset, int>::numElementsRequiredFor(
-                        numPixels) *
+        neighbourRow(&_data[containers::BitsetArray<
+                         Tbitset, int>::numElementsRequiredFor(numPixels)],
+                     numPixels),
+        beta(&_data[containers::BitsetArray<
+                        Tbitset, int>::numElementsRequiredFor(numPixels) *
                     2],
              numPixels),
-        gamma(&_data[containers::Bitset<Tbitset, int>::numElementsRequiredFor(
-                         numPixels) *
+        gamma(&_data[containers::BitsetArray<
+                         Tbitset, int>::numElementsRequiredFor(numPixels) *
                      3],
               numPixels) {}
 #else
@@ -1110,7 +1109,8 @@ template <typename Tbitset> struct NeighbourChainer {
 
 #ifndef NEIGHBOUR_GAMMAIDXLIST
     // Old code using bitset for gamma
-    return containers::Bitset<Tbitset, int>::numElementsRequiredFor(numPixels) *
+    return containers::BitsetArray<Tbitset, int>::numElementsRequiredFor(
+               numPixels) *
            4 * sizeof(Tbitset);
 #else
     return containers::Bitset<Tbitset, int>::numElementsRequiredFor(numPixels) *
@@ -1187,7 +1187,7 @@ template <typename Tbitset> struct NeighbourChainer {
   __device__ void
   blockComputeAlphaRow(const DeviceImage<Tmapping> &img, const int2 windowDist,
                        const int targetIndex,
-                       containers::Bitset<Tbitset, int> &alphaRow) {
+                       containers::BitsetArray<Tbitset, int> &alphaRow) {
     // Position inside the 2D image
     int targetRow = targetIndex / img.width;
     int targetCol = targetIndex % img.width;

@@ -2,51 +2,54 @@
 #include "gtest/gtest.h"
 #include <stdexcept>
 
-TEST(Bitset, HostsideConstructors) {
+TEST(BitsetArray, HostsideConstructors) {
   int numBits = 48;
   thrust::host_vector<unsigned int> h_data(
-      containers::Bitset<unsigned int, int>::numElementsRequiredFor(numBits));
+      containers::BitsetArray<unsigned int, int>::numElementsRequiredFor(
+          numBits));
 
-  containers::Bitset<unsigned int, int> bitset(h_data, numBits);
+  containers::BitsetArray<unsigned int, int> bitset(h_data, numBits);
   // Basic checks after constructor
   EXPECT_EQ(numBits, bitset.numBits);
   EXPECT_EQ(h_data.size(), bitset.numDataElements);
   EXPECT_EQ(bitset.data, h_data.data());
 
   // Create invalid sizes
-  EXPECT_THROW((containers::Bitset<unsigned int, int>(h_data, 65)),
+  EXPECT_THROW((containers::BitsetArray<unsigned int, int>(h_data, 65)),
                std::invalid_argument);
 
   // Create invalid size with direct pointer and then test validity
-  containers::Bitset<unsigned int, int> bitsetinvalid(h_data.data(),
-                                                      h_data.size(), 65);
+  containers::BitsetArray<unsigned int, int> bitsetinvalid(h_data.data(),
+                                                           h_data.size(), 65);
   EXPECT_FALSE(bitsetinvalid.hasValidNumBits());
 
   // Test similarly for device vector
   thrust::device_vector<unsigned int> d_data(
-      containers::Bitset<unsigned int, int>::numElementsRequiredFor(numBits));
+      containers::BitsetArray<unsigned int, int>::numElementsRequiredFor(
+          numBits));
 
-  containers::Bitset<unsigned int, int> bitset2(d_data, numBits);
+  containers::BitsetArray<unsigned int, int> bitset2(d_data, numBits);
   EXPECT_EQ(numBits, bitset2.numBits);
   EXPECT_EQ(d_data.size(), bitset2.numDataElements);
   EXPECT_EQ(bitset2.data, d_data.data().get());
 
   // Create invalid sizes
-  EXPECT_THROW((containers::Bitset<unsigned int, int>(d_data, 65)),
+  EXPECT_THROW((containers::BitsetArray<unsigned int, int>(d_data, 65)),
                std::invalid_argument);
 
   // Create invalid size with direct pointer and then test validity
-  containers::Bitset<unsigned int, int> d_bitsetinvalid(d_data.data().get(),
-                                                        d_data.size(), 65);
+  containers::BitsetArray<unsigned int, int> d_bitsetinvalid(
+      d_data.data().get(), d_data.size(), 65);
   EXPECT_FALSE(bitsetinvalid.hasValidNumBits());
 }
 
 TEST(Bitset, HostsideMethods) {
   int numBits = 48;
   thrust::host_vector<unsigned int> h_data(
-      containers::Bitset<unsigned int, int>::numElementsRequiredFor(numBits));
+      containers::BitsetArray<unsigned int, int>::numElementsRequiredFor(
+          numBits));
 
-  containers::Bitset<unsigned int, int> bitset(h_data, numBits);
+  containers::BitsetArray<unsigned int, int> bitset(h_data, numBits);
 
   // Check all 0s
   for (int i = 0; i < bitset.numBits; ++i)
