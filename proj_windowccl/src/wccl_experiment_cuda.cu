@@ -209,27 +209,9 @@ int main(int argc, char* argv[]) {
   h_counter[0] = 0;
   thrust::device_vector<unsigned int> d_counter(1);
   thrust::copy(h_counter.begin(), h_counter.end(), d_counter.begin());
-  unsigned int prevCounter;
-  size_t numUnionFindIters = 0;
 
-  do {
-    prevCounter = h_counter[0];
-    wccl::naive_global_unionfind_kernel<MappingType>
-        <<<bpg, tpb>>>(d_mapping, tileDims, windowDist, d_counter.data().get());
-    thrust::copy(d_counter.begin(), d_counter.end(), h_counter.begin());
-    // printf("Update count: %u\n", h_counter[0]);
-    numUnionFindIters++;
-
-    // We can print to see it evolve
-    if (rows <= 64 && cols <= 64) {
-      h_mapping_vec = d_mapping_vec;
-      printf("%s\n ========================== \n",
-             wccl::idxstring<MappingType>(
-                 thrust::raw_pointer_cast(h_mapping_vec.data()), rows, cols,
-                 "%2d ", "%2c ")
-                 .c_str());
-    }
-  } while (prevCounter != h_counter[0]);
+  size_t numUnionFindIters = wccl::naive_global_unionfind<MappingType>(
+    d_mapping, tileDims, windowDist, tpb, h_counter, d_counter);
 
   printf("numUnionFindIters = %zu\n", numUnionFindIters);
   h_mapping_vec = d_mapping_vec;
@@ -245,6 +227,39 @@ int main(int argc, char* argv[]) {
                        cols, tileDims.x, tileDims.y)
                        .c_str());
   }
+
+  // Kernel 3a. Path compression (or readout)
+  wccl::naive_global_pathcompress<MappingType>(d_mapping, tpb);
+  h_mapping_vec = d_mapping_vec;
+
+  if (rows <= 64 && cols <= 64) {
+    printf("%s\n ========================== \n",
+           wccl::idxstring<MappingType>(
+               thrust::raw_pointer_cast(h_mapping_vec.data()), rows, cols,
+               "%2d ", "%2c ")
+               .c_str());
+    printf("%s\n", wccl::prettystring<MappingType>(
+                       thrust::raw_pointer_cast(h_mapping_vec.data()), rows,
+                       cols, tileDims.x, tileDims.y)
+                       .c_str());
+  }
+
+  // Kernel 3b. Alternative readout via (row, col, label) triplets
+  size_t maxCount = d_mapping.size();
+  thrust::device_vector<int3> d_clusterlist(maxCount);
+  thrust::device_vector<unsigned int> d_clusterlistlength(1);
+  wccl::naive_global_readout<MappingType>(d_mapping, d_clusterlist, d_clusterlistlength, tpb);
+  thrust::host_vector<int3> h_clusterlist = d_clusterlist;
+  thrust::host_vector<unsigned int> h_clusterlistlength = d_clusterlistlength;
+  if (rows <= 64 && cols <= 64) {
+    for (size_t i = 0; i < h_clusterlistlength[0]; ++i) {
+      auto& h_clusterpixel = h_clusterlist[i];
+      printf("%zu: (%d, %d -> %d)\n", i, h_clusterpixel.x, h_clusterpixel.y,
+             h_clusterpixel.z);
+    }
+  }
+  printf("Clusterlist length = %u / %zu\n", h_clusterlistlength[0], maxCount);
+
   return 0;
 }
 // clang-format on

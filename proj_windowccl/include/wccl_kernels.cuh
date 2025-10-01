@@ -7,6 +7,7 @@
 #include "accessors.cuh"
 #include "atomic_extensions.cuh"
 #include "containers/bitset.cuh"
+#include "pinnedalloc.cuh"
 #include "sharedmem.cuh"
 
 namespace wccl {
@@ -225,6 +226,8 @@ __device__ Tmapping *find(const DeviceImage<Tmapping> &img, Tmapping idx) {
 template <typename Tmapping>
 __device__ void pathcompress(DeviceImage<Tmapping> &img, Tmapping idx) {
   Tmapping *rootPtr = find(img, idx);
+  if (rootPtr == nullptr)
+    return;
   if (img.data[idx] != *rootPtr)
     img.data[idx] = *rootPtr;
 }
@@ -871,6 +874,159 @@ __global__ void naive_global_unionfind_kernel(DeviceImage<Tmapping> mapping,
   }
 }
 
+/**
+ * @brief Wrapper function for performing repeated inter-tile union-find
+ * iterations. This uses a counter which determines whether to invoke a new
+ * iteration (kernel) until completion. As such, the counter is enforced to be
+ * in pinned host memory.
+ *
+ * @tparam Tmapping Type of mapping
+ * @param d_mapping Mapping output, from local tile kernels
+ * @param tileDims Tile dimensions; MUST BE THE SAME AS THE LOCAL TILE KERNELS
+ * @param windowDist Window distance
+ * @param tpb Threads per block. Should be selected considering the window
+ * distance and tile dimensions.
+ * @param h_counter Pinned host vector for counter
+ * @param d_counter Device vector for counter
+ * @return Number of union-find iterations
+ */
+template <typename Tmapping>
+size_t
+naive_global_unionfind(DeviceImage<Tmapping> d_mapping, const int2 tileDims,
+                       const int2 windowDist, const dim3 tpb,
+                       thrust::pinned_host_vector<unsigned int> &h_counter,
+                       thrust::device_vector<unsigned int> &d_counter) {
+  // Define some local counters
+  unsigned int prevCounter;
+  size_t numUnionFindIters = 0;
+
+  dim3 bpg(d_mapping.width / tileDims.x +
+               (d_mapping.width % tileDims.x > 0 ? 1 : 0),
+           d_mapping.height / tileDims.y +
+               (d_mapping.height % tileDims.y > 0 ? 1 : 0));
+
+  do {
+    prevCounter = h_counter[0];
+    wccl::naive_global_unionfind_kernel<Tmapping>
+        <<<bpg, tpb>>>(d_mapping, tileDims, windowDist, d_counter.data().get());
+    thrust::copy(d_counter.begin(), d_counter.end(), h_counter.begin());
+    numUnionFindIters++;
+
+  } while (prevCounter != h_counter[0]);
+
+  return numUnionFindIters;
+}
+
+/**
+ * @brief Extremely simple grid-stride path compression.
+ */
+template <typename Tmapping>
+__global__ void
+naive_global_pathcompress_kernel(DeviceImage<Tmapping> d_mapping) {
+  // Simple 2D grid stride
+  for (int y = blockIdx.y * blockDim.y + threadIdx.y; y < d_mapping.height;
+       y += blockDim.y * gridDim.y) {
+    if (y >= d_mapping.height) {
+      continue;
+    }
+    for (int x = blockIdx.x * blockDim.x + threadIdx.x; x < d_mapping.width;
+         x += blockDim.x * gridDim.x) {
+      if (x >= d_mapping.width) {
+        continue;
+      }
+
+      pathcompress(d_mapping, (Tmapping)(y * d_mapping.width + x));
+    }
+  }
+}
+
+/**
+ * @brief Wrapper for the simple global path compression. In general this has
+ * been observed to not take longer than a single global union find iteration,
+ * even at the minimum +/-1 window distance i.e. this does not contribute
+ * significantly total kernel durations.
+ *
+ * @tparam Tmapping Type of mapping
+ * @param d_mapping Mapping output, fully united
+ * @param tpb Threads per block
+ * @return Dimensions of grid used
+ */
+template <typename Tmapping>
+dim3 naive_global_pathcompress(DeviceImage<Tmapping> d_mapping,
+                               const dim3 tpb) {
+  // Simple grid stride
+  dim3 bpg(d_mapping.width / tpb.x + (d_mapping.width % tpb.x > 0 ? 1 : 0),
+           d_mapping.height / tpb.y + (d_mapping.height % tpb.y > 0 ? 1 : 0));
+  naive_global_pathcompress_kernel<Tmapping><<<bpg, tpb>>>(d_mapping);
+  return bpg;
+}
+
+/**
+ * @brief Reads out pixel output into triplets of (x, y, root). Due to the
+ * parallel nature this is unsorted, so pixels with identical roots may not be
+ * next to each other.
+ *
+ * Note that this method is currently significantly slower than the path
+ * compression method, and also requires additional memory to be allocated (of
+ * which the size is unknown beforehand, so potentially a list with enough size
+ * for the entire image must be allocated).
+ *
+ * @tparam Tmapping
+ * @param d_mapping
+ * @param d_clusterlist
+ * @param d_clusterlistlength
+ * @param maxClusterListCount
+ */
+template <typename Tmapping>
+__global__ void naive_global_readout_kernel(DeviceImage<Tmapping> d_mapping,
+                                            int3 *d_clusterlist,
+                                            unsigned int *d_clusterlistlength,
+                                            size_t maxClusterListCount) {
+  // Simple 2D grid stride
+  for (int y = blockIdx.y * blockDim.y + threadIdx.y; y < d_mapping.height;
+       y += blockDim.y * gridDim.y) {
+    if (y >= d_mapping.height) {
+      continue;
+    }
+    for (int x = blockIdx.x * blockDim.x + threadIdx.x; x < d_mapping.width;
+         x += blockDim.x * gridDim.x) {
+      if (x >= d_mapping.width) {
+        continue;
+      }
+
+      Tmapping *root = find(d_mapping, (Tmapping)(y * d_mapping.width + x));
+      if (root != nullptr) {
+        Tmapping rootVal = *root;
+        int oIdx = atomicAggInc(d_clusterlistlength);
+        if ((size_t)oIdx < maxClusterListCount)
+          d_clusterlist[oIdx] = make_int3(x, y, rootVal);
+      }
+    }
+  }
+}
+
+template <typename Tmapping>
+dim3 naive_global_readout(
+    DeviceImage<Tmapping> d_mapping, thrust::device_vector<int3> &d_clusterlist,
+    thrust::device_vector<unsigned int> &d_clusterlistlength, const dim3 tpb) {
+  dim3 bpg(d_mapping.width / tpb.x + (d_mapping.width % tpb.x > 0 ? 1 : 0),
+           d_mapping.height / tpb.y + (d_mapping.height % tpb.y > 0 ? 1 : 0));
+  naive_global_readout_kernel<Tmapping>
+      <<<bpg, tpb>>>(d_mapping, d_clusterlist.data().get(),
+                     d_clusterlistlength.data().get(), d_clusterlist.size());
+  return bpg;
+}
+
+// ===========================================================================
+// ===========================================================================
+// ===========================================================================
+// ===========================================================================
+// ========================= NEIGHBOUR CHAINER/PROPAGATION ===================
+// ===========================================================================
+// ===========================================================================
+// ===========================================================================
+// ===========================================================================
+
 template <typename Tbitset> struct NeighbourChainer {
 #ifndef NEIGHBOUR_GAMMAIDXLIST
   // Old method with a bitset
@@ -989,8 +1145,8 @@ template <typename Tbitset> struct NeighbourChainer {
   __device__ void blockInitBeta(const DeviceImage<Tmapping> &img) {
     for (int i = threadIdx.y * blockDim.x + threadIdx.x;
          i < beta.numDataElements; i += blockDim.y * blockDim.x) {
-      // Each thread works on one element word of the bitset (so its 8/16/32/64
-      // bits depending on Tbitset)
+      // Each thread works on one element word of the bitset (so its
+      // 8/16/32/64 bits depending on Tbitset)
 
       // Set individual bits if active (no need to initialize, we write
       // everything)
@@ -1008,8 +1164,8 @@ template <typename Tbitset> struct NeighbourChainer {
   }
 
   /**
-   * @brief Queries the availability vector for the specified row. If the row is
-   * not available, it should not be computed via blockComputeAlphaRow().
+   * @brief Queries the availability vector for the specified row. If the row
+   * is not available, it should not be computed via blockComputeAlphaRow().
    *
    * @param rowIndex Target row index
    * @return True if the row is available
@@ -1022,8 +1178,8 @@ template <typename Tbitset> struct NeighbourChainer {
    * @brief Computes a single row in the alpha matrix. Used to fill either the
    * alphaRow or workspaceRow. You may need to syncthreads() after this.
    *
-   * @param img Initial input image to read from (identical to union find method
-   * load)
+   * @param img Initial input image to read from (identical to union find
+   * method load)
    * @param windowDist Window distance, to determine neighbours
    * @param targetIndex Target index inside the alpha matrix. For
    */
@@ -1116,8 +1272,8 @@ template <typename Tbitset> struct NeighbourChainer {
 #ifndef NEIGHBOUR_GAMMAIDXLIST
   /**
    * @brief Computes the gamma vector (neighbours of interest). Explicitly
-   * performs the syncthreads() internally, since this is required to determine
-   * if it is non-empty.
+   * performs the syncthreads() internally, since this is required to
+   * determine if it is non-empty.
    *
    * @return True if gamma is non-empty.
    */
@@ -1201,11 +1357,11 @@ template <typename Tbitset> struct NeighbourChainer {
         for (int nBit = 0; nBit < gamma.numBitsPerElement(); ++nBit) {
           int n = nEle * gamma.numBitsPerElement() + nBit;
           // If not of interest, ignore
-          // Examine the element you already retrieved (rather than reading the
-          // bit again from array) This appears to be another 6-7% speedup at
-          // fraction 0.5, window 16x16
-          // TODO: refactor bitset to have an element struct and an array struct
-          // separately
+          // Examine the element you already retrieved (rather than reading
+          // the bit again from array) This appears to be another 6-7% speedup
+          // at fraction 0.5, window 16x16
+          // TODO: refactor bitset to have an element struct and an array
+          // struct separately
           if (!(gammaElement & (1 << nBit)))
             continue;
 
@@ -1312,8 +1468,8 @@ __global__ void local_chain_neighbours_kernel(const DeviceImage<uint8_t> input,
   while (!s_chainer.isComplete()) {
     s_chainer.blockChainNeighbours(windowDist, s_tile);
   }
-  // you don't need sync threads here, all threads that wrote the elements will
-  // read the same element out
+  // you don't need sync threads here, all threads that wrote the elements
+  // will read the same element out
 
   // Then once done we output back to global
   for (int ty = threadIdx.y; ty < s_tile.height; ty += blockDim.y) {
