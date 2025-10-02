@@ -75,6 +75,14 @@ int main(int argc, char* argv[]) {
     std::fill(input.begin(), input.begin() + totalMarked, 1);
     std::fill(input.begin() + (int)(fraction*rows*cols), input.end(), 0);
     std::random_shuffle(input.begin(), input.end());
+
+    if (rows < 64 && cols < 64) {
+      printf("Input:\n%s\n ========================== \n",
+             wccl::idxstring<uint8_t>(
+             input.data(), rows, cols,
+             "%hhu ")
+             .c_str());
+    }
   }
   std::string outputFilename;
   if (result.count("output")) {
@@ -165,7 +173,9 @@ int main(int argc, char* argv[]) {
   // ========== Kernel 1. Local tile merge (using non atomics)
 #ifdef USE_NEIGHBOURCHAINER
   printf("Using neighbour chainer\n");
-  dim3 bpg = wccl::local_chain_neighbours<BitsetType, MappingType>(
+  // dim3 bpg = wccl::local_chain_neighbours<BitsetType, MappingType>(
+  //   d_image, d_mapping, tileDims, windowDist, tpb);
+  dim3 bpg = wccl::local_chain_neighbours_v2<BitsetType, MappingType>(
     d_image, d_mapping, tileDims, windowDist, tpb);
 
 #elif USE_ATOMICFREE_LOCAL
