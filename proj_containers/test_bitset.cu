@@ -51,9 +51,7 @@ TEST(Bitset, HostsideMethods) {
 
   containers::BitsetArray<unsigned int, int> bitset(h_data, numBits);
 
-  // Check all 0s
-  for (int i = 0; i < bitset.numBits; ++i)
-    EXPECT_EQ(0, bitset.getBitAt(i));
+  // With the new Bitset struct, default values are no longer 0
 
   // Set 1 bit at a time and check
   for (int i = 0; i < bitset.numBits; ++i)
@@ -70,4 +68,18 @@ TEST(Bitset, HostsideMethods) {
   // Test out of bounds checkers
   EXPECT_FALSE(bitset.isValidBitIndex(49));
   EXPECT_FALSE(bitset.isValidElementIndex(h_data.size()));
+}
+
+TEST(Bitset, HostsideBitmaskSetting) {
+  typedef unsigned int T;
+  for (T start = 0; start < (T)sizeof(T); ++start) {
+    for (T len = 0; len < (T)sizeof(T) - start; ++len) {
+      containers::Bitset<T> mask(containers::Bitset<T>::bitmask(start, len));
+
+      // Check the mask values
+      for (T i = 0; i < (T)sizeof(T); ++i) {
+        EXPECT_EQ(mask.getBitAt(i), (i >= start && i < start + len) ? 1 : 0);
+      }
+    }
+  }
 }

@@ -14,6 +14,12 @@ template <typename Tval = unsigned int, typename Tidx = int> struct Bitset {
   static_assert(std::is_unsigned<Tval>::value, "T must be unsigned");
   Tval value;
 
+  /**
+   * @brief Default constructor. Note that this does not default initialize the
+   * internal value to 0. This is to prevent unwanted operations by threads in
+   * the kernel (otherwise all threads may attempt to write to all values in an
+   * array, resulting in race conditions).
+   */
   __host__ __device__ Bitset() {}
   __host__ __device__ Bitset(Tval _value) : value(_value) {}
 
@@ -32,6 +38,19 @@ template <typename Tval = unsigned int, typename Tidx = int> struct Bitset {
   }
 
   /**
+   * @brief Creates a bit mask over a range of bits. Courtesy of
+   * https://stackoverflow.com/questions/39321580/fastest-way-to-produce-a-mask-with-n-ones-starting-at-position-i.
+   *
+   * @param bIndexStart Starting bit index
+   * @param len Number of bits set in the bitmask
+   * @return Bit mask
+   */
+  __host__ __device__ static constexpr Tval bitmask(const Tidx bIndexStart,
+                                                    const Tidx len) {
+    return ((static_cast<Tval>(1) << len) - 1) << bIndexStart;
+  }
+
+  /**
    * @brief Helper function to check if the requested bit index exceeds the
    * number of bits stored. Onus is on the programmer to decide if this needs to
    * be called.
@@ -43,6 +62,12 @@ template <typename Tval = unsigned int, typename Tidx = int> struct Bitset {
     return bIndex < numBitsPerElement();
   }
 
+  /**
+   * @brief Sets the bit at the specified index with the input value.
+   *
+   * @param bIndex Bit index
+   * @param in Value to set, accepts truthy values like 1 or 0
+   */
   __host__ __device__ void setBitAt(const Tidx bIndex, const bool in) {
     if (in) // set bit to 1
       value |= bitmask(bIndex);
@@ -50,10 +75,22 @@ template <typename Tval = unsigned int, typename Tidx = int> struct Bitset {
       value &= ~bitmask(bIndex);
   }
 
+  /**
+   * @brief Returns the bit at the specified bit index.
+   *
+   * @param bIndex Bit index
+   * @return True if the bit is set
+   */
   __host__ __device__ bool getBitAt(const Tidx bIndex) const {
     return (value & bitmask(bIndex)) != 0;
   }
 
+  /**
+   * @brief Atomically sets the bit at the specified bit index.
+   *
+   * @param bIndex Bit index
+   * @param in Value to set, accepts truthy values like 1 or 0
+   */
   __device__ void setBitAtAtomically(const Tidx bIndex, const bool in) {
     if (in) // set bit to 1
       atomicOr(&value, bitmask(bIndex));
@@ -61,6 +98,12 @@ template <typename Tval = unsigned int, typename Tidx = int> struct Bitset {
       atomicAnd(&value, ~bitmask(bIndex));
   }
 
+  /**
+   * @brief Strictly atomic ORs the bit at the specified bit index.
+   *
+   * @param bIndex Bit index
+   * @param in Value to set, accepts truthy values like 1 or 0
+   */
   __device__ void atomicOrBitAt(const Tidx bIndex, const bool in) {
     if (in)
       atomicOr(&value, bitmask(bIndex));
