@@ -1795,6 +1795,10 @@ local_chain_neighbours_v2_kernel(const DeviceImage<uint8_t> input,
                                  const int2 windowDist, const int2 tileDims,
                                  DeviceImage<Tmapping> output) {
 
+  // TODO: testing so far has used a 32x32 tile with 32x1 threads. this appears
+  // to fail on a 64x64 tile with 64x1 threads. need to find where the
+  // assumptions are and fix this
+
   // In v2, we use a bit more shared memory to store the tile as a binary
   // bitset map directly. We use the indexed mapping image form just as a
   // staging area before global writing to maintain coalescing, but otherwise
