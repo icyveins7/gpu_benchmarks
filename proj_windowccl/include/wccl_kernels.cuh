@@ -1577,9 +1577,9 @@ template <typename Tbitset> struct NeighbourChainerV2 {
                               min(betaRow + windowDist.y, tileDims.y - 1));
 
     // if (threadIdx.x == 0 && threadIdx.y == 0)
-    //   printf("minBound = %d, %d ; maxBound = %d, %d\n", minBound.x,
-    //   minBound.y,
-    //          maxBound.x, maxBound.y);
+    //   printf("minBound = %d, %d ; maxBound = %d, %d ; numDataElements %d\n",
+    //          minBound.x, minBound.y, maxBound.x, maxBound.y,
+    //          beta.numDataElements);
 
     // Number of elements per row
     int elementsPerRow = tileDims.x / beta.numBitsPerElement();
@@ -1594,7 +1594,8 @@ template <typename Tbitset> struct NeighbourChainerV2 {
       int elemRow = i / elementsPerRow;
       int elemCol = i % elementsPerRow;
       int leftBit = elemCol * beta.numBitsPerElement();
-      int rightBit = leftBit + beta.numBitsPerElement();
+      int rightBit =
+          leftBit + beta.numBitsPerElement(); // TODO: do i need a -1?
 
       // Instantiate all 0s (most likely outcome, especially for small windows)
       containers::Bitset<Tbitset, int> bs(0);
@@ -1606,7 +1607,7 @@ template <typename Tbitset> struct NeighbourChainerV2 {
         // Create bitmask over this range and read element from beta (which is
         // the tile of bits)
         int maskLength = rightBound - leftBound + 1; // inclusive
-        bs.value = beta.elementAt(i).get(leftBound, maskLength);
+        bs.value = beta.elementAt(i).get(leftBound - leftBit, maskLength);
         // printf("Read from beta element %d (row %d col %d), "
         //        "bit %d length %d <- "
         //        "%08X, mask %08X\n",
@@ -1652,7 +1653,7 @@ template <typename Tbitset> struct NeighbourChainerV2 {
         // the tile of bits)
         int maskLength = rightBound - leftBound + 1; // inclusive
         seedRow.elementAt(i).value |=
-            beta.elementAt(i).get(leftBound, maskLength);
+            beta.elementAt(i).get(leftBound - leftBit, maskLength);
       }
     }
   }
@@ -1774,9 +1775,9 @@ template <typename Tbitset> struct NeighbourChainerV2 {
 
     // Once gamma is complete, our seed row is fully merged and ready to be
     // output. NOTE: gamma calculation already synced for us
-    for (int i = threadIdx.y; i < img.height; // same as blockTileDims height
+    for (int i = threadIdx.y; i < img.height; // same as tileDims height
          i += blockDim.y) {
-      for (int j = threadIdx.x; j < img.width; // same as blockTileDims width
+      for (int j = threadIdx.x; j < img.width; // same as tileDims width
            j += blockDim.x) {
         Tmapping idx = img.flattenedIndex(i, j);
         if (seedRow.getBitAt(idx))
@@ -1903,8 +1904,8 @@ local_chain_neighbours_v2_kernel(const DeviceImage<uint8_t> input,
   atomicMin(s_chainer.betaIndex, earliestBetaIdx);
 
   // Initialize tile to all -1s
-  for (int i = threadIdx.y; i < blockTileDims.y; i += blockDim.y) {
-    for (int j = threadIdx.x; j < blockTileDims.x; j += blockDim.x) {
+  for (int i = threadIdx.y; i < s_tile.height; i += blockDim.y) {
+    for (int j = threadIdx.x; j < s_tile.width; j += blockDim.x) {
       s_tile.set(i, j, -1);
     }
   }

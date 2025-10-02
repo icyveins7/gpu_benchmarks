@@ -261,13 +261,13 @@ int main(int argc, char* argv[]) {
   wccl::naive_global_readout<MappingType>(d_mapping, d_clusterlist, d_clusterlistlength, tpb);
   thrust::host_vector<int3> h_clusterlist = d_clusterlist;
   thrust::host_vector<unsigned int> h_clusterlistlength = d_clusterlistlength;
-  if (rows <= 64 && cols <= 64) {
-    for (size_t i = 0; i < h_clusterlistlength[0]; ++i) {
-      auto& h_clusterpixel = h_clusterlist[i];
-      printf("%zu: (%d, %d -> %d)\n", i, h_clusterpixel.x, h_clusterpixel.y,
-             h_clusterpixel.z);
-    }
-  }
+  // if (rows <= 64 && cols <= 64) {
+  //   for (size_t i = 0; i < h_clusterlistlength[0]; ++i) {
+  //     auto& h_clusterpixel = h_clusterlist[i];
+  //     printf("%zu: (%d, %d -> %d)\n", i, h_clusterpixel.x, h_clusterpixel.y,
+  //            h_clusterpixel.z);
+  //   }
+  // }
   printf("Clusterlist length = %u / %zu\n", h_clusterlistlength[0], maxCount);
 
   return 0;
