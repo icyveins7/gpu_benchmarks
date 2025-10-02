@@ -38,8 +38,9 @@ template <typename Tval = unsigned int, typename Tidx = int> struct Bitset {
   }
 
   /**
-   * @brief Creates a bit mask over a range of bits. Courtesy of
+   * @brief Creates a bit mask over a contiguous range of bits. Courtesy of
    * https://stackoverflow.com/questions/39321580/fastest-way-to-produce-a-mask-with-n-ones-starting-at-position-i.
+   * Example: 0b00011110 -> (start = 1, len = 4)
    *
    * @param bIndexStart Starting bit index
    * @param len Number of bits set in the bitmask
@@ -83,6 +84,17 @@ template <typename Tval = unsigned int, typename Tidx = int> struct Bitset {
    */
   __host__ __device__ bool getBitAt(const Tidx bIndex) const {
     return (value & bitmask(bIndex)) != 0;
+  }
+
+  /**
+   * @brief Wrapper to get the value with a range bitmask.
+   *
+   * @param bIndexStart Starting bit index
+   * @param len Number of bits set in the bitmask
+   * @return Masked value
+   */
+  __host__ __device__ Tval get(const Tidx bIndexStart, const Tidx len) const {
+    return (value & bitmask(bIndexStart, len));
   }
 
   /**
@@ -299,6 +311,12 @@ struct BitsetArray {
     element.setBitAt(offset, value);
   }
 
+  // ========================================================================
+  // ========================================================================
+  // ========================== DEVICE-ONLY =================================
+  // ========================================================================
+  // ========================================================================
+
   /**
    * @brief Setter for bits atomically. Use this if multiple threads will write
    * to the same element.
@@ -318,6 +336,74 @@ struct BitsetArray {
     Bitset<Tval, Tidx> &element = elementContainingBitAt(bIndex);
     element.atomicOrBitAt(offset, value);
   }
+
+  /**
+   * @brief Block-wide reduction to find minimum (first) set bit index across
+   * array. Programmer is responsible for performing __syncthreads() after this.
+   *
+   * @param minIdx Atomically updated index pointer
+   */
+  __device__ void argminBit(Tidx *minIdx) const;
+  // __device__ void argminBit(Tidx *minIdx, const Tidx floor) const;
 }; // end struct Bitset
+
+// Specializations, because we use intrinsics for specific types
+
+template <>
+__device__ void BitsetArray<unsigned int, int>::argminBit(int *minIdx) const {
+  // Initialize using first thread
+  if (threadIdx.x == 0 && threadIdx.y == 0)
+    *minIdx = numBits;
+  __syncthreads();
+
+  int minBit = numBits;
+  for (int i = threadIdx.y * blockDim.x + threadIdx.x; i < numDataElements;
+       i += blockDim.y * blockDim.x) {
+    const Bitset<unsigned int, int> &elem = elementAt(i);
+    if (elem.value != 0) {
+      // ffs returns 1 for 0b000....001, 2 for 0b000....010, etc
+      // hence we want to -1 from this value since our convention starts from 0
+      int localMinBit = __ffs(*reinterpret_cast<const int *>(&elem.value)) - 1;
+      // printf("Elem: %08X, localMinBit = %d, getBit = %d\n", elem.value,
+      //        localMinBit, elem.getBitAt(localMinBit));
+      minBit = min(minBit, localMinBit + i * 32);
+      break;
+      // TODO: i should probably warp reduce this and have the entire warp break
+      // too, but for now this should be ok since we have a short array
+    }
+  }
+  // printf("Thread %d: minBit = %d\n", threadIdx.y * blockDim.y + threadIdx.x,
+  //        minBit);
+  atomicMin(minIdx, minBit);
+}
+
+// template <>
+// __device__ void
+// BitsetArray<unsigned int, int>::argminBit(int *minIdx, const int floor) const
+// {
+//   // Initialize using first thread
+//   if (threadIdx.x == 0 && threadIdx.y == 0)
+//     *minIdx = numBits;
+//   __syncthreads();
+//
+//   int minBit = numBits;
+//   for (int i = threadIdx.y * blockDim.y + threadIdx.x; i < numDataElements;
+//        i += blockDim.y * blockDim.x) {
+//     // Ignore the elements where all bits are below the floor
+//     if ((i + 1) * numBitsPerElement() - 1 < floor)
+//       continue;
+//
+//     unsigned int elem = elementAt(i).value;
+//     if (elem != 0) {
+//       int localMinBit = __ffs((int)elem);
+//       minBit = min(minBit, localMinBit + i * 32);
+//       break;
+//       // TODO: i should probably warp reduce this and have the entire warp
+//       break
+//       // too, but for now this should be ok since we have a short array
+//     }
+//   }
+//   atomicMin(minIdx, minBit);
+// }
 
 } // namespace containers
