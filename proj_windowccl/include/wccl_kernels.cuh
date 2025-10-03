@@ -1903,6 +1903,9 @@ local_chain_neighbours_v2_kernel(const DeviceImage<uint8_t> input,
   // All threads update the beta index
   atomicMin(s_chainer.betaIndex, earliestBetaIdx);
 
+  __syncthreads(); // wait for everyone to finish using the temporary area
+  // then now we can initialize the tile properly
+
   // Initialize tile to all -1s
   for (int i = threadIdx.y; i < s_tile.height; i += blockDim.y) {
     for (int j = threadIdx.x; j < s_tile.width; j += blockDim.x) {

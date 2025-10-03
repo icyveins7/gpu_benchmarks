@@ -24,9 +24,17 @@ std::string idxstring(const T* data,
   char temp[8];
   for (int i = 0; i < height; ++i){
     for (int j = 0; j < width; ++j){
-      if (data[i * width + j] == -1){
-        snprintf(temp, 8, cfmt, '-');
-        s += temp;
+      if constexpr (std::is_signed<T>::value){
+        if (data[i * width + j] == -1){
+          snprintf(temp, 8, cfmt, '-');
+          s += temp;
+        }
+        else
+        {
+          // Print the value itself
+          snprintf(temp, 8, fmt, data[i * width + j]);
+          s += temp;
+        }
       }
       else
       {
@@ -55,6 +63,17 @@ std::string prettystring(const T* data,
   // 0-9
   for (uint8_t i = 48; i < 58; ++i)
     labelChars.push_back(i);
+
+  // A few more custom ones
+  labelChars.push_back('!');
+  labelChars.push_back('@');
+  labelChars.push_back('#');
+  labelChars.push_back('$');
+  labelChars.push_back('%');
+  labelChars.push_back('^');
+  labelChars.push_back('&');
+  labelChars.push_back('*');
+
   printf("Max labels: %lu\n", labelChars.size());
 
   size_t ctr = 0;
