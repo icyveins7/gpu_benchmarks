@@ -344,6 +344,15 @@ struct BitsetArray {
    * @param minIdx Atomically updated index pointer
    */
   __device__ void argminBit(Tidx *minIdx) const;
+
+  /**
+   * @brief Block-wide reduction to find first minimum set bit index after a
+   * floor. Intended to be used so that one can iterate through set bits in the
+   * array without explicitly zero-ing out previous bits.
+   *
+   * @param minIdx Atomically updated index pointer
+   * @param floor Floor i.e. previous minimum bit index
+   */
   // __device__ void argminBit(Tidx *minIdx, const Tidx floor) const;
 }; // end struct Bitset
 
@@ -387,15 +396,16 @@ __device__ void BitsetArray<unsigned int, int>::argminBit(int *minIdx) const {
 //   __syncthreads();
 //
 //   int minBit = numBits;
-//   for (int i = threadIdx.y * blockDim.y + threadIdx.x; i < numDataElements;
+//   for (int i = threadIdx.y * blockDim.x + threadIdx.x; i < numDataElements;
 //        i += blockDim.y * blockDim.x) {
-//     // Ignore the elements where all bits are below the floor
-//     if ((i + 1) * numBitsPerElement() - 1 < floor)
-//       continue;
-//
-//     unsigned int elem = elementAt(i).value;
-//     if (elem != 0) {
-//       int localMinBit = __ffs((int)elem);
+//     const Bitset<unsigned int, int> &elem = elementAt(i);
+//     if (elem.value != 0) {
+//       // ffs returns 1 for 0b000....001, 2 for 0b000....010, etc
+//       // hence we want to -1 from this value since our convention starts from
+//       0 int localMinBit = __ffs(*reinterpret_cast<const int *>(&elem.value))
+//       - 1;
+//       // printf("Elem: %08X, localMinBit = %d, getBit = %d\n", elem.value,
+//       //        localMinBit, elem.getBitAt(localMinBit));
 //       minBit = min(minBit, localMinBit + i * 32);
 //       break;
 //       // TODO: i should probably warp reduce this and have the entire warp
@@ -403,6 +413,9 @@ __device__ void BitsetArray<unsigned int, int>::argminBit(int *minIdx) const {
 //       // too, but for now this should be ok since we have a short array
 //     }
 //   }
+//   // printf("Thread %d: minBit = %d\n", threadIdx.y * blockDim.y +
+//   threadIdx.x,
+//   //        minBit);
 //   atomicMin(minIdx, minBit);
 // }
 

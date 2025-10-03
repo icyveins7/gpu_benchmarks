@@ -1940,6 +1940,15 @@ local_chain_neighbours_v2_kernel(const DeviceImage<uint8_t> input,
   //   }
   // }
 
+  // TODO: for 64x64 tile, the space for this tile is currently 64x64x4 bytes,
+  // which is constraining occupancy in a typical L4 GPU with 102400 bytes per
+  // SM -> ~5 blocks per SM only. A fully dense block will involve 64x2=128
+  // threads, which results in 128 * 5 = 640 threads, which is less than half
+  // the max occupancy of 1536 threads per SM. Hence it is important to reduce
+  // this shared memory requirement. The easiest way should be to cut the
+  // internal tile to int16 instead. This also applies to the union find kernel.
+  // And this should roughly double occupancy.
+
   // Then once done we output back to global
   for (int ty = threadIdx.y; ty < s_tile.height; ty += blockDim.y) {
     if (ty >= blockTileDims.y)
