@@ -55,7 +55,7 @@ def generate_lognormal_circles(matrows: int, matcols: int, mu: float, sigma: flo
     expectation_count_per_circle = np.pi * expectation_radius**2
     rough_num_circles = int(mat.size * fraction / expectation_count_per_circle)
     print(f"Rough number of circles: {rough_num_circles}")
-    rough_num_circles *= 2 # just double it to be safe
+    rough_num_circles *= 4 # just double it to be safe
 
     # Generate random radii
     radii = np.random.lognormal(mu, sigma, rough_num_circles)
@@ -66,8 +66,10 @@ def generate_lognormal_circles(matrows: int, matcols: int, mu: float, sigma: flo
     total_count = 0
     for row, col, radius in zip(rows, cols, radii):
         print(f"Adding circle at ({row}, {col}) with radius {int(radius)}")
-        count = add_circle(row, col, int(radius), mat)
-        total_count += count
+        _ = add_circle(row, col, int(radius), mat)
+        # Can't use circle count because overlaps shouldn't add to each other
+        total_count = np.sum(mat)
+        print(f"Current fraction = {total_count/mat.size * 100}%")
 
         if total_count > mat.size * fraction:
             break

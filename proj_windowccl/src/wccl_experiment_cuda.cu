@@ -66,6 +66,15 @@ int main(int argc, char* argv[]) {
     }
     inputfile.read((char*)input.data(), rows*cols);
     inputfile.close();
+
+    // Quickly examine the file
+    size_t totalCount = 0;
+    for (int i = 0; i < rows*cols; i++) {
+      if (input[i]) {
+        totalCount++;
+      }
+    }
+    std::cout << "Total marked: " << totalCount << "/" << rows*cols << std::endl;
   }
   else {
     const double fraction = result["fraction"].as<double>();
