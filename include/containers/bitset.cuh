@@ -41,6 +41,9 @@ template <typename Tval = unsigned int, typename Tidx = int> struct Bitset {
    * @brief Creates a bit mask over a contiguous range of bits. Courtesy of
    * https://stackoverflow.com/questions/39321580/fastest-way-to-produce-a-mask-with-n-ones-starting-at-position-i.
    * Example: 0b00011110 -> (start = 1, len = 4)
+   * Note that this will not produce an error if the range extends out of bounds
+   * of the element, e.g. for Tval = uint8 if bIndexStart > 8 then the mask is
+   * simply all zeroes.
    *
    * @param bIndexStart Starting bit index
    * @param len Number of bits set in the bitmask

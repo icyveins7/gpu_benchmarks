@@ -1563,6 +1563,14 @@ template <typename Tbitset> struct NeighbourChainerV2 {
            sizeof(int);
   }
 
+  /**
+   * @brief Retrieve a pointer to the end of all the internal arrays. Useful for
+   * designating shared memory after this struct.
+   */
+  __device__ containers::Bitset<Tbitset, int> *endPointer() const {
+    return beta.data + beta.numDataElements;
+  }
+
   __device__ void calculateSeedRow(const int2 &windowDist,
                                    const int2 &tileDims) {
     // Define boundaries
@@ -1781,7 +1789,8 @@ template <typename Tbitset> struct NeighbourChainerV2 {
            j += blockDim.x) {
         Tmapping idx = img.flattenedIndex(i, j);
         if (seedRow.getBitAt(idx))
-          img.data[idx] = earliestBetaIndex;
+          img.data[idx] = (Tmapping)earliestBetaIndex; // cast directly
+        // assumption is that tile size fits the type
       }
     }
     __syncthreads();
@@ -1795,10 +1804,6 @@ __global__ void
 local_chain_neighbours_v2_kernel(const DeviceImage<uint8_t> input,
                                  const int2 windowDist, const int2 tileDims,
                                  DeviceImage<Tmapping> output) {
-
-  // TODO: testing so far has used a 32x32 tile with 32x1 threads. this appears
-  // to fail on a 64x64 tile with 64x1 threads. need to find where the
-  // assumptions are and fix this
 
   // In v2, we use a bit more shared memory to store the tile as a binary
   // bitset map directly. We use the indexed mapping image form just as a
@@ -1818,12 +1823,7 @@ local_chain_neighbours_v2_kernel(const DeviceImage<uint8_t> input,
                                : (int)input.height - tileYstart};
 
   // Read entire tile and set shared memory values
-  SharedMemory<uint8_t> smem;
-  // Workspace for the tile
-  // NOTE: we use full tile dims here (we will cut off when writing back to
-  // global)
-  DeviceImage<Tmapping> s_tile((Tmapping *)smem.getPointer(), tileDims.y,
-                               tileDims.x);
+  SharedMemory<int> smem;
 
   // NOTE: it is important that the tile dimensions are an integer multiple of
   // the Tbitset size, so that subsequent lookups can access each row via an
@@ -1834,7 +1834,7 @@ local_chain_neighbours_v2_kernel(const DeviceImage<uint8_t> input,
   // elements per row, and 128 rows.
   // Deviating from this requirement will result in many more checks required
   // to determine the correct element index to access from the array.
-  int *s_idx = (int *)&s_tile.data[s_tile.size()];
+  int *s_idx = smem.getPointer();
   // We use full tile size for this
   NeighbourChainerV2<Tbitset> s_chainer(
       s_idx, (containers::Bitset<Tbitset> *)&s_idx[1], tileDims.x * tileDims.y);
@@ -1842,9 +1842,17 @@ local_chain_neighbours_v2_kernel(const DeviceImage<uint8_t> input,
   if (threadIdx.x == 0 && threadIdx.y == 0)
     *(s_chainer.betaIndex) = s_chainer.beta.numBits;
 
+  // Workspace for the tile
+  // NOTE: we use full tile dims here (we will cut off when writing back to
+  // global)
+  DeviceImage<int16_t> s_tile((int16_t *)s_chainer.endPointer(), tileDims.y,
+                              tileDims.x);
+
+  // ------- end definitions of shared memory space
+
   // We reuse s_tile as a temporary workspace before we fill it, so that our
   // warps can globally coalesce reads
-  uint8_t *temp = smem.getPointer();
+  uint8_t *temp = (uint8_t *)s_tile.data;
   for (int i = threadIdx.y; i < tileDims.y; i += blockDim.y) {
     for (int j = threadIdx.x; j < tileDims.x; j += blockDim.x) {
       if (i < blockTileDims.y && j < blockTileDims.x)
@@ -1979,7 +1987,7 @@ dim3 local_chain_neighbours_v2(const DeviceImage<uint8_t> input,
   dim3 bpg(input.width / tileDims.x + (input.width % tileDims.x ? 1 : 0),
            input.height / tileDims.y + (input.height % tileDims.y ? 1 : 0));
   size_t shmem =
-      tileDims.x * tileDims.y * sizeof(Tmapping); // enough for the tile
+      tileDims.x * tileDims.y * sizeof(int16_t); // enough for the tile
   shmem += NeighbourChainerV2<Tbitset>::requiredSize(
       tileDims.x *
       tileDims.y); // add for the (maximum) neighbourchainer workspace
