@@ -126,7 +126,7 @@ void localTileCudaTest(
     bpg = wccl::local_connect_naive_unionfind<Tmapping>(d_img, d_mapping, tileDims, windowDist, tpb);
   }
   else if constexpr(method == METHOD_LOCAL_NEIGHBOURCHAIN){
-    bpg = wccl::local_chain_neighbours<Tbitset, Tmapping>(d_img, d_mapping, tileDims, windowDist, tpb);
+    bpg = wccl::local_chain_neighbours_v2<Tbitset, Tmapping>(d_img, d_mapping, tileDims, windowDist, tpb);
   }
 
   thrust::host_vector<Tmapping> h_mappingvec = d_mappingvec;
