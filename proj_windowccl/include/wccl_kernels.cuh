@@ -401,6 +401,14 @@ __device__ void unite(DeviceImage<Tmapping> &s_tile, Tmapping *rootPtr,
 // ========================================================================
 // ========================================================================
 
+/**
+ * @brief Local intra-tile union find kernel.
+ *
+ * @detail Note that it is *not possible* to shrink to use int16_t for internal
+ * shared memory tile storage, as the union-find relies on the existence of the
+ * atomicMin() functions, which only have support as of now with 32-bit integers
+ * and above.
+ */
 template <typename Tmapping, bool useActiveSitesInWindow = false>
 __global__ void local_connect_naive_unionfind_kernel(
     const DeviceImage<uint8_t> input, DeviceImage<Tmapping> mapping,
