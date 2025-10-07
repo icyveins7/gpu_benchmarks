@@ -9,11 +9,15 @@ import matplotlib.pyplot as plt
 def show_generated_data(filepath: str):
     data = np.fromfile(filepath, np.uint8)
     filename = os.path.splitext(os.path.basename(filepath))[0]
-    rows, cols = [int(i) for i in filename.split("_")[0].split("x")]
+    splitfilename = filename.split("_")
+    rows, cols = [int(i) for i in splitfilename[0].split("x")]
     data = data.reshape((rows, cols))
+
+    fraction = np.sum(data)/data.size
 
     fig, ax = plt.subplots()
     img = ax.imshow(data)
+    ax.set_title(f"Activity: {fraction*100}%")
 
     return fig, ax, img
 
