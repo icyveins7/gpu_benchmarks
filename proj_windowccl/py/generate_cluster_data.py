@@ -47,7 +47,13 @@ def add_circle(row: int, col: int, radius: int, mat: np.ndarray):
 
     return count
 
-def generate_lognormal_circles(matrows: int, matcols: int, mu: float, sigma: float, fraction: float = 0.5) -> np.ndarray:
+def generate_lognormal_circles(
+    matrows: int,
+    matcols: int,
+    mu: float,
+    sigma: float,
+    fraction: float = 0.5
+) -> tuple[np.ndarray, int]:
     mat = np.zeros((matrows, matcols), dtype=np.uint8)
 
     # rough estimate of count for log normal
