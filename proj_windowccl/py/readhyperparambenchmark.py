@@ -4,28 +4,52 @@ import pandas as pd
 import numpy as np
 from tqdm import tqdm
 
-def readout(configfile: str):
-    with open(configfile, 'rb') as f:
+def readout(configfilepath: str):
+    dirpath = os.path.dirname(os.path.abspath(configfilepath))
+    with open(configfilepath, 'rb') as f:
         cfgs = pickle.load(f)
 
     for cfg in tqdm(cfgs):
-        db = NsysSqlite(cfg['dbpath'])
+        fulldbpath = os.path.join(dirpath, cfg['dbpath'])
+        db = NsysSqlite(fulldbpath)
         kernels = db.getKernels(["local", "global"])
-        cfg['duration'] = [k.duration() for k in kernels]
-        cfg['duration_total'] = np.sum(cfg['duration'])
+
+        # Note that this now includes pathcompression and readout kernels (last 2)
+        # We just ignore this for now for compute time totals
+        # Current runs are local -> global * N -> path -> pathcompress -> readout
+        # Faster to assume this than to manually check database for strings
+        cfg['duration_local'] = kernels[0].duration
+        cfg['duration_global'] = [kernels[k].duration for k in range(1, len(kernels) - 2)]
+        cfg['duration_pathcompress'] = kernels[-2].duration
+        cfg['duration_readout'] = kernels[-1].duration
+        cfg['duration_total'] = cfg['duration_local'] + np.sum(cfg['duration_global'])
 
     return pd.DataFrame(cfgs)
 
+def read_df(dffilepath: str):
+    with open(dffilepath, 'rb') as f:
+        df = pickle.load(f)
+    return df
 
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
     import argparse
     import os
     parser = argparse.ArgumentParser()
-    parser.add_argument("configfile", nargs="?", default="configurations.pkl")
-    parser.add_argument("--fraction", default=0.5, type=float)
+    parser.add_argument("-c", "--configfile", default="configurations.pkl")
+    parser.add_argument("-d", "--dffile")
+    parser.add_argument("-f", "--fraction", default=0.5, type=float)
     args = parser.parse_args()
-    df = readout(args.configfile)
+
+    if args.dffile is not None:
+        df = read_df(args.dffile)
+    else:
+        df = readout(args.configfile)
+        # Dump it for future
+        dirpath = os.path.dirname(os.path.abspath(args.configfile))
+        print(f"Dumped dataframe to {dirpath}/configurations.df")
+        with open(os.path.join(dirpath, "configurations.df"), 'wb') as f:
+            pickle.dump(df, f)
 
     # Standardise method colours
     methodColours = [(1,0,0), (0,1,0), (0,0,1)]
