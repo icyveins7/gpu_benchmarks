@@ -23,6 +23,7 @@ if __name__ == "__main__":
     import os
     parser = argparse.ArgumentParser()
     parser.add_argument("configfile", nargs="?", default="configurations.pkl")
+    parser.add_argument("--fraction", default=0.5, type=float)
     args = parser.parse_args()
     df = readout(args.configfile)
 
@@ -30,7 +31,7 @@ if __name__ == "__main__":
     methodColours = [(1,0,0), (0,1,0), (0,0,1)]
     methodColourMap = {m: methodColours[i] for i, m in enumerate(df['target'].unique())}
 
-    fraction = df.iloc[0]['fraction'] if 'fraction' in df.columns else 0.5 # This was the default
+    fraction = args.fraction
 
     # Assume window is square for now..
     uniqueWindows = df['windowhdist'].unique()
