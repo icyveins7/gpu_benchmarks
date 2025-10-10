@@ -45,3 +45,4 @@ build/
 .cache/
 *.nsys-rep
 __pycache__/
+*.png
