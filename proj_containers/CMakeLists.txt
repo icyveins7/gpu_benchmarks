@@ -18,6 +18,18 @@ target_sources(
   ${PROJECT_SOURCE_DIR}/streams_example.cu
   ${CMAKE_CURRENT_SOURCE_DIR}/../src/containers/streams.cu
 )
+# --------------------
+set_source_files_properties(bitset_speed.cu PROPERTIES LANGUAGE CUDA)
+add_executable(bitset_speed)
+
+target_include_directories(bitset_speed
+                           PRIVATE ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
+                           )
+
+target_sources(
+  bitset_speed PRIVATE
+  ${PROJECT_SOURCE_DIR}/bitset_speed.cu
+)
 
 # -------------------- Tests
 if (GTEST_FOUND)

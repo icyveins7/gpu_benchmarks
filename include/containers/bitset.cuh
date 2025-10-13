@@ -357,12 +357,14 @@ struct BitsetArray {
    * @param floor Floor i.e. previous minimum bit index
    */
   // __device__ void argminBit(Tidx *minIdx, const Tidx floor) const;
+
 }; // end struct Bitset
 
 // Specializations, because we use intrinsics for specific types
 
 template <>
-__device__ void BitsetArray<unsigned int, int>::argminBit(int *minIdx) const {
+__device__ inline void
+BitsetArray<unsigned int, int>::argminBit(int *minIdx) const {
   // Initialize using first thread
   if (threadIdx.x == 0 && threadIdx.y == 0)
     *minIdx = numBits;
@@ -421,5 +423,49 @@ __device__ void BitsetArray<unsigned int, int>::argminBit(int *minIdx) const {
 //   //        minBit);
 //   atomicMin(minIdx, minBit);
 // }
+
+// =============== KERNELS ======================
+// if i start making a lot of kernels i'll make them non-static and move them
+// elsewhere..
+
+/**
+ * @brief Kernel to globally find the index of the first set bit in an array.
+ * NOTE: the programmer MUST initialize the minIdx to maximum length of the
+ * input array, as atomicMin is used to modify this to the correct value!
+ *
+ * @detail In order to use this effectively, you should actually *NOT* create a
+ * grid that is large enough to span the entire array. This is because the
+ * kernel will then only complete after every block has had a chance to iterate
+ * on the data at least once. Instead, you should create a grid that will fully
+ * occupy the SMs, and nothing more. There is a balance to be struck between
+ * search range of the grid dimensions (how many times it takes your grid to
+ * iterate over the data) and the early stopping mechanic.
+ *
+ * @param bitsetarray Input array
+ * @param minIdx Index of the first set bit
+ * @param floorIdx Optional floor bit index to start from. Note that this simply
+ * converts to an element index (rather than a bit index) so it still
+ * fundamentally assumes that the bits before this index are all 0s already.
+ */
+__global__ static void
+argminBitGlobalKernel(const BitsetArray<unsigned int, int> bitsetarray,
+                      int *minIdx, const int *floorIdx = nullptr) {
+  int minBit = bitsetarray.numBits;
+  int elementFloorIdx =
+      floorIdx != nullptr ? *floorIdx / sizeof(unsigned int) : 0;
+  int numElementsToCheck = bitsetarray.numDataElements - elementFloorIdx;
+  for (int i = threadIdx.y * blockDim.x + threadIdx.x; i < numElementsToCheck;
+       i += blockDim.y * blockDim.x) {
+    const Bitset<unsigned int, int> &elem =
+        bitsetarray.elementAt(i + elementFloorIdx);
+    if (elem.value != 0) {
+      int localMinBit = __ffs(*reinterpret_cast<const int *>(&elem.value)) - 1;
+      minBit = min(minBit, localMinBit + i * 32);
+      break;
+    }
+  }
+  if (minBit < bitsetarray.numBits)
+    atomicMin(minIdx, minBit);
+}
 
 } // namespace containers
