@@ -772,6 +772,69 @@ __global__ void local_connect_kernel(const DeviceImage<uint8_t> input,
 // }
 
 template <typename Tmapping>
+__device__ void naive_global_unionfind_pixel_work(
+    const DeviceImage<Tmapping> &mapping, const int2 blockTileDims,
+    const int tileXstart, const int tileYstart, const int gx, const int gy,
+    const int2 windowDist, unsigned int *updateCounter) {
+  // Read the value, which is the tile root
+  Tmapping *rootPtr = find(
+      mapping, (Tmapping)(gy * mapping.width + gx)); // this will not change
+  // Ignore inactive sites
+  if (rootPtr == nullptr) {
+    return;
+  }
+  // Unite with neighbours in the border
+  for (int gwy = gy - windowDist.y; gwy <= gy + windowDist.y; gwy++) {
+    // Ignore if outside image
+    if (gwy < 0 || gwy >= (int)mapping.height) {
+      continue;
+    }
+    for (int gwx = gx - windowDist.x; gwx <= gx + windowDist.x; gwx++) {
+      // Ignore if outside image
+      if (gwx < 0 || gwx >= (int)mapping.width) {
+        continue;
+      }
+      // Ignore inside the tile
+      if (gwy >= tileYstart && gwy < tileYstart + blockTileDims.y &&
+          gwx >= tileXstart && gwx < tileXstart + blockTileDims.x) {
+        continue;
+      }
+      // Ignore if inactive
+      Tmapping *neighbourRootPtr =
+          find(mapping, (Tmapping)(gwy * mapping.width + gwx));
+      if (neighbourRootPtr == nullptr) {
+        continue;
+      }
+
+      // Otherwise change the root addresses
+      if (*rootPtr < *neighbourRootPtr) {
+        // Change the neighbour's root to this element's root
+        dprintf("Blk (%d,%d), pos(%d, %d), wpos(%d,%d): Tile wants to "
+                "change neighbour "
+                "root %p(%d) -> "
+                "%p(%d)\n",
+                blockIdx.x, blockIdx.y, gx, gy, gwx, gwy, neighbourRootPtr,
+                *neighbourRootPtr, rootPtr, *rootPtr);
+        atomicMin(neighbourRootPtr, *rootPtr);
+        atomicAdd(updateCounter, 1);
+      } else if (*rootPtr > *neighbourRootPtr) {
+        // Change this element's root to the neighbour's root
+        dprintf("Blk (%d,%d), pos(%d, %d), wpos(%d,%d): Neighbour wants to "
+                "change tile "
+                "root %p(%d) -> "
+                "%p(%d)\n",
+                blockIdx.x, blockIdx.y, gx, gy, gwx, gwy, rootPtr, *rootPtr,
+                neighbourRootPtr, *neighbourRootPtr);
+        atomicMin(rootPtr, *neighbourRootPtr);
+        atomicAdd(updateCounter, 1);
+        // modify our rootPtr
+        rootPtr = neighbourRootPtr;
+      }
+    }
+  }
+}
+
+template <typename Tmapping>
 __global__ void naive_global_unionfind_kernel(DeviceImage<Tmapping> mapping,
                                               const int2 tileDims,
                                               const int2 windowDist,
@@ -822,65 +885,258 @@ __global__ void naive_global_unionfind_kernel(DeviceImage<Tmapping> mapping,
         continue;
       }
 
-      // Read the value, which is the tile root
-      Tmapping *rootPtr = find(
-          mapping, (Tmapping)(gy * mapping.width + gx)); // this will not change
-      // Ignore inactive sites
-      if (rootPtr == nullptr) {
-        continue;
-      }
-      // Unite with neighbours in the border
-      for (int gwy = gy - windowDist.y; gwy <= gy + windowDist.y; gwy++) {
-        // Ignore if outside image
-        if (gwy < 0 || gwy >= (int)mapping.height) {
-          continue;
-        }
-        for (int gwx = gx - windowDist.x; gwx <= gx + windowDist.x; gwx++) {
-          // Ignore if outside image
-          if (gwx < 0 || gwx >= (int)mapping.width) {
-            continue;
-          }
-          // Ignore inside the tile
-          if (gwy >= tileYstart && gwy < tileYstart + blockTileDims.y &&
-              gwx >= tileXstart && gwx < tileXstart + blockTileDims.x) {
-            continue;
-          }
-          // Ignore if inactive
-          Tmapping *neighbourRootPtr =
-              find(mapping, (Tmapping)(gwy * mapping.width + gwx));
-          if (neighbourRootPtr == nullptr) {
-            continue;
-          }
-
-          // Otherwise change the root addresses
-          if (*rootPtr < *neighbourRootPtr) {
-            // Change the neighbour's root to this element's root
-            dprintf("Blk (%d,%d), pos(%d, %d), wpos(%d,%d): Tile wants to "
-                    "change neighbour "
-                    "root %p(%d) -> "
-                    "%p(%d)\n",
-                    blockIdx.x, blockIdx.y, gx, gy, gwx, gwy, neighbourRootPtr,
-                    *neighbourRootPtr, rootPtr, *rootPtr);
-            atomicMin(neighbourRootPtr, *rootPtr);
-            atomicAdd(updateCounter, 1);
-          } else if (*rootPtr > *neighbourRootPtr) {
-            // Change this element's root to the neighbour's root
-            dprintf("Blk (%d,%d), pos(%d, %d), wpos(%d,%d): Neighbour wants to "
-                    "change tile "
-                    "root %p(%d) -> "
-                    "%p(%d)\n",
-                    blockIdx.x, blockIdx.y, gx, gy, gwx, gwy, rootPtr, *rootPtr,
-                    neighbourRootPtr, *neighbourRootPtr);
-            atomicMin(rootPtr, *neighbourRootPtr);
-            atomicAdd(updateCounter, 1);
-            // modify our rootPtr
-            rootPtr = neighbourRootPtr;
-          }
-        }
-      }
+      // Perform the window search + unites for this pixel
+      naive_global_unionfind_pixel_work<Tmapping>(
+          mapping, blockTileDims, tileXstart, tileYstart, gx, gy, windowDist,
+          updateCounter);
     }
   }
 }
+
+/*
+Global union find kernels operate on the valid borders of each tile.
+There's an issue with warp divergence, since in most cases the window horizontal
+distance is <32, so then the warp is only active for up to the horizontal
+distance on both the left and right borders.
+
+This means that for much of the tile, most warps will not be fully occupied (but
+still have valid work). The best way to tackle this is to split the tile's
+processing into top/bottom border, and left/right border. The top and bottom
+borders are contiguous in global memory, so the warp will always have work.
+
+For the left and right borders, we could minimally have the warp directly
+access both the left and right borders exactly. This should look like (WH =
+window horizontal dist, TW = tilewidth)
+
+0,1,... WH-1, NA, NA, ..... TW-WH, TW-WH+1, ...., TW-1
+
+NOTE: this appears to just be way slower... maybe because the warp on the left
+and right now globally access two distinct global memory regions as well,
+presenting warp divergence in the window search
+*/
+
+// template <typename Tmapping>
+// __global__ void naive_global_unionfind_v2_kernel(DeviceImage<Tmapping>
+// mapping,
+//                                                  const int2 tileDims,
+//                                                  const int2 windowDist,
+//                                                  unsigned int *updateCounter)
+//                                                  {
+//   // Still 'work in the tile'
+//   const int tileXstart = blockIdx.x * tileDims.x;
+//   const int tileYstart = blockIdx.y * tileDims.y;
+//   const int2 blockTileDims{tileXstart + tileDims.x < (int)mapping.width
+//                                ? tileDims.x
+//                                : (int)mapping.width - tileXstart,
+//                            tileYstart + tileDims.y < (int)mapping.height
+//                                ? tileDims.y
+//                                : (int)mapping.height - tileYstart};
+//
+//   // == TOP: Specifically iterate over the top border only
+//   for (int ty = threadIdx.y; ty < windowDist.y; ty += blockDim.y) {
+//     int gy = tileYstart + ty;
+//     for (int tx = threadIdx.x; tx < blockTileDims.x; tx += blockDim.x) {
+//       int gx = tileXstart + tx;
+//       // Read the value, which is the tile root
+//       Tmapping *rootPtr = find(
+//           mapping, (Tmapping)(gy * mapping.width + gx)); // this will not
+//           change
+//       // Ignore inactive sites
+//       if (rootPtr == nullptr) {
+//         continue;
+//       }
+//
+//       // Unite with neighbours in the border
+//       for (int gwy = gy - windowDist.y; gwy <= gy + windowDist.y; gwy++) {
+//         // Ignore if outside image
+//         if (gwy < 0 || gwy >= (int)mapping.height) {
+//           continue;
+//         }
+//         for (int gwx = gx - windowDist.x; gwx <= gx + windowDist.x; gwx++) {
+//           // Ignore if outside image
+//           if (gwx < 0 || gwx >= (int)mapping.width) {
+//             continue;
+//           }
+//           // Ignore inside the tile
+//           if (gwy >= tileYstart && gwy < tileYstart + blockTileDims.y &&
+//               gwx >= tileXstart && gwx < tileXstart + blockTileDims.x) {
+//             continue;
+//           }
+//           // Ignore if inactive
+//           Tmapping *neighbourRootPtr =
+//               find(mapping, (Tmapping)(gwy * mapping.width + gwx));
+//           if (neighbourRootPtr == nullptr) {
+//             continue;
+//           }
+//
+//           // Otherwise change the root addresses
+//           if (*rootPtr < *neighbourRootPtr) {
+//             // Change the neighbour's root to this element's root
+//             dprintf("Blk (%d,%d), pos(%d, %d), wpos(%d,%d): Tile wants to "
+//                     "change neighbour "
+//                     "root %p(%d) -> "
+//                     "%p(%d)\n",
+//                     blockIdx.x, blockIdx.y, gx, gy, gwx, gwy,
+//                     neighbourRootPtr, *neighbourRootPtr, rootPtr, *rootPtr);
+//             atomicMin(neighbourRootPtr, *rootPtr);
+//             atomicAdd(updateCounter, 1);
+//           } else if (*rootPtr > *neighbourRootPtr) {
+//             // Change this element's root to the neighbour's root
+//             dprintf("Blk (%d,%d), pos(%d, %d), wpos(%d,%d): Neighbour wants
+//             to "
+//                     "change tile "
+//                     "root %p(%d) -> "
+//                     "%p(%d)\n",
+//                     blockIdx.x, blockIdx.y, gx, gy, gwx, gwy, rootPtr,
+//                     *rootPtr, neighbourRootPtr, *neighbourRootPtr);
+//             atomicMin(rootPtr, *neighbourRootPtr);
+//             atomicAdd(updateCounter, 1);
+//             // modify our rootPtr
+//             rootPtr = neighbourRootPtr;
+//           }
+//         }
+//       } // end unite loops
+//     }
+//   }
+//   // == BTM: Identical processing for bottom border
+//   for (int ty = threadIdx.y; ty < windowDist.y; ty += blockDim.y) {
+//     int gy = tileYstart + tileDims.y - windowDist.y + ty;
+//     for (int tx = threadIdx.x; tx < blockTileDims.x; tx += blockDim.x) {
+//       int gx = tileXstart + tx;
+//       // Read the value, which is the tile root
+//       Tmapping *rootPtr = find(
+//           mapping, (Tmapping)(gy * mapping.width + gx)); // this will not
+//           change
+//       // Ignore inactive sites
+//       if (rootPtr == nullptr) {
+//         continue;
+//       }
+//
+//       // Unite with neighbours in the border
+//       for (int gwy = gy - windowDist.y; gwy <= gy + windowDist.y; gwy++) {
+//         // Ignore if outside image
+//         if (gwy < 0 || gwy >= (int)mapping.height) {
+//           continue;
+//         }
+//         for (int gwx = gx - windowDist.x; gwx <= gx + windowDist.x; gwx++) {
+//           // Ignore if outside image
+//           if (gwx < 0 || gwx >= (int)mapping.width) {
+//             continue;
+//           }
+//           // Ignore inside the tile
+//           if (gwy >= tileYstart && gwy < tileYstart + blockTileDims.y &&
+//               gwx >= tileXstart && gwx < tileXstart + blockTileDims.x) {
+//             continue;
+//           }
+//           // Ignore if inactive
+//           Tmapping *neighbourRootPtr =
+//               find(mapping, (Tmapping)(gwy * mapping.width + gwx));
+//           if (neighbourRootPtr == nullptr) {
+//             continue;
+//           }
+//
+//           // Otherwise change the root addresses
+//           if (*rootPtr < *neighbourRootPtr) {
+//             // Change the neighbour's root to this element's root
+//             dprintf("Blk (%d,%d), pos(%d, %d), wpos(%d,%d): Tile wants to "
+//                     "change neighbour "
+//                     "root %p(%d) -> "
+//                     "%p(%d)\n",
+//                     blockIdx.x, blockIdx.y, gx, gy, gwx, gwy,
+//                     neighbourRootPtr, *neighbourRootPtr, rootPtr, *rootPtr);
+//             atomicMin(neighbourRootPtr, *rootPtr);
+//             atomicAdd(updateCounter, 1);
+//           } else if (*rootPtr > *neighbourRootPtr) {
+//             // Change this element's root to the neighbour's root
+//             dprintf("Blk (%d,%d), pos(%d, %d), wpos(%d,%d): Neighbour wants
+//             to "
+//                     "change tile "
+//                     "root %p(%d) -> "
+//                     "%p(%d)\n",
+//                     blockIdx.x, blockIdx.y, gx, gy, gwx, gwy, rootPtr,
+//                     *rootPtr, neighbourRootPtr, *neighbourRootPtr);
+//             atomicMin(rootPtr, *neighbourRootPtr);
+//             atomicAdd(updateCounter, 1);
+//             // modify our rootPtr
+//             rootPtr = neighbourRootPtr;
+//           }
+//         }
+//       } // end unite loops
+//     }
+//   }
+//
+//   // == LEFT/RIGHT: Directly read left and right borders
+//   for (int ty = threadIdx.y; ty < blockTileDims.y - 2 * windowDist.y;
+//        ty += blockDim.y) {
+//     int gy = tileYstart + ty + windowDist.y;
+//     for (int tx = threadIdx.x; tx < windowDist.x * 2; tx += blockDim.x) {
+//       // First half of thread loops read left, 2nd half read right
+//       int gx =
+//           tx >= windowDist.x ? tileXstart + tileDims.x - windowDist.x + tx :
+//           tx;
+//
+//       // Read the value, which is the tile root
+//       Tmapping *rootPtr = find(
+//           mapping, (Tmapping)(gy * mapping.width + gx)); // this will not
+//           change
+//       // Ignore inactive sites
+//       if (rootPtr == nullptr) {
+//         continue;
+//       }
+//
+//       // Unite with neighbours in the border
+//       for (int gwy = gy - windowDist.y; gwy <= gy + windowDist.y; gwy++) {
+//         // Ignore if outside image
+//         if (gwy < 0 || gwy >= (int)mapping.height) {
+//           continue;
+//         }
+//         for (int gwx = gx - windowDist.x; gwx <= gx + windowDist.x; gwx++) {
+//           // Ignore if outside image
+//           if (gwx < 0 || gwx >= (int)mapping.width) {
+//             continue;
+//           }
+//           // Ignore inside the tile
+//           if (gwy >= tileYstart && gwy < tileYstart + blockTileDims.y &&
+//               gwx >= tileXstart && gwx < tileXstart + blockTileDims.x) {
+//             continue;
+//           }
+//           // Ignore if inactive
+//           Tmapping *neighbourRootPtr =
+//               find(mapping, (Tmapping)(gwy * mapping.width + gwx));
+//           if (neighbourRootPtr == nullptr) {
+//             continue;
+//           }
+//
+//           // Otherwise change the root addresses
+//           if (*rootPtr < *neighbourRootPtr) {
+//             // Change the neighbour's root to this element's root
+//             dprintf("Blk (%d,%d), pos(%d, %d), wpos(%d,%d): Tile wants to "
+//                     "change neighbour "
+//                     "root %p(%d) -> "
+//                     "%p(%d)\n",
+//                     blockIdx.x, blockIdx.y, gx, gy, gwx, gwy,
+//                     neighbourRootPtr, *neighbourRootPtr, rootPtr, *rootPtr);
+//             atomicMin(neighbourRootPtr, *rootPtr);
+//             atomicAdd(updateCounter, 1);
+//           } else if (*rootPtr > *neighbourRootPtr) {
+//             // Change this element's root to the neighbour's root
+//             dprintf("Blk (%d,%d), pos(%d, %d), wpos(%d,%d): Neighbour wants
+//             to "
+//                     "change tile "
+//                     "root %p(%d) -> "
+//                     "%p(%d)\n",
+//                     blockIdx.x, blockIdx.y, gx, gy, gwx, gwy, rootPtr,
+//                     *rootPtr, neighbourRootPtr, *neighbourRootPtr);
+//             atomicMin(rootPtr, *neighbourRootPtr);
+//             atomicAdd(updateCounter, 1);
+//             // modify our rootPtr
+//             rootPtr = neighbourRootPtr;
+//           }
+//         }
+//       } // end unite loops
+//     }
+//   }
+// }
 
 /**
  * @brief Wrapper function for performing repeated inter-tile union-find
