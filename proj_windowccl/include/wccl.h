@@ -15,6 +15,20 @@ namespace wccl
 {
 
 template <typename T>
+std::string bitstring(const T* data, const int numRows, const int numColElements) {
+  std::string s;
+  for (int i = 0; i < numRows; ++i){
+    for (int j = 0; j < numColElements; ++j){
+      for (int k = 0; k < sizeof(T) * 8; ++k){
+        s += (data[i * numColElements + j] & (1 << k) ? '1' : '0');
+      }
+    }
+    s += "\n";
+  }
+  return s;
+}
+
+template <typename T>
 std::string idxstring(const T* data,
                       const int height,
                       const int width,

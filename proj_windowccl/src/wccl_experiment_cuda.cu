@@ -1,4 +1,5 @@
 #include "wccl.h"
+#include "wccl_hybrid.cuh"
 #include "wccl_kernels.cuh"
 
 #include <algorithm>
@@ -85,11 +86,11 @@ int main(int argc, char* argv[]) {
     std::fill(input.begin() + (int)(fraction*rows*cols), input.end(), 0);
     std::random_shuffle(input.begin(), input.end());
 
-    if (rows < 64 && cols < 64) {
+    if (rows <= 64 && cols <= 64) {
       printf("Input:\n%s\n ========================== \n",
              wccl::idxstring<uint8_t>(
              input.data(), rows, cols,
-             "%hhu ")
+             "%hhu")
              .c_str());
     }
   }
@@ -179,6 +180,23 @@ int main(int argc, char* argv[]) {
   wccl::DeviceImage<uint8_t> d_image(d_input, rows, cols);
   wccl::DeviceImage<MappingType> d_mapping(d_mapping_vec, rows, cols);
 
+#ifdef USE_NEIGHBOURCHAINERHYBRID
+  wccl::HybridNeighbourChainer neighbourChainerHybrid(rows, cols);
+  neighbourChainerHybrid.fillBeta(h_input.data());
+  // DEBUG check of filling
+  // printf("Check of beta after compressing\n");
+  // printf(wccl::bitstring(&neighbourChainerHybrid.getHostBeta()[0], neighbourChainerHybrid.getRows(), neighbourChainerHybrid.getColElements()).c_str());
+
+  unsigned int seedIdx = neighbourChainerHybrid.getNextBeta();
+  while (seedIdx < neighbourChainerHybrid.getRows() * neighbourChainerHybrid.getCols()) {
+    neighbourChainerHybrid.execute(seedIdx, windowDist);
+    // printf("Check of beta after execute\n");
+    // printf(wccl::bitstring(&neighbourChainerHybrid.getHostBeta()[0], neighbourChainerHybrid.getRows(), neighbourChainerHybrid.getColElements()).c_str());
+
+    seedIdx = neighbourChainerHybrid.getNextBeta();
+  }
+  printf("Exited hybrid loop\n");
+#else
   // ========== Kernel 1. Local tile merge (using non atomics)
 #ifdef USE_NEIGHBOURCHAINER
   printf("Using neighbour chainer\n");
@@ -278,6 +296,7 @@ int main(int argc, char* argv[]) {
   //   }
   // }
   printf("Clusterlist length = %u / %zu\n", h_clusterlistlength[0], maxCount);
+#endif
 
   return 0;
 }

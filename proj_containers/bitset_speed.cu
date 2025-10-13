@@ -1,4 +1,5 @@
 #include "containers.cuh"
+#include "pinnedalloc.cuh"
 #include "timer.h"
 #include <cstdlib>
 #include <nvtx3/nvToolsExt.h>
@@ -45,7 +46,7 @@ int main() {
   thrust::device_vector<int> d_minIdx(1);
   thrust::device_vector<int> d_floor(1);
 
-  thrust::host_vector<int> h_minIdx(1);
+  thrust::pinned_host_vector<int> h_minIdx(1);
 
   for (int i = 0; i < 3; ++i) {
     // reset min index
@@ -69,8 +70,8 @@ int main() {
 
     {
       // Rough comparison with CPU timing to iterate
-      thrust::host_vector<containers::Bitset<unsigned int, int>>
-          h_bitsetarrayvec = d_bitsetarrayvec;
+      thrust::pinned_host_vector<unsigned int> h_bitsetarrayvec =
+          d_bitsetarrayvec;
       // HighResolutionTimer timer;
       // for (size_t i = 0; i < h_bitsetarrayvec.size(); ++i) {
       //   if (h_bitsetarrayvec[i].value != 0) {

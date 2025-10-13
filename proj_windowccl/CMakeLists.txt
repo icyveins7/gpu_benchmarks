@@ -21,6 +21,8 @@ target_sources(
 # --------------------
 set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/src/wccl_experiment_cuda.cu PROPERTIES LANGUAGE CUDA)
 set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/include/wccl_kernels.cuh PROPERTIES LANGUAGE CUDA)
+set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/include/wccl_hybrid.cuh PROPERTIES LANGUAGE CUDA)
+set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/include/wccl_hybrid.cu PROPERTIES LANGUAGE CUDA)
 
 add_executable(wccl_experiment_cuda)
 target_include_directories(
@@ -88,6 +90,28 @@ target_include_directories(
 target_sources(
   wccl_experiment_cuda_neighbourchainlocal PRIVATE
   ${PROJECT_SOURCE_DIR}/src/wccl_experiment_cuda.cu
+)
+
+# And another one also for hybrid CPU-GPU neighbour chaining
+add_executable(wccl_experiment_cuda_neighbourchainhybrid)
+target_compile_options(
+  wccl_experiment_cuda_neighbourchainhybrid
+  PRIVATE
+  -DUSE_NEIGHBOURCHAINERHYBRID
+  -g
+  # -G
+  -lineinfo
+)
+target_include_directories(
+  wccl_experiment_cuda_neighbourchainhybrid
+  PRIVATE
+  ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+target_sources(
+  wccl_experiment_cuda_neighbourchainhybrid PRIVATE
+  ${PROJECT_SOURCE_DIR}/src/wccl_experiment_cuda.cu
+  ${PROJECT_SOURCE_DIR}/src/wccl_hybrid.cu
 )
 
 

@@ -43,7 +43,8 @@ template <typename Tval = unsigned int, typename Tidx = int> struct Bitset {
    * Example: 0b00011110 -> (start = 1, len = 4)
    * Note that this will not produce an error if the range extends out of bounds
    * of the element, e.g. for Tval = uint8 if bIndexStart > 8 then the mask is
-   * simply all zeroes.
+   * simply all zeroes. It is also only valid for length strictly less than the
+   * number of bits in Tval.
    *
    * @param bIndexStart Starting bit index
    * @param len Number of bits set in the bitmask
