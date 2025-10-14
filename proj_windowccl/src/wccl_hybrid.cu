@@ -1,5 +1,6 @@
 #include "wccl.h"
 #include "wccl_hybrid.cuh"
+#include <nvtx3/nvToolsExt.h>
 
 namespace wccl {
 
@@ -50,7 +51,7 @@ __global__ void construct_seedrow_kernel(const unsigned int *beta,
   const int rightWindowBit = seedCol + windowDist.x;
 
   for (int i = blockDim.x * blockIdx.x + threadIdx.x; i < rows * colElements;
-       i += blockDim.x) {
+       i += gridDim.x * blockDim.x) {
     int row = i / colElements;
     int colElement = i % colElements;
     unsigned int out =
@@ -64,14 +65,16 @@ __global__ void merge_gammas_to_seedrow_kernel(
     const unsigned int *gammaIdx, const int numGammaIdx, unsigned int *seedrow,
     const int rows, const int colElements, const int2 windowDist,
     const unsigned int *beta) {
+  const int totalSize = rows * colElements;
+  const int gridSize = gridDim.x * blockDim.x;
 
-  for (int i = blockDim.x * blockIdx.x + threadIdx.x; i < rows * colElements;
-       i += blockDim.x) {
+  for (int i = blockDim.x * blockIdx.x + threadIdx.x; i < totalSize;
+       i += gridSize) {
     // Define output for current element
     int row = i / colElements;
     int colElement = i % colElements;
-    unsigned int out = seedrow[row * colElements + colElement];
 
+    unsigned int mask = 0;
     for (int g = 0; g < numGammaIdx; ++g) {
       // // DEBUG
       // if (threadIdx.x == 0)
@@ -84,11 +87,13 @@ __global__ void merge_gammas_to_seedrow_kernel(
       const int leftWindowBit = targetCol - windowDist.x;
       const int rightWindowBit = targetCol + windowDist.x;
 
-      out |= compute_masked_element(leftWindowBit, rightWindowBit, row,
-                                    colElement, beta[i], targetRow, windowDist);
+      mask |=
+          compute_masked_element(leftWindowBit, rightWindowBit, row, colElement,
+                                 beta[i], targetRow, windowDist);
     }
 
-    seedrow[i] = out;
+    if (mask != 0)
+      seedrow[i] = seedrow[i] | mask;
   }
 }
 
@@ -139,8 +144,10 @@ void HybridNeighbourChainer::execute(const int seedIndex,
   bool continueIterations = true;
   while (continueIterations) {
     // 3. Compute gamma (neighbours of interest) [GPU]
+    nvtxRangePushA("compute gamma via bit_and");
     thrust::transform(d_seedrow.begin(), d_seedrow.end(), d_beta.begin(),
                       d_gamma.begin(), thrust::bit_and<unsigned int>());
+    nvtxRangePop();
 
     // 4. Copy gamma back to host
     thrust::copy(d_gamma.begin(), d_gamma.end(), h_gamma.begin());
@@ -149,39 +156,50 @@ void HybridNeighbourChainer::execute(const int seedIndex,
     //        wccl::bitstring(&h_gamma[0], m_rows, m_colElements).c_str());
 
     // 5. Compute gamma indices in CPU; if gamma empty, end (go to 9)
-    h_gammaIdx.clear();
+    nvtxRangePushA("compute gamma indices CPU");
+    // h_gammaIdx.clear(); // thrust pinned host vector is still calling kernels
+    // when using pushback?
+    unsigned int gammaCounter = 0;
 
     for (int i = 0; i < (int)h_gamma.size(); ++i) {
       if (h_gamma[i] != 0) {
         for (int j = 0; j < numBitsPerElement<unsigned int>(); ++j) {
           if (h_gamma[i] & (1 << j)) {
-            h_gammaIdx.push_back(i * numBitsPerElement<unsigned int>() + j);
+            h_gammaIdx[gammaCounter] =
+                i * numBitsPerElement<unsigned int>() + j;
+            gammaCounter++;
+            // h_gammaIdx.push_back(i * numBitsPerElement<unsigned int>() + j);
           }
         }
       }
     }
-    if (h_gammaIdx.size() == 0) {
+    // if (h_gammaIdx.size() == 0) {
+    if (gammaCounter == 0) {
       continueIterations = false;
-      // printf("Gamma empty for seed index %d\n", seedIndex);
       break;
     }
+    nvtxRangePop();
     // DEBUG:
-    printf("gammaIdx size: %lu\n", h_gammaIdx.size());
+    printf("gammaIdx size: %u\n", gammaCounter);
     // If gamma not empty, continue
 
     // -  6. Copy gamma index list to device
-    thrust::copy(h_gammaIdx.begin(), h_gammaIdx.end(), d_gammaIdx.begin());
+    thrust::copy(h_gammaIdx.begin(), h_gammaIdx.begin() + gammaCounter,
+                 d_gammaIdx.begin());
 
     // -  7. Merge (bitwise OR) all gamma index rows with seed row [GPU]
     {
+      char msg[32];
+      snprintf(msg, sizeof(msg), "mergekernel[%u]", gammaCounter);
+      nvtxRangePushA(msg);
       int tpb = 256;
-      int blks = 512; //(m_rows * m_colElements + tpb - 1) / tpb;
+      int blks = (m_rows * m_colElements + tpb - 1) / tpb;
       merge_gammas_to_seedrow_kernel<<<blks, tpb>>>(
           d_gammaIdx.data().get(),
-          (int)h_gammaIdx.size(), // use h_gamma size because d_gamma does
-                                  // not take the size after copying
+          (int)gammaCounter, // use gammaCounter directly
           d_seedrow.data().get(), m_rows, m_colElements, windowDist,
           d_beta.data().get());
+      nvtxRangePop();
     }
     // // DEBUG
     // h_seedrow = d_seedrow;
@@ -190,8 +208,10 @@ void HybridNeighbourChainer::execute(const int seedIndex,
 
     // Consume all gammas before continuing
     // printf("Consuming gammas \n");
+    nvtxRangePushA("bitxor gammas to beta");
     thrust::transform(d_beta.begin(), d_beta.end(), d_gamma.begin(),
                       d_beta.begin(), thrust::bit_xor<unsigned int>());
+    nvtxRangePop();
 
     // // DEBUG
     // h_beta = d_beta;

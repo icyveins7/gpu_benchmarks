@@ -184,8 +184,10 @@ int main(int argc, char* argv[]) {
   wccl::HybridNeighbourChainer neighbourChainerHybrid(rows, cols);
   neighbourChainerHybrid.fillBeta(h_input.data());
   // DEBUG check of filling
-  // printf("Check of beta after compressing\n");
-  // printf(wccl::bitstring(&neighbourChainerHybrid.getHostBeta()[0], neighbourChainerHybrid.getRows(), neighbourChainerHybrid.getColElements()).c_str());
+  if (rows <= 64 && cols <= 64) {
+    printf("Check of beta after compressing\n");
+    printf(wccl::bitstring(&neighbourChainerHybrid.getHostBeta()[0], neighbourChainerHybrid.getRows(), neighbourChainerHybrid.getColElements()).c_str());
+  }
 
   unsigned int seedIdx = neighbourChainerHybrid.getNextBeta();
   while (seedIdx < neighbourChainerHybrid.getRows() * neighbourChainerHybrid.getCols()) {
@@ -194,8 +196,14 @@ int main(int argc, char* argv[]) {
     // printf(wccl::bitstring(&neighbourChainerHybrid.getHostBeta()[0], neighbourChainerHybrid.getRows(), neighbourChainerHybrid.getColElements()).c_str());
 
     seedIdx = neighbourChainerHybrid.getNextBeta();
+    break;
   }
   printf("Exited hybrid loop\n");
+  if (rows <= 64 && cols <= 64) {
+    printf("Check of beta at the end\n");
+    printf(wccl::bitstring(&neighbourChainerHybrid.getHostBeta()[0], neighbourChainerHybrid.getRows(), neighbourChainerHybrid.getColElements()).c_str());
+  }
+
 #else
   // ========== Kernel 1. Local tile merge (using non atomics)
 #ifdef USE_NEIGHBOURCHAINER
