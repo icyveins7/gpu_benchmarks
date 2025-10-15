@@ -194,7 +194,7 @@ void HybridNeighbourChainer::execute(const int seedIndex,
       snprintf(msg, sizeof(msg), "mergekernel[%u]", gammaCounter);
       nvtxRangePushA(msg);
 
-      dim3 tpb(32, 8);
+      dim3 tpb(32, 2);
       // int blks = (m_rows * m_colElements + tpb - 1) / tpb;
       dim3 blks(m_colElements / tpb.x + (m_colElements % tpb.x > 0 ? 1 : 0),
                 m_rows / tpb.y + (m_rows % tpb.y > 0 ? 1 : 0));
