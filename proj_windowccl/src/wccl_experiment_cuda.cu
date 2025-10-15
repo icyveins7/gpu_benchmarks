@@ -192,11 +192,13 @@ int main(int argc, char* argv[]) {
   unsigned int seedIdx = neighbourChainerHybrid.getNextBeta();
   while (seedIdx < neighbourChainerHybrid.getRows() * neighbourChainerHybrid.getCols()) {
     neighbourChainerHybrid.execute(seedIdx, windowDist);
-    // printf("Check of beta after execute\n");
-    // printf(wccl::bitstring(&neighbourChainerHybrid.getHostBeta()[0], neighbourChainerHybrid.getRows(), neighbourChainerHybrid.getColElements()).c_str());
+    if (rows <= 64 && cols <= 64) {
+      printf("Check of beta after execute\n");
+      printf(wccl::bitstring(&neighbourChainerHybrid.getHostBeta()[0], neighbourChainerHybrid.getRows(), neighbourChainerHybrid.getColElements()).c_str());
+    }
 
     seedIdx = neighbourChainerHybrid.getNextBeta();
-    break;
+    // break;
   }
   printf("Exited hybrid loop\n");
   if (rows <= 64 && cols <= 64) {

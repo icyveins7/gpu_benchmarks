@@ -65,35 +65,36 @@ __global__ void merge_gammas_to_seedrow_kernel(
     const unsigned int *gammaIdx, const int numGammaIdx, unsigned int *seedrow,
     const int rows, const int colElements, const int2 windowDist,
     const unsigned int *beta) {
-  const int totalSize = rows * colElements;
-  const int gridSize = gridDim.x * blockDim.x;
 
-  for (int i = blockDim.x * blockIdx.x + threadIdx.x; i < totalSize;
-       i += gridSize) {
-    // Define output for current element
-    int row = i / colElements;
-    int colElement = i % colElements;
+  for (int i = blockDim.y * blockIdx.y + threadIdx.y; i < rows;
+       i += gridDim.y * blockDim.y) {
+    for (int j = blockDim.x * blockIdx.x + threadIdx.x; j < colElements;
+         j += gridDim.x * blockDim.x) {
+      // Define output for current element
+      int row = i;
+      int colElement = j;
 
-    unsigned int mask = 0;
-    for (int g = 0; g < numGammaIdx; ++g) {
-      // // DEBUG
-      // if (threadIdx.x == 0)
-      //   printf("gammaIdx[%d] = %d\n", g, gammaIdx[g]);
-      // Compute effective row and column bit index from seed
-      const int targetRow =
-          gammaIdx[g] / (colElements * numBitsPerElement<unsigned int>());
-      const int targetCol =
-          gammaIdx[g] % (colElements * numBitsPerElement<unsigned int>());
-      const int leftWindowBit = targetCol - windowDist.x;
-      const int rightWindowBit = targetCol + windowDist.x;
+      unsigned int mask = 0;
+      for (int g = 0; g < numGammaIdx; ++g) {
+        // // DEBUG
+        // if (threadIdx.x == 0)
+        //   printf("gammaIdx[%d] = %d\n", g, gammaIdx[g]);
+        // Compute effective row and column bit index from seed
+        const int targetRow =
+            gammaIdx[g] / (colElements * numBitsPerElement<unsigned int>());
+        const int targetCol =
+            gammaIdx[g] % (colElements * numBitsPerElement<unsigned int>());
+        const int leftWindowBit = targetCol - windowDist.x;
+        const int rightWindowBit = targetCol + windowDist.x;
 
-      mask |=
-          compute_masked_element(leftWindowBit, rightWindowBit, row, colElement,
-                                 beta[i], targetRow, windowDist);
+        mask |= compute_masked_element(leftWindowBit, rightWindowBit, row,
+                                       colElement, beta[i * colElements + j],
+                                       targetRow, windowDist);
+      }
+
+      if (mask != 0)
+        seedrow[i * colElements + j] = seedrow[i * colElements + j] | mask;
     }
-
-    if (mask != 0)
-      seedrow[i] = seedrow[i] | mask;
   }
 }
 
@@ -192,8 +193,11 @@ void HybridNeighbourChainer::execute(const int seedIndex,
       char msg[32];
       snprintf(msg, sizeof(msg), "mergekernel[%u]", gammaCounter);
       nvtxRangePushA(msg);
-      int tpb = 256;
-      int blks = (m_rows * m_colElements + tpb - 1) / tpb;
+
+      dim3 tpb(32, 8);
+      // int blks = (m_rows * m_colElements + tpb - 1) / tpb;
+      dim3 blks(m_colElements / tpb.x + (m_colElements % tpb.x > 0 ? 1 : 0),
+                m_rows / tpb.y + (m_rows % tpb.y > 0 ? 1 : 0));
       merge_gammas_to_seedrow_kernel<<<blks, tpb>>>(
           d_gammaIdx.data().get(),
           (int)gammaCounter, // use gammaCounter directly
