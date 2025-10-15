@@ -61,10 +61,11 @@ __global__ void construct_seedrow_kernel(const unsigned int *beta,
   }
 }
 
-__global__ void merge_gammas_to_seedrow_kernel(
-    const unsigned int *gammaIdx, const int numGammaIdx, unsigned int *seedrow,
-    const int rows, const int colElements, const int2 windowDist,
-    const unsigned int *beta) {
+__global__ void
+merge_gammas_to_seedrow_kernel(const ushort2 *gammaIdx, const int numGammaIdx,
+                               unsigned int *seedrow, const int rows,
+                               const int colElements, const int2 windowDist,
+                               const unsigned int *beta) {
 
   for (int i = blockDim.y * blockIdx.y + threadIdx.y; i < rows;
        i += gridDim.y * blockDim.y) {
@@ -80,10 +81,11 @@ __global__ void merge_gammas_to_seedrow_kernel(
         // if (threadIdx.x == 0)
         //   printf("gammaIdx[%d] = %d\n", g, gammaIdx[g]);
         // Compute effective row and column bit index from seed
-        const int targetRow =
-            gammaIdx[g] / (colElements * numBitsPerElement<unsigned int>());
-        const int targetCol =
-            gammaIdx[g] % (colElements * numBitsPerElement<unsigned int>());
+        const int targetRow = gammaIdx[g].y;
+        const int targetCol = gammaIdx[g].x;
+        // gammaIdx[g] / (colElements * numBitsPerElement<unsigned int>());
+        // const int targetCol =
+        //     gammaIdx[g] % (colElements * numBitsPerElement<unsigned int>());
         const int leftWindowBit = targetCol - windowDist.x;
         const int rightWindowBit = targetCol + windowDist.x;
 
@@ -166,8 +168,10 @@ void HybridNeighbourChainer::execute(const int seedIndex,
       if (h_gamma[i] != 0) {
         for (int j = 0; j < numBitsPerElement<unsigned int>(); ++j) {
           if (h_gamma[i] & (1 << j)) {
-            h_gammaIdx[gammaCounter] =
-                i * numBitsPerElement<unsigned int>() + j;
+            h_gammaIdx[gammaCounter].x =
+                (i % m_colElements) * numBitsPerElement<unsigned int>() + j;
+            h_gammaIdx[gammaCounter].y = i / m_colElements;
+            // i *numBitsPerElement<unsigned int>() + j;
             gammaCounter++;
             // h_gammaIdx.push_back(i * numBitsPerElement<unsigned int>() + j);
           }

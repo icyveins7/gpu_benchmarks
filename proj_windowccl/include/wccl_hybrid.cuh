@@ -77,8 +77,8 @@ protected:
   thrust::device_vector<unsigned int> d_gamma;
   thrust::pinned_host_vector<unsigned int> h_gamma;
   thrust::device_vector<unsigned int> d_seedrow;
-  thrust::device_vector<unsigned int> d_gammaIdx;
-  thrust::pinned_host_vector<unsigned int> h_gammaIdx;
+  thrust::device_vector<ushort2> d_gammaIdx;
+  thrust::pinned_host_vector<ushort2> h_gammaIdx;
 };
 
 } // namespace wccl
