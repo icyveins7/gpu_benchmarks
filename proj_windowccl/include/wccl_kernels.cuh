@@ -3,12 +3,16 @@
 #include <cstdint>
 #include <stdexcept>
 #include <thrust/device_vector.h>
+#include <thrust/iterator/constant_iterator.h>
+#include <thrust/iterator/discard_iterator.h>
+#include <thrust/sort.h>
 
 #include "accessors.cuh"
 #include "atomic_extensions.cuh"
 #include "containers/bitset.cuh"
 #include "pinnedalloc.cuh"
 #include "sharedmem.cuh"
+#include "timer.h"
 
 namespace wccl {
 
@@ -1190,14 +1194,8 @@ naive_global_pathcompress_kernel(DeviceImage<Tmapping> d_mapping) {
   // Simple 2D grid stride
   for (int y = blockIdx.y * blockDim.y + threadIdx.y; y < d_mapping.height;
        y += blockDim.y * gridDim.y) {
-    if (y >= d_mapping.height) {
-      continue;
-    }
     for (int x = blockIdx.x * blockDim.x + threadIdx.x; x < d_mapping.width;
          x += blockDim.x * gridDim.x) {
-      if (x >= d_mapping.width) {
-        continue;
-      }
 
       pathcompress(d_mapping, (Tmapping)(y * d_mapping.width + x));
     }
@@ -1243,42 +1241,121 @@ dim3 naive_global_pathcompress(DeviceImage<Tmapping> d_mapping,
  */
 template <typename Tmapping>
 __global__ void naive_global_readout_kernel(DeviceImage<Tmapping> d_mapping,
-                                            int3 *d_clusterlist,
+                                            short2 *d_clusterlistpos,
+                                            int *d_clusterlistlabel,
                                             unsigned int *d_clusterlistlength,
                                             size_t maxClusterListCount) {
   // Simple 2D grid stride
   for (int y = blockIdx.y * blockDim.y + threadIdx.y; y < d_mapping.height;
        y += blockDim.y * gridDim.y) {
-    if (y >= d_mapping.height) {
-      continue;
-    }
     for (int x = blockIdx.x * blockDim.x + threadIdx.x; x < d_mapping.width;
          x += blockDim.x * gridDim.x) {
-      if (x >= d_mapping.width) {
-        continue;
-      }
 
       Tmapping *root = find(d_mapping, (Tmapping)(y * d_mapping.width + x));
       if (root != nullptr) {
         Tmapping rootVal = *root;
         int oIdx = atomicAggInc(d_clusterlistlength);
-        if ((size_t)oIdx < maxClusterListCount)
-          d_clusterlist[oIdx] = make_int3(x, y, rootVal);
+        if ((size_t)oIdx < maxClusterListCount) {
+          d_clusterlistpos[oIdx] = make_short2((short)x, (short)y);
+          d_clusterlistlabel[oIdx] = rootVal;
+        }
       }
     }
   }
 }
 
-template <typename Tmapping>
+struct ClusterLabelSorter {
+  __host__ __device__ bool operator()(int3 a, int3 b) { return a.z < b.z; }
+};
+
+template <typename Tmapping, typename Tpos = short2, typename Tlabel = int>
 dim3 naive_global_readout(
-    DeviceImage<Tmapping> d_mapping, thrust::device_vector<int3> &d_clusterlist,
-    thrust::device_vector<unsigned int> &d_clusterlistlength, const dim3 tpb) {
+    DeviceImage<Tmapping> d_mapping,
+    thrust::device_vector<Tpos> &d_clusterlistpos,
+    thrust::device_vector<Tlabel> &d_clusterlistlabel,
+    thrust::device_vector<unsigned int> &d_clusterlistlength, const dim3 tpb,
+    bool returnSorted = true,
+    thrust::pinned_host_vector<unsigned int> *h_clusterlistlength = nullptr) {
   dim3 bpg(d_mapping.width / tpb.x + (d_mapping.width % tpb.x > 0 ? 1 : 0),
            d_mapping.height / tpb.y + (d_mapping.height % tpb.y > 0 ? 1 : 0));
-  naive_global_readout_kernel<Tmapping>
-      <<<bpg, tpb>>>(d_mapping, d_clusterlist.data().get(),
-                     d_clusterlistlength.data().get(), d_clusterlist.size());
+  naive_global_readout_kernel<Tmapping><<<bpg, tpb>>>(
+      d_mapping, d_clusterlistpos.data().get(), d_clusterlistlabel.data().get(),
+      d_clusterlistlength.data().get(), d_clusterlistpos.size());
+  if (returnSorted) {
+    if (h_clusterlistlength == nullptr)
+      throw std::runtime_error(
+          "h_clusterlistlength is null; you must provide a pinned host vector "
+          "to return sorted clusterlistlength, otherwise disable sorted "
+          "output");
+    thrust::copy(d_clusterlistlength.begin(), d_clusterlistlength.end(),
+                 h_clusterlistlength->begin());
+    const unsigned int usedLength = (*h_clusterlistlength)[0];
+
+    thrust::sort_by_key(d_clusterlistlabel.begin(),
+                        d_clusterlistlabel.begin() + usedLength,
+                        d_clusterlistpos.begin());
+  }
   return bpg;
+}
+
+template <typename Tpos2> struct ClusterStatistics {
+  Tpos2 min;
+  Tpos2 max;
+
+  // __host__ __device__ ClusterStatistics() {}
+  // __host__ __device__ ClusterStatistics(const Tpos2 pos) : min{pos}, max{pos}
+  // {}
+};
+
+template <typename Tpos2> struct ClusterStatisticsReducer {
+  __host__ __device__ ClusterStatistics<Tpos2>
+  operator()(const ClusterStatistics<Tpos2> &a,
+             const ClusterStatistics<Tpos2> &b) {
+    Tpos2 minpos, maxpos;
+    minpos.x = min(a.min.x, b.min.x);
+    minpos.y = min(a.min.y, b.min.y);
+    maxpos.x = max(a.max.x, b.max.x);
+    maxpos.y = max(a.max.y, b.max.y);
+    return ClusterStatistics<Tpos2>{minpos, maxpos};
+  }
+};
+
+template <typename Tpos2> struct ClusterStatisticsConverter {
+  __host__ __device__ ClusterStatistics<Tpos2>
+  operator()(const Tpos2 pos) const {
+    return ClusterStatistics<Tpos2>{pos, pos};
+  }
+};
+
+template <typename Tpos, typename Tlabel>
+unsigned int calculateClusterStatistics(
+    thrust::device_vector<Tpos> &d_clusterlistpos,
+    thrust::device_vector<Tlabel> &d_clusterlistlabel,
+    thrust::device_vector<Tlabel> &d_unique_labels,
+    // thrust::device_vector<unsigned int> &d_label_counts,
+    thrust::device_vector<ClusterStatistics<Tpos>> &d_stats,
+    const unsigned int usedLength) {
+  // Assume both are sorted as in naive_global_readout
+  // Count how many there are in each cluster label
+  // auto end = thrust::reduce_by_key(
+  //     d_clusterlistlabel.begin(), d_clusterlistlabel.begin() + usedLength,
+  //     thrust::make_constant_iterator(1), d_unique_labels.begin(),
+  //     d_label_counts.begin());
+
+  auto end = thrust::reduce_by_key(
+      d_clusterlistlabel.begin(), d_clusterlistlabel.begin() + usedLength,
+      thrust::make_transform_iterator(d_clusterlistpos.begin(),
+                                      ClusterStatisticsConverter<Tpos>()),
+      d_unique_labels.begin(), d_stats.begin(), thrust::equal_to<Tlabel>(),
+      ClusterStatisticsReducer<Tpos>());
+
+  // thrust::host_vector<unsigned int> h_label_counts = d_label_counts;
+  // thrust::host_vector<unsigned int> h_unique_labels = d_unique_labels;
+  // for (int i = 0; i < end.first - d_unique_labels.begin(); i++) {
+  //   printf("Unique label %d: size %u\n", h_unique_labels[i],
+  //   h_label_counts[i]);
+  // }
+  return end.first - d_unique_labels.begin();
 }
 
 // ===========================================================================

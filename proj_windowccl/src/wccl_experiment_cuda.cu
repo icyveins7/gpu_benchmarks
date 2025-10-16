@@ -293,18 +293,40 @@ int main(int argc, char* argv[]) {
 
   // Kernel 3b. Alternative readout via (row, col, label) triplets
   size_t maxCount = d_mapping.size();
-  thrust::device_vector<int3> d_clusterlist(maxCount);
+  thrust::device_vector<short2> d_clusterlistpos(maxCount);
+  thrust::device_vector<int> d_clusterlistlabel(maxCount);
   thrust::device_vector<unsigned int> d_clusterlistlength(1);
-  wccl::naive_global_readout<MappingType>(d_mapping, d_clusterlist, d_clusterlistlength, tpb);
-  thrust::host_vector<int3> h_clusterlist = d_clusterlist;
-  thrust::host_vector<unsigned int> h_clusterlistlength = d_clusterlistlength;
-  // if (rows <= 64 && cols <= 64) {
-  //   for (size_t i = 0; i < h_clusterlistlength[0]; ++i) {
-  //     auto& h_clusterpixel = h_clusterlist[i];
-  //     printf("%zu: (%d, %d -> %d)\n", i, h_clusterpixel.x, h_clusterpixel.y,
-  //            h_clusterpixel.z);
-  //   }
-  // }
+  thrust::pinned_host_vector<unsigned int> h_clusterlistlength(1);
+  wccl::naive_global_readout<MappingType>(d_mapping, d_clusterlistpos, d_clusterlistlabel, d_clusterlistlength, tpb, true, &h_clusterlistlength);
+  thrust::pinned_host_vector<short2> h_clusterlistpos = d_clusterlistpos;
+  thrust::pinned_host_vector<int> h_clusterlistlabel = d_clusterlistlabel;
+  if (rows <= 64 && cols <= 64) {
+    for (size_t i = 0; i < h_clusterlistlength[0]; ++i) {
+      auto& h_clusterpixelpos = h_clusterlistpos[i];
+      auto& h_clusterpixellabel = h_clusterlistlabel[i];
+      printf("%zu: (%hd, %hd -> %d)\n", i, h_clusterpixelpos.x, h_clusterpixelpos.y,
+             h_clusterpixellabel);
+    }
+  }
+
+  thrust::device_vector<int> d_unique_labels(maxCount);
+  // thrust::device_vector<unsigned int> d_label_counts(maxCount);
+  thrust::device_vector<wccl::ClusterStatistics<short2>> d_stats(maxCount);
+  unsigned int numUniqueLabels = wccl::calculateClusterStatistics(
+    d_clusterlistpos, d_clusterlistlabel, d_unique_labels,
+    // d_label_counts,
+    d_stats,
+    h_clusterlistlength[0]
+  );
+
+  thrust::host_vector<int> h_unique_labels = d_unique_labels;
+  thrust::host_vector<wccl::ClusterStatistics<short2>> h_stats(h_clusterlistlength[0]);
+  thrust::copy(d_stats.begin(), d_stats.begin() + h_clusterlistlength[0], h_stats.begin());
+  for (unsigned int i = 0; i < numUniqueLabels; ++i){
+    auto& h_cluster = h_stats[i];
+    printf("Cluster %u: min (%d, %d), max (%d, %d)\n",
+           i, h_cluster.min.x, h_cluster.min.y, h_cluster.max.x, h_cluster.max.y);
+  }
   printf("Clusterlist length = %u / %zu\n", h_clusterlistlength[0], maxCount);
 #endif
 
