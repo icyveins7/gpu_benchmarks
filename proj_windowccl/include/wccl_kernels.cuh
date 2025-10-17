@@ -435,6 +435,8 @@ __global__ void local_connect_naive_unionfind_kernel(
   // First value is just a counter
   unsigned int *s_numActiveSites = smem.getPointer();
   // Single workspace for the tile
+  // TODO: it may be worth it to revisit using the col/row format instead of a
+  // flattened index, so we can avoid extra register usage
   DeviceImage<Tmapping> s_tile((Tmapping *)&s_numActiveSites[1],
                                blockTileDims.y, blockTileDims.x);
   // and a workspace to bookkeep active indices
@@ -459,6 +461,8 @@ __global__ void local_connect_naive_unionfind_kernel(
   while (continueIterations) {
     counter = 0; // reset local thread-register counter
     // Iterate over active sites
+    // TODO: convert this to use 2D iterations instead; convert the 2D to 1D
+    // explicitly just for activeIdx
     for (int i = threadIdx.y * blockDim.x + threadIdx.x;
          i < (int)numActiveSites; i += blockDim.y * blockDim.x) {
       int ty = s_activeIdx[i] / blockTileDims.x;
