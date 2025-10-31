@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <random>
 #include <thrust/device_vector.h>
 #include <thrust/host_vector.h>
 
@@ -84,7 +85,9 @@ int main(int argc, char* argv[]) {
     std::cout << "Total marked: " << totalMarked << "/" << rows*cols << std::endl;
     std::fill(input.begin(), input.begin() + totalMarked, 1);
     std::fill(input.begin() + (int)(fraction*rows*cols), input.end(), 0);
-    std::random_shuffle(input.begin(), input.end());
+    std::random_device rd;
+    std::mt19937 g(rd());
+    std::shuffle(input.begin(), input.end(), g);
 
     if (rows <= 64 && cols <= 64) {
       printf("Input:\n%s\n ========================== \n",
