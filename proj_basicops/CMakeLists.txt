@@ -17,6 +17,18 @@ target_sources(
   basicops PRIVATE
   ${PROJECT_SOURCE_DIR}/basicops.cu
 )
+# --------------------
+set_source_files_properties(inflate.cu PROPERTIES LANGUAGE CUDA)
+add_executable(inflate)
+
+target_include_directories(inflate
+                           PRIVATE ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
+                           )
+
+target_sources(
+  inflate PRIVATE
+  ${PROJECT_SOURCE_DIR}/inflate.cu
+)
 
 # # -------------------- Tests
 # if (GTEST_FOUND)
