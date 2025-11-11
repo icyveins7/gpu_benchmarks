@@ -31,3 +31,16 @@ target_sources(
   ${PROJECT_SOURCE_DIR}/devicereduction.cu
 )
 
+# --------------------
+set_source_files_properties(thrustreduction.cu PROPERTIES LANGUAGE CUDA)
+add_executable(thrustreduction)
+
+target_include_directories(thrustreduction
+                           PRIVATE ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
+                           )
+
+target_sources(
+  thrustreduction PRIVATE
+  ${PROJECT_SOURCE_DIR}/thrustreduction.cu
+)
+
