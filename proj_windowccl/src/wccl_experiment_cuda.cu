@@ -3,9 +3,11 @@
 #include "wccl_kernels.cuh"
 
 #include <algorithm>
+#include <cstdint>
 #include <cstdlib>
 #include <random>
 #include <thrust/device_vector.h>
+#include <thrust/gather.h>
 #include <thrust/host_vector.h>
 
 #include "containers/bitset.cuh"
@@ -97,6 +99,13 @@ int main(int argc, char* argv[]) {
              .c_str());
     }
   }
+  std::vector<int> activeIdx;
+  printf("Filling active index vector...");
+  for (size_t i = 0; i < input.size(); ++i) {
+    if (input[i] == 1)
+      activeIdx.push_back((int)i);
+  }
+  printf("Done\n");
   std::string outputFilename;
   if (result.count("output")) {
     outputFilename = result["output"].as<std::string>();
