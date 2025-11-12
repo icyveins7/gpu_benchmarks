@@ -15,12 +15,36 @@ divergence anyway the reduced read speeds appear to be insignificant.
 #include <cstdint>
 #include <cuda_runtime.h>
 #include <iostream>
+#include <nvtx3/nvToolsExt.h>
 #include <random>
 #include <thrust/device_vector.h>
 #include <thrust/execution_policy.h>
 #include <thrust/host_vector.h>
+#include <thrust/iterator/constant_iterator.h>
+#include <thrust/scatter.h>
 #include <thrust/sequence.h>
 #include <thrust/sort.h>
+
+template <typename T, typename U>
+void printResult(const T *h_in, const U *h_out, size_t inLength,
+                 size_t outLength) {
+  // print the input first
+  for (size_t i = 0; i < inLength; ++i) {
+    std::cout << h_in[i] << " ";
+  }
+  printf("\n");
+
+  for (size_t i = 0; i < outLength / 100 + (outLength % 100 > 0 ? 1 : 0); ++i) {
+    for (int j = 0; j < 100; ++j) {
+      size_t idx = i * 100 + j;
+      if (idx < outLength) {
+        printf("%hhu", h_out[idx]);
+      }
+    }
+    printf("\n");
+  }
+  printf("-----------------\n");
+}
 
 template <typename Tin, typename Tout>
 __global__ void inflate_binary_map(const Tin *d_in, const int num_in,
@@ -76,22 +100,7 @@ int main(int argc, char **argv) {
 
   thrust::host_vector<Tout> h_out = d_out;
   if (outLength < 1000) {
-    // print the input first
-    for (size_t i = 0; i < inLength; ++i) {
-      std::cout << h_in[i] << " ";
-    }
-    printf("\n");
-
-    for (size_t i = 0; i < outLength / 100 + (outLength % 100 > 0 ? 1 : 0);
-         ++i) {
-      for (int j = 0; j < 100; ++j) {
-        size_t idx = i * 100 + j;
-        if (idx < outLength) {
-          printf("%hhu", h_out[idx]);
-        }
-      }
-      printf("\n");
-    }
+    printResult(h_in.data(), h_out.data(), inLength, outLength);
   }
 
   // Sort first
@@ -102,23 +111,9 @@ int main(int argc, char **argv) {
   // Do again
   inflate_binary_map<<<blks, 128>>>(d_in.data().get(), inLength,
                                     d_out.data().get());
+  h_out = d_out;
   if (outLength < 1000) {
-    // print the input first
-    for (size_t i = 0; i < inLength; ++i) {
-      std::cout << h_in[i] << " ";
-    }
-    printf("\n");
-
-    for (size_t i = 0; i < outLength / 100 + (outLength % 100 > 0 ? 1 : 0);
-         ++i) {
-      for (int j = 0; j < 100; ++j) {
-        size_t idx = i * 100 + j;
-        if (idx < outLength) {
-          printf("%hhu", h_out[idx]);
-        }
-      }
-      printf("\n");
-    }
+    printResult(h_in.data(), h_out.data(), inLength, outLength);
   }
 
   // ========== Try on uncoalesced struct
@@ -134,23 +129,23 @@ int main(int argc, char **argv) {
   inflate_binary_map_from_struct<<<blks, 128>>>(d_in_uncoalesced.data().get(),
                                                 inLength, d_out.data().get());
 
+  h_out = d_out;
   if (outLength < 1000) {
-    // print the input first
-    for (size_t i = 0; i < inLength; ++i) {
-      std::cout << h_in_uncoalesced[i].idx << " ";
-    }
-    printf("\n");
+    printResult(h_in.data(), h_out.data(), inLength, outLength);
+  }
 
-    for (size_t i = 0; i < outLength / 100 + (outLength % 100 > 0 ? 1 : 0);
-         ++i) {
-      for (int j = 0; j < 100; ++j) {
-        size_t idx = i * 100 + j;
-        if (idx < outLength) {
-          printf("%hhu", h_out[idx]);
-        }
-      }
-      printf("\n");
-    }
+  // ======= Try using thrust scatter
+  thrust::fill(d_out.begin(), d_out.end(), 0); // reset
+  nvtxRangePushA("thrust_scatter");
+  thrust::scatter(thrust::make_constant_iterator<Tout>(1),
+                  thrust::make_constant_iterator<Tout>(1) + d_in.size(),
+                  d_in.begin(), // indices map
+                  d_out.begin());
+  nvtxRangePop();
+
+  h_out = d_out;
+  if (outLength < 1000) {
+    printResult(h_in.data(), h_out.data(), inLength, outLength);
   }
 
   return 0;
