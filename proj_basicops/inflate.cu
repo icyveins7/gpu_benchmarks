@@ -94,7 +94,7 @@ int main(int argc, char **argv) {
   thrust::copy(h_in.begin(), h_in.begin() + inLength, d_in.begin());
 
   thrust::device_vector<Tout> d_out(outLength);
-  int blks = outLength / 128 + (outLength % 128 > 0 ? 1 : 0);
+  int blks = inLength / 128 + (inLength % 128 > 0 ? 1 : 0);
   inflate_binary_map<<<blks, 128>>>(d_in.data().get(), inLength,
                                     d_out.data().get());
 
