@@ -95,6 +95,7 @@ int main(int argc, char **argv) {
 
   thrust::device_vector<Tout> d_out(outLength);
   int blks = inLength / 128 + (inLength % 128 > 0 ? 1 : 0);
+  blks /= 2; // follow thrust and use a half-grid
   inflate_binary_map<<<blks, 128>>>(d_in.data().get(), inLength,
                                     d_out.data().get());
 

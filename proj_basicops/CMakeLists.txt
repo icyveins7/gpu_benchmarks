@@ -29,6 +29,18 @@ target_sources(
   inflate PRIVATE
   ${PROJECT_SOURCE_DIR}/inflate.cu
 )
+# --------------------
+set_source_files_properties(deflate.cu PROPERTIES LANGUAGE CUDA)
+add_executable(deflate)
+
+target_include_directories(deflate
+                           PRIVATE ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
+                           )
+
+target_sources(
+  deflate PRIVATE
+  ${PROJECT_SOURCE_DIR}/deflate.cu
+)
 
 # # -------------------- Tests
 # if (GTEST_FOUND)
