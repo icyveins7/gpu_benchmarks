@@ -7,7 +7,6 @@ Some helper functions are here so they can be easily reused.
 
 #pragma once
 
-#include <cuda.h>
 #include <cuda_runtime.h>
 
 /**
