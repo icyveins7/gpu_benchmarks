@@ -1301,10 +1301,10 @@ void naive_global_unionfind_cooperativegrid(
   int maxBlks = getMaxBlocksForCooperativeGrid(
       numThreads, naive_global_unionfind_kernel_coopgrid<Tmapping>);
   // Define the number of blocks for coverage i.e. if we had 1 block per tile
-  int2 blksForCoverage = {d_mapping.width / tileDims.x +
-                              (d_mapping.width % tileDims.x > 0 ? 1 : 0),
-                          d_mapping.height / tileDims.y +
-                              (d_mapping.height % tileDims.y > 0 ? 1 : 0)};
+  int2 blksForCoverage = {(int)d_mapping.width / tileDims.x +
+                              ((int)d_mapping.width % tileDims.x > 0 ? 1 : 0),
+                          (int)d_mapping.height / tileDims.y +
+                              ((int)d_mapping.height % tileDims.y > 0 ? 1 : 0)};
   // Now decide what the grid dimensions should be
   dim3 bpg;
   // Convention is to occupy width first, no particular reason, just for
