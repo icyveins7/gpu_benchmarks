@@ -1,6 +1,8 @@
 #pragma once
 
+#include <cooperative_groups.h>
 #include <cstdint>
+#include <cuda_runtime.h>
 #include <stdexcept>
 #include <thrust/device_vector.h>
 #include <thrust/iterator/constant_iterator.h>
@@ -10,9 +12,12 @@
 #include "accessors.cuh"
 #include "atomic_extensions.cuh"
 #include "containers/bitset.cuh"
+#include "gridsync.cuh"
 #include "pinnedalloc.cuh"
 #include "sharedmem.cuh"
 #include "timer.h"
+
+namespace cg = cooperative_groups;
 
 namespace wccl {
 
@@ -901,6 +906,95 @@ __global__ void naive_global_unionfind_kernel(DeviceImage<Tmapping> mapping,
   }
 }
 
+template <typename Tmapping>
+__global__ void naive_global_unionfind_kernel_coopgrid(
+    DeviceImage<Tmapping> mapping, const int2 tileDims, const int2 windowDist,
+    unsigned int *updateCounterPair, const int2 blockCoverageDims,
+    const int maxIterations = 10) {
+
+  // Cooperative grid definition
+  cg::grid_group grid = cg::this_grid();
+
+  // Outer loop for iterations
+  for (int iter = 0; iter < maxIterations; ++iter) {
+    for (int blkx = blockIdx.x; blkx < blockCoverageDims.x; blkx += gridDim.x) {
+      for (int blky = blockIdx.y; blky < blockCoverageDims.y;
+           blky += gridDim.y) {
+
+        // Still 'work in the tile'
+        const int tileXstart = blkx * tileDims.x;
+        const int tileYstart = blky * tileDims.y;
+        const int2 blockTileDims{tileXstart + tileDims.x < (int)mapping.width
+                                     ? tileDims.x
+                                     : (int)mapping.width - tileXstart,
+                                 tileYstart + tileDims.y < (int)mapping.height
+                                     ? tileDims.y
+                                     : (int)mapping.height - tileYstart};
+        for (int ty = threadIdx.y; ty < blockTileDims.y; ty += blockDim.y) {
+          // Must be in range of border
+          /*
+          E.g., only O is considered, windowDist = {2, 2}
+          OOOOOOO
+          OOOOOOO
+          OOXXXOO
+          OOOOOOO
+          OOOOOOO
+          */
+          bool validY = false;
+          if (ty < windowDist.y || ty >= blockTileDims.y - windowDist.y)
+            validY = true;
+
+          for (int tx = threadIdx.x; tx < blockTileDims.x; tx += blockDim.x) {
+            bool validX = false;
+            if (tx < windowDist.x || tx >= blockTileDims.x - windowDist.x)
+              validX = true;
+
+            // Don't do anything if it is not in range of the border
+            if (!(validX || validY))
+              continue;
+
+            // Translate tile index to global index
+            int gy = tileYstart + ty;
+            int gx = tileXstart + tx;
+            // dprintf("Blk (%d,%d): %d, %d == %d, %d\n", blockIdx.x,
+            // blockIdx.y, tx, ty,
+            //         gx, gy);
+
+            // Ignore out of range of global image
+            if (gy < 0 || gy >= (int)mapping.height || gx < 0 ||
+                gx >= (int)mapping.width) {
+              continue;
+            }
+
+            // Perform the window search + unites for this pixel
+            naive_global_unionfind_pixel_work<Tmapping>(
+                mapping, blockTileDims, tileXstart, tileYstart, gx, gy,
+                windowDist, &updateCounterPair[iter % 2]);
+          }
+        } // end of grid, primary calculations
+      }
+    } // end of manual 'grid stride' over the blocks
+
+    // Wait for entire cooperative grid to end
+    grid.sync();
+
+    // All threads read the update counter
+    if (updateCounterPair[iter % 2] == 0) {
+      break; // early exit
+    }
+
+    // Otherwise we use the first grid thread to reset the update counter for
+    // the next iteration
+    if (blockIdx.x == 0 && blockIdx.y == 0 && threadIdx.x == 0 &&
+        threadIdx.y == 0) {
+      updateCounterPair[(iter + 1) % 2] = 0;
+    }
+
+    // make sure the grid waits for this first thread to reset it
+    grid.sync();
+  } // end loop over iterations
+}
+
 /*
 Global union find kernels operate on the valid borders of each tile.
 There's an issue with warp divergence, since in most cases the window horizontal
@@ -1179,7 +1273,7 @@ naive_global_unionfind(DeviceImage<Tmapping> d_mapping, const int2 tileDims,
 
   do {
     prevCounter = h_counter[0];
-    wccl::naive_global_unionfind_kernel<Tmapping>
+    naive_global_unionfind_kernel<Tmapping>
         <<<bpg, tpb>>>(d_mapping, tileDims, windowDist, d_counter.data().get());
     thrust::copy(d_counter.begin(), d_counter.end(), h_counter.begin());
     numUnionFindIters++;
@@ -1187,6 +1281,50 @@ naive_global_unionfind(DeviceImage<Tmapping> d_mapping, const int2 tileDims,
   } while (prevCounter != h_counter[0]);
 
   return numUnionFindIters;
+}
+
+template <typename Tmapping>
+void naive_global_unionfind_cooperativegrid(
+    DeviceImage<Tmapping> d_mapping, const int2 tileDims, const int2 windowDist,
+    const dim3 tpb, thrust::device_vector<unsigned int> &d_counterPair) {
+
+  if (!checkCooperativeLaunchSupported()) {
+    throw std::runtime_error("Cooperative launch not supported");
+  }
+
+  // __global__ void naive_global_unionfind_kernel_coopgrid(
+  //     DeviceImage<Tmapping> mapping, const int2 tileDims, const int2
+  //     windowDist, unsigned int *updateCounterPair, const int2
+  //     blockCoverageDims, const int maxIterations = 10)
+
+  int numThreads = tpb.x * tpb.y;
+  int maxBlks = getMaxBlocksForCooperativeGrid(
+      numThreads, naive_global_unionfind_kernel_coopgrid<Tmapping>);
+  // Define the number of blocks for coverage i.e. if we had 1 block per tile
+  int2 blksForCoverage = {d_mapping.width / tileDims.x +
+                              (d_mapping.width % tileDims.x > 0 ? 1 : 0),
+                          d_mapping.height / tileDims.y +
+                              (d_mapping.height % tileDims.y > 0 ? 1 : 0)};
+  // Now decide what the grid dimensions should be
+  dim3 bpg;
+  // Convention is to occupy width first, no particular reason, just for
+  // simplicity. then if we can use more blocks than the width we expand
+  // downwards. Can revise this later if necessary
+  if (maxBlks < blksForCoverage.x) {
+    bpg.x = maxBlks;
+    bpg.y = 1;
+  } else {
+    bpg.x = blksForCoverage.x;
+    bpg.y = maxBlks / blksForCoverage.x;
+  }
+
+  // Finally we call the kernel with cooperative launch
+  auto counterPairPtr = thrust::raw_pointer_cast(&d_counterPair[0]);
+  void *kernelArgs[] = {&d_mapping, (void *)&tileDims, (void *)&windowDist,
+                        &counterPairPtr, &blksForCoverage};
+  cudaLaunchCooperativeKernel(
+      (void *)naive_global_unionfind_kernel_coopgrid<Tmapping>, bpg, tpb,
+      kernelArgs);
 }
 
 /**
