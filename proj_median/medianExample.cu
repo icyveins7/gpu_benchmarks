@@ -90,10 +90,15 @@ template <typename T, int maxLength> void testKernel(int numTests) {
   }
 }
 
-int main() {
+int main(int argc, char *argv[]) {
   printf("Median kernel tests\n");
 
-  testKernel<unsigned short, 100>(10000);
+  int numTests = 100;
+  if (argc > 1)
+    numTests = atoi(argv[1]);
+  printf("numTests = %d\n", numTests);
+
+  testKernel<unsigned short, 100>(numTests);
 
   return 0;
 }
