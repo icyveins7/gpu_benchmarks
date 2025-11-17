@@ -249,9 +249,10 @@ int main(int argc, char* argv[]) {
   printf("Blocks per grid = (%d, %d)\n", bpg.x, bpg.y);
 
   // Pull data and check
-  thrust::host_vector<MappingType> h_mapping_vec = d_mapping_vec;
+  thrust::host_vector<MappingType> h_mapping_vec(d_mapping_vec.size());
 
   if (rows <= 64 && cols <= 64) {
+    h_mapping_vec = d_mapping_vec;
     printf("%s\n", wccl::idxstring<MappingType>(
                        thrust::raw_pointer_cast(h_mapping_vec.data()), rows,
                        cols, "%2d ", "%2c ")
@@ -263,19 +264,34 @@ int main(int argc, char* argv[]) {
                        .c_str());
   }
 
-  // Kernel 2. Cross-tile merge
-  thrust::pinned_host_vector<unsigned int> h_counter(1);
-  h_counter[0] = 0;
-  thrust::device_vector<unsigned int> d_counter(1);
-  thrust::copy(h_counter.begin(), h_counter.end(), d_counter.begin());
+  // // Kernel 2. Cross-tile merge
+  // thrust::pinned_host_vector<unsigned int> h_counter(1);
+  // h_counter[0] = 0;
+  // thrust::device_vector<unsigned int> d_counter(1);
+  // thrust::copy(h_counter.begin(), h_counter.end(), d_counter.begin());
+  // size_t numUnionFindIters = wccl::naive_global_unionfind<MappingType>(
+  //   d_mapping, tileDims, windowDist, tpb, h_counter, d_counter);
+  // printf("numUnionFindIters = %zu\n", numUnionFindIters);
 
-  size_t numUnionFindIters = wccl::naive_global_unionfind<MappingType>(
-    d_mapping, tileDims, windowDist, tpb, h_counter, d_counter);
 
-  printf("numUnionFindIters = %zu\n", numUnionFindIters);
-  h_mapping_vec = d_mapping_vec;
+  // Kernel 2. Cross-tile merge with cooperative grid
+  // NOTE: for longer global steps (like large windows/high activity)
+  // then this is comparable to the previous one using the HtoD checks;
+  // otherwise it seems like the host one outperforms this, probably because this is forced to
+  // only launch a smaller number of blocks, so maybe SM overlap of blocks is not as good?
+
+  thrust::device_vector<unsigned int> d_counters(10);
+  wccl::naive_global_unionfind_cooperativegrid<MappingType>(
+    d_mapping, tileDims, windowDist, tpb, d_counters
+  );
+  thrust::host_vector<unsigned int> h_counters = d_counters;
+  for (auto ctr : h_counters){
+    printf("ctr = %u\n", ctr);
+  }
+
 
   if (rows <= 64 && cols <= 64) {
+    h_mapping_vec = d_mapping_vec;
     printf("%s\n ========================== \n",
            wccl::idxstring<MappingType>(
                thrust::raw_pointer_cast(h_mapping_vec.data()), rows, cols,
@@ -289,9 +305,9 @@ int main(int argc, char* argv[]) {
 
   // Kernel 3a. Path compression (or readout)
   wccl::naive_global_pathcompress<MappingType>(d_mapping, tpb);
-  h_mapping_vec = d_mapping_vec;
 
   if (rows <= 64 && cols <= 64) {
+    h_mapping_vec = d_mapping_vec;
     printf("%s\n ========================== \n",
            wccl::idxstring<MappingType>(
                thrust::raw_pointer_cast(h_mapping_vec.data()), rows, cols,
@@ -334,11 +350,11 @@ int main(int argc, char* argv[]) {
   thrust::host_vector<int> h_unique_labels = d_unique_labels;
   thrust::host_vector<wccl::ClusterStatistics<short2>> h_stats(h_clusterlistlength[0]);
   thrust::copy(d_stats.begin(), d_stats.begin() + h_clusterlistlength[0], h_stats.begin());
-  for (unsigned int i = 0; i < numUniqueLabels; ++i){
-    auto& h_cluster = h_stats[i];
-    printf("Cluster %u: min (%d, %d), max (%d, %d)\n",
-           i, h_cluster.min.x, h_cluster.min.y, h_cluster.max.x, h_cluster.max.y);
-  }
+  // for (unsigned int i = 0; i < numUniqueLabels; ++i){
+  //   auto& h_cluster = h_stats[i];
+  //   printf("Cluster %u: min (%d, %d), max (%d, %d)\n",
+  //          i, h_cluster.min.x, h_cluster.min.y, h_cluster.max.x, h_cluster.max.y);
+  // }
   printf("Clusterlist length = %u / %zu\n", h_clusterlistlength[0], maxCount);
 #endif
 

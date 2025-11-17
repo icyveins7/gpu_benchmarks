@@ -909,7 +909,7 @@ __global__ void naive_global_unionfind_kernel(DeviceImage<Tmapping> mapping,
 template <typename Tmapping>
 __global__ void naive_global_unionfind_kernel_coopgrid(
     DeviceImage<Tmapping> mapping, const int2 tileDims, const int2 windowDist,
-    unsigned int *updateCounterPair, const int2 blockCoverageDims,
+    unsigned int *updateCounters, const int2 blockCoverageDims,
     const int maxIterations = 10) {
 
   // Cooperative grid definition
@@ -969,7 +969,7 @@ __global__ void naive_global_unionfind_kernel_coopgrid(
             // Perform the window search + unites for this pixel
             naive_global_unionfind_pixel_work<Tmapping>(
                 mapping, blockTileDims, tileXstart, tileYstart, gx, gy,
-                windowDist, &updateCounterPair[iter % 2]);
+                windowDist, &updateCounters[iter]);
           }
         } // end of grid, primary calculations
       }
@@ -979,19 +979,9 @@ __global__ void naive_global_unionfind_kernel_coopgrid(
     grid.sync();
 
     // All threads read the update counter
-    if (updateCounterPair[iter % 2] == 0) {
+    if (updateCounters[iter] == 0) {
       break; // early exit
     }
-
-    // Otherwise we use the first grid thread to reset the update counter for
-    // the next iteration
-    if (blockIdx.x == 0 && blockIdx.y == 0 && threadIdx.x == 0 &&
-        threadIdx.y == 0) {
-      updateCounterPair[(iter + 1) % 2] = 0;
-    }
-
-    // make sure the grid waits for this first thread to reset it
-    grid.sync();
   } // end loop over iterations
 }
 
@@ -1283,19 +1273,15 @@ naive_global_unionfind(DeviceImage<Tmapping> d_mapping, const int2 tileDims,
   return numUnionFindIters;
 }
 
-template <typename Tmapping>
+template <typename Tmapping, bool CHECK_COOPERATIVE_LAUNCH_SUPPORT = false>
 void naive_global_unionfind_cooperativegrid(
     DeviceImage<Tmapping> d_mapping, const int2 tileDims, const int2 windowDist,
-    const dim3 tpb, thrust::device_vector<unsigned int> &d_counterPair) {
-
-  if (!checkCooperativeLaunchSupported()) {
-    throw std::runtime_error("Cooperative launch not supported");
+    const dim3 tpb, thrust::device_vector<unsigned int> &d_counters) {
+  if constexpr (CHECK_COOPERATIVE_LAUNCH_SUPPORT) {
+    if (!checkCooperativeLaunchSupported()) {
+      throw std::runtime_error("Cooperative launch not supported");
+    }
   }
-
-  // __global__ void naive_global_unionfind_kernel_coopgrid(
-  //     DeviceImage<Tmapping> mapping, const int2 tileDims, const int2
-  //     windowDist, unsigned int *updateCounterPair, const int2
-  //     blockCoverageDims, const int maxIterations = 10)
 
   int numThreads = tpb.x * tpb.y;
   int maxBlks = getMaxBlocksForCooperativeGrid(
@@ -1318,10 +1304,16 @@ void naive_global_unionfind_cooperativegrid(
     bpg.y = maxBlks / blksForCoverage.x;
   }
 
+  // printf("cooperative grid for global_unionfind is %d x %d blocks for %d x %d
+  // "
+  //        "threads\n",
+  //        bpg.x, bpg.y, tpb.x, tpb.y);
+
   // Finally we call the kernel with cooperative launch
-  auto counterPairPtr = thrust::raw_pointer_cast(&d_counterPair[0]);
-  void *kernelArgs[] = {&d_mapping, (void *)&tileDims, (void *)&windowDist,
-                        &counterPairPtr, &blksForCoverage};
+  auto counterPairPtr = thrust::raw_pointer_cast(&d_counters[0]);
+  int maxIterations = (int)d_counters.size();
+  void *kernelArgs[] = {&d_mapping,      (void *)&tileDims, (void *)&windowDist,
+                        &counterPairPtr, &blksForCoverage,  &maxIterations};
   cudaLaunchCooperativeKernel(
       (void *)naive_global_unionfind_kernel_coopgrid<Tmapping>, bpg, tpb,
       kernelArgs);
