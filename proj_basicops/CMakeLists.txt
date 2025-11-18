@@ -41,6 +41,18 @@ target_sources(
   deflate PRIVATE
   ${PROJECT_SOURCE_DIR}/deflate.cu
 )
+# --------------------
+set_source_files_properties(run_length_encode.cu PROPERTIES LANGUAGE CUDA)
+add_executable(run_length_encode)
+
+target_include_directories(run_length_encode
+                           PRIVATE ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
+                           )
+
+target_sources(
+  run_length_encode PRIVATE
+  ${PROJECT_SOURCE_DIR}/run_length_encode.cu
+)
 
 # # -------------------- Tests
 # if (GTEST_FOUND)
