@@ -1,11 +1,13 @@
+#include <cuda_runtime.h>
+
 #include "thrust/device_vector.h"
 #include "thrust/host_vector.h"
 #include "thrust/iterator/discard_iterator.h"
 #include "thrust/reduce.h"
+
 #include <cuda/std/cmath>
 #include <cuda/std/functional> // for cuda::std::equal_to
 #include <cuda/std/limits>     // for min/max
-#include <cuda_runtime.h>
 #include <iostream>
 
 template <typename Tkey, typename Tcoord, typename Tval> struct KeyCoordValue {
