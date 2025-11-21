@@ -12,6 +12,7 @@ since the outputs are still uncoalesced. Effectively since there is so much warp
 divergence anyway the reduced read speeds appear to be insignificant.
 */
 
+#include <algorithm>
 #include <cstdint>
 #include <cuda_runtime.h>
 #include <iostream>

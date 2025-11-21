@@ -11,6 +11,7 @@ heavily. The transforms required to wrangle the thrust::gather to work with the
 struct are probably not optimal.
 */
 
+#include <algorithm>
 #include <cstddef>
 #include <cuda_device_runtime_api.h>
 #include <random>

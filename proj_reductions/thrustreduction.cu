@@ -4,6 +4,7 @@
 #include "thrust/reduce.h"
 #include <cuda/std/cmath>
 #include <cuda/std/functional> // for cuda::std::equal_to
+#include <cuda/std/limits>     // for min/max
 #include <cuda_runtime.h>
 #include <iostream>
 
@@ -47,9 +48,9 @@ template <typename Tkey, typename Tcoord, typename Tval> struct KCVReducer {
   operator()(const KCVReduction<Tkey, Tcoord, Tval> &x,
              const KCVReduction<Tkey, Tcoord, Tval> &y) const {
     return KCVReduction<Tkey, Tcoord, Tval>{
-        thrust::min(x.i_min, y.i_min),   thrust::max(x.i_max, y.i_max),
-        thrust::min(x.j_min, y.j_min),   thrust::max(x.j_max, y.j_max),
-        thrust::min(x.minVal, y.minVal), thrust::max(x.maxVal, y.maxVal)};
+        cuda::std::min(x.i_min, y.i_min),   cuda::std::max(x.i_max, y.i_max),
+        cuda::std::min(x.j_min, y.j_min),   cuda::std::max(x.j_max, y.j_max),
+        cuda::std::min(x.minVal, y.minVal), cuda::std::max(x.maxVal, y.maxVal)};
   }
 };
 
@@ -88,10 +89,10 @@ struct KCVIdxReducer {
       val = y.val;
     }
     return KCVIdxReduction<Tkey, Tcoord, Tval, Tidx>{
-        thrust::min(x.i_min, y.i_min),
-        thrust::max(x.i_max, y.i_max),
-        thrust::min(x.j_min, y.j_min),
-        thrust::max(x.j_max, y.j_max),
+        cuda::std::min(x.i_min, y.i_min),
+        cuda::std::max(x.i_max, y.i_max),
+        cuda::std::min(x.j_min, y.j_min),
+        cuda::std::max(x.j_max, y.j_max),
         idx,
         val};
   }

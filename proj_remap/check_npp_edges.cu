@@ -1,3 +1,5 @@
+#include "nppdefs.h"
+#include "nppi.h"
 #include <iostream>
 #include <npp.h>
 #include <random>
@@ -71,13 +73,61 @@ int main() {
   // not being modified
   thrust::fill(d_out.begin(), d_out.end(), 9.9f);
 
-  NppStatus status = nppiRemap_32f_C1R(
+  // seems like cuda 13 onwards, NPP doesn't have a no-context flavour.
+  // it actually expects us to do all this just to init the context, another
+  // reason to never use NPP again
+  NppStreamContext nppStreamCtx;
+  nppStreamCtx.hStream = 0; // The NULL stream by default, set this to whatever
+                            // your stream ID is if not the NULL stream.
+  cudaError_t cudaError = cudaGetDevice(&nppStreamCtx.nCudaDeviceId);
+  if (cudaError != cudaSuccess) {
+    printf("CUDA error: no devices supporting CUDA.\n");
+    return NPP_NOT_SUFFICIENT_COMPUTE_CAPABILITY;
+  }
+
+  const NppLibraryVersion *libVer = nppGetLibVersion();
+
+  printf("NPP Library Version %d.%d.%d\n", libVer->major, libVer->minor,
+         libVer->build);
+
+  int driverVersion, runtimeVersion;
+  cudaDriverGetVersion(&driverVersion);
+  cudaRuntimeGetVersion(&runtimeVersion);
+  printf("CUDA Driver  Version: %d.%d\n", driverVersion / 1000,
+         (driverVersion % 100) / 10);
+  printf("CUDA Runtime Version: %d.%d\n\n", runtimeVersion / 1000,
+         (runtimeVersion % 100) / 10);
+  cudaError = cudaDeviceGetAttribute(
+      &nppStreamCtx.nCudaDevAttrComputeCapabilityMajor,
+      cudaDevAttrComputeCapabilityMajor, nppStreamCtx.nCudaDeviceId);
+  if (cudaError != cudaSuccess)
+    return NPP_NOT_SUFFICIENT_COMPUTE_CAPABILITY;
+
+  cudaError = cudaDeviceGetAttribute(
+      &nppStreamCtx.nCudaDevAttrComputeCapabilityMinor,
+      cudaDevAttrComputeCapabilityMinor, nppStreamCtx.nCudaDeviceId);
+  if (cudaError != cudaSuccess)
+    return NPP_NOT_SUFFICIENT_COMPUTE_CAPABILITY;
+
+  cudaError =
+      cudaStreamGetFlags(nppStreamCtx.hStream, &nppStreamCtx.nStreamFlags);
+  cudaDeviceProp oDeviceProperties;
+
+  cudaError =
+      cudaGetDeviceProperties(&oDeviceProperties, nppStreamCtx.nCudaDeviceId);
+
+  nppStreamCtx.nMultiProcessorCount = oDeviceProperties.multiProcessorCount;
+  nppStreamCtx.nMaxThreadsPerMultiProcessor =
+      oDeviceProperties.maxThreadsPerMultiProcessor;
+  nppStreamCtx.nMaxThreadsPerBlock = oDeviceProperties.maxThreadsPerBlock;
+  nppStreamCtx.nSharedMemPerBlock = oDeviceProperties.sharedMemPerBlock;
+
+  nppiRemap_32f_C1R_Ctx(
       thrust::raw_pointer_cast(d_srcImg.data()), srcSize,
       srcWidth * sizeof(float), srcROI, thrust::raw_pointer_cast(d_x.data()),
       reqLen * sizeof(float), thrust::raw_pointer_cast(d_y.data()),
       reqLen * sizeof(float), thrust::raw_pointer_cast(d_out.data()),
-      reqLen * sizeof(float), dstSize, NPPI_INTER_LINEAR);
-  printf("Status %d\n", status);
+      reqLen * sizeof(float), dstSize, NPPI_INTER_LINEAR, nppStreamCtx);
 
   // Print the output
   thrust::host_vector<float> h_out = d_out;
