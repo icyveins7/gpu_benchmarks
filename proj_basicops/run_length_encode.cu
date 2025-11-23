@@ -1,3 +1,5 @@
+#include <algorithm>
+#include <cstdlib>
 #include <iostream>
 
 #include <thrust/device_vector.h>
@@ -8,11 +10,19 @@
 int main() {
   printf("Run length encoding\n");
 
-  thrust::host_vector<int> h_keys = {0, 0, 3, 3, 3, 4, 4, 6, 7, 7};
+  // Fixed length test
+  // thrust::host_vector<int> h_keys = {0, 0, 3, 3, 3, 4, 4, 6, 7, 7};
+  // Long vector test
+  thrust::host_vector<int> h_keys(1000000);
+  for (auto &key : h_keys) {
+    key = std::rand() % 10;
+  }
+  std::sort(h_keys.begin(), h_keys.end());
+
   thrust::device_vector<int> d_keys = h_keys;
 
-  thrust::device_vector<int> d_unique_out(10);
-  thrust::device_vector<int> d_counts_out(10);
+  thrust::device_vector<int> d_unique_out(d_keys.size());
+  thrust::device_vector<int> d_counts_out(d_keys.size());
   thrust::device_vector<int> d_num_runs_out(1);
 
   size_t temp_storage_bytes = 0;
