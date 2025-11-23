@@ -70,12 +70,6 @@ include_directories(
   cxxopts/include/
 )
 
-# Add a cccl include for CUDA 13 (now in an inner dir called cccl)
-if (CMAKE_CUDA_COMPILER_VERSION VERSION_GREATER_EQUAL "13.0")
-  message(STATUS "CUDA 13 detected, adding cccl include at ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}/cccl")
-  include_directories(${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}/cccl)
-endif()
-
 # Check if MatX projects should be built
 if (BUILD_MATX_PROJECTS)
   message(STATUS "Building MatX projects")

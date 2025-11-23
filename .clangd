@@ -1,5 +1,8 @@
 CompileFlags:
-  Add: [-xcuda, --cuda-path=/usr/local/cuda, -I/usr/local/cuda/include, -I/usr/local/cuda/include/crt, --cuda-gpu-arch=sm_90]
+  Add: [-xcuda, --cuda-path=/usr/local/cuda, -I/usr/local/cuda/include, -I/usr/local/cuda/include/crt, -I/usr/local/cuda/include/cccl, --cuda-gpu-arch=sm_90]
   Remove: [--generate-code=*, -forward-unknown-to-host-compiler]
-Diagnostics:
-  Suppress: [undeclared_var_use] # For cuda:: and thrust:: namespaces
+
+# Currently need to :MasonInstall clangd@snapshot_20251005 to get this to work
+# Latest clangd 21 doesn't seem to work with CUDA 13.0
+# Diagnostics:
+#   Suppress: [undeclared_var_use] # For cuda:: and thrust:: namespaces
