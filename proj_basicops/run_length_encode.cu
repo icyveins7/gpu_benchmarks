@@ -86,13 +86,17 @@ int main() {
 
   // Then we use device copy batched
   thrust::device_vector<int> d_decoded(h_keys.size());
+  thrust::device_vector<unsigned long long int> d_workcounter(1);
 
-  copy_ranges_blockwise<<<h_num_runs_out[0], 64>>>(
+  // copy_ranges_blockwise<<<h_num_runs_out[0], 64>>>(
+  copy_ranges_blockwise_worksteal<<<h_num_runs_out[0], 64>>>(
       d_keys.data().get(),       // input
       d_offsets.data().get(),    // offsets
       d_counts_out.data().get(), // lengths
       d_decoded.data().get(),    // output
       h_num_runs_out[0]          // num segments
+      ,
+      d_workcounter.data().get() // only for worksteal kernel
   );
 
   thrust::host_vector<int> h_decoded = d_decoded;
