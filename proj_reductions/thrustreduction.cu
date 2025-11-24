@@ -5,6 +5,7 @@
 #include "thrust/iterator/discard_iterator.h"
 #include "thrust/reduce.h"
 
+#include <algorithm>
 #include <cuda/std/cmath>
 #include <cuda/std/functional> // for cuda::std::equal_to
 #include <cuda/std/limits>     // for min/max
@@ -50,9 +51,16 @@ template <typename Tkey, typename Tcoord, typename Tval> struct KCVReducer {
   operator()(const KCVReduction<Tkey, Tcoord, Tval> &x,
              const KCVReduction<Tkey, Tcoord, Tval> &y) const {
     return KCVReduction<Tkey, Tcoord, Tval>{
+
+#if CUDART_VERSION >= 13000
         cuda::std::min(x.i_min, y.i_min),   cuda::std::max(x.i_max, y.i_max),
         cuda::std::min(x.j_min, y.j_min),   cuda::std::max(x.j_max, y.j_max),
         cuda::std::min(x.minVal, y.minVal), cuda::std::max(x.maxVal, y.maxVal)};
+#else
+        thrust::min(x.i_min, y.i_min),   thrust::max(x.i_max, y.i_max),
+        thrust::min(x.j_min, y.j_min),   thrust::max(x.j_max, y.j_max),
+        thrust::min(x.minVal, y.minVal), thrust::max(x.maxVal, y.maxVal)};
+#endif
   }
 };
 
@@ -91,10 +99,17 @@ struct KCVIdxReducer {
       val = y.val;
     }
     return KCVIdxReduction<Tkey, Tcoord, Tval, Tidx>{
+#if CUDART_VERSION >= 13000
         cuda::std::min(x.i_min, y.i_min),
         cuda::std::max(x.i_max, y.i_max),
         cuda::std::min(x.j_min, y.j_min),
         cuda::std::max(x.j_max, y.j_max),
+#else
+        thrust::min(x.i_min, y.i_min),
+        thrust::max(x.i_max, y.i_max),
+        thrust::min(x.j_min, y.j_min),
+        thrust::max(x.j_max, y.j_max),
+#endif
         idx,
         val};
   }
