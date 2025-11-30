@@ -1,7 +1,15 @@
+# NOTE: this is a sample. you should probably modify this to the directories on your system
 CompileFlags:
-  Add: [-xcuda, --cuda-path=/usr/local/cuda, -I/usr/local/cuda/include, -I/usr/local/cuda/include/crt, -I/usr/local/cuda/include/cccl, --cuda-gpu-arch=sm_90]
-  Remove: [--generate-code=*, -forward-unknown-to-host-compiler]
-
+  # Linux
+  # Add: [-xcuda, --cuda-path=/usr/local/cuda, -I/usr/local/cuda/include, -I/usr/local/cuda/include/crt, -I/usr/local/cuda/include/cccl, --cuda-gpu-arch=sm_90]
+  # Windows
+  Add: [
+    '--cuda-path=C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.9',
+    '-LC:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.9\lib\x64',
+    '-IC:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.9\include',
+  ]
+  Remove: [--generate-code=*, -forward-unknown-to-host-compiler, -Xcompiler=*]
+#
 # Currently need to :MasonInstall clangd@snapshot_20251005 to get this to work
 # Latest clangd 21 doesn't seem to work with CUDA 13.0
 # Diagnostics:
