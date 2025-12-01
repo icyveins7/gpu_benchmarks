@@ -34,9 +34,11 @@ struct SortKeys : public CubWrapper {
   void exec(const KeyT *d_keys_in, KeyT *d_keys_out, NumItemsT num_items,
             int begin_bit = 0, int end_bit = sizeof(KeyT) * 8,
             cudaStream_t stream = 0) {
+    size_t temp_storage_bytes = this->d_temp_storage.size();
     cub::DeviceRadixSort::SortKeys(d_temp_storage.data().get(),
-                                   d_temp_storage.size(), d_keys_in, d_keys_out,
-                                   num_items);
+                                   temp_storage_bytes, // we only do this because it expects a ref
+                                   d_keys_in, d_keys_out,
+                                   num_items, begin_bit, end_bit, stream);
   }
 };
 
