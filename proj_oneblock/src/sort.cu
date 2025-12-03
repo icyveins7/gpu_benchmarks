@@ -69,7 +69,8 @@ int main() {
     thrust::device_vector<KeyT> d_input = h_input;
     thrust::device_vector<KeyT> d_output(num_items);
 
-    cubw::SortKeys<KeyT, int> sort_keys(num_items);
+    // Try radix sort
+    cubw::DeviceRadixSort::SortKeys<KeyT, int> sort_keys(num_items);
 
     for (int iter = 0; iter < 3; iter++) {
       sort_keys.exec(d_input.data().get(), d_output.data().get(),
@@ -79,13 +80,30 @@ int main() {
     thrust::host_vector<int> h_output = d_output;
     for (int i = 1; i < (int)num_items; i++) {
       if (h_output[i - 1] > h_output[i]) {
-        std::cout << "Error at index " << i << std::endl;
+        std::cout << "radix sort Error at index " << i << std::endl;
+      }
+    }
+
+    // Try merge sort
+
+    cubw::DeviceMergeSort::SortKeysCopy<KeyT *, KeyT *, int,
+                                        cuda::std::less<int>>
+        merge_sort_keys(num_items);
+
+    for (int iter = 0; iter < 3; iter++) {
+      merge_sort_keys.exec(d_input.data().get(), d_output.data().get(),
+                           (int)num_items, cuda::std::less<KeyT>());
+    }
+    h_output = d_output;
+    for (int i = 1; i < (int)num_items; i++) {
+      if (h_output[i - 1] > h_output[i]) {
+        std::cout << "merge sort Error at index " << i << std::endl;
       }
     }
 
     // Try the 1 block custom kernel
-    const int NUM_THREADS = 384;
-    const int ITEMS_PER_THREAD = 24;
+    const int NUM_THREADS = 256;
+    const int ITEMS_PER_THREAD = 32;
     printf("maximum kernel items: %d\n", NUM_THREADS * ITEMS_PER_THREAD);
 
     // determine necessary storage size
