@@ -79,10 +79,13 @@ struct SortKeysCopy : public CubWrapper {
 
   size_t getStorageBytes(size_t num_items) override {
     size_t temp_storage_bytes = 0;
+    // Default-construct all types; pointers automatically become nullptrs
     CompareOpT compare_op;
-    cub::DeviceMergeSort::SortKeysCopy(
-        nullptr, temp_storage_bytes, (KeyInputIteratorT) nullptr,
-        (KeyIteratorT) nullptr, (OffsetT)num_items, compare_op);
+    KeyInputIteratorT keyinput{};
+    KeyIteratorT keyoutput{};
+    cub::DeviceMergeSort::SortKeysCopy(nullptr, temp_storage_bytes, keyinput,
+                                       keyoutput, (OffsetT)num_items,
+                                       compare_op);
     return temp_storage_bytes;
   }
 
@@ -107,11 +110,15 @@ struct SortPairsCopy : public CubWrapper {
 
   size_t getStorageBytes(size_t num_items) override {
     size_t temp_storage_bytes = 0;
+    // Default-construct all types; pointers automatically become nullptrs
     CompareOpT compare_op;
-    cub::DeviceMergeSort::SortPairsCopy(
-        nullptr, temp_storage_bytes, (KeyInputIteratorT) nullptr,
-        (ValueInputIteratorT) nullptr, (KeyIteratorT) nullptr,
-        (ValueIteratorT) nullptr, (OffsetT)num_items, compare_op);
+    KeyInputIteratorT keyinput{};
+    KeyIteratorT keyoutput{};
+    ValueInputIteratorT valueinput{};
+    ValueIteratorT valueoutput{};
+    cub::DeviceMergeSort::SortPairsCopy(nullptr, temp_storage_bytes, keyinput,
+                                        valueinput, keyoutput, valueoutput,
+                                        (OffsetT)num_items, compare_op);
     return temp_storage_bytes;
   }
 

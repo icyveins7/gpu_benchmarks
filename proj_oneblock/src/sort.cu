@@ -2,6 +2,8 @@
 
 #include <thrust/device_vector.h>
 #include <thrust/host_vector.h>
+#include <thrust/iterator/counting_iterator.h>
+#include <thrust/iterator/transform_output_iterator.h>
 
 #include <cuda/std/limits>
 
@@ -32,6 +34,29 @@ struct ValueContainer64 {
     a8 = val;
   }
 };
+
+template <typename T> struct SortPairsValueIndexer {
+  T *values;
+
+  __host__ __device__ T operator()(int idx) const { return values[idx]; }
+};
+
+template <typename Tval, typename Tidx>
+__global__ void simpleIndexToValuesKernel(const Tval *src, Tval *dst,
+                                          const Tidx *idx) {
+  for (int i = blockIdx.x * blockDim.x + threadIdx.x;
+       i < blockDim.x * gridDim.x; i += blockDim.x * gridDim.x) {
+    dst[i] = src[idx[i]];
+  }
+}
+
+template <typename Tval, typename Tidx>
+void simpleIndexToValues(const Tval *src, Tval *dst, const Tidx *idx,
+                         int num_items) {
+  int tpb = 128;
+  int bpg = (num_items + tpb - 1) / tpb;
+  simpleIndexToValuesKernel<<<bpg, tpb>>>(src, dst, idx);
+}
 
 template <typename T, int NUM_THREADS, int ITEMS_PER_THREAD>
 __global__ void OneBlockSortKeys(const T *d_keys_in, T *d_keys_out,
@@ -195,8 +220,7 @@ int main() {
       }
     }
 
-    // Try merge sortpairs
-
+    // Try naive merge sortpairs
     cubw::DeviceMergeSort::SortPairsCopy<KeyT *, ValueT *, KeyT *, ValueT *,
                                          int, cuda::std::less<KeyT>>
         merge_sort_pairs(num_items);
@@ -211,6 +235,50 @@ int main() {
         std::cout << "merge sortpairs Error at index " << i << std::endl;
       }
     }
+
+    // Try merge sortpairs but just use indices
+    // Make output vector for sorted indices
+    thrust::device_vector<int> d_indices(num_items);
+    // Make counting iterator for input
+    auto IndexIter = thrust::make_counting_iterator(0);
+    cubw::DeviceMergeSort::SortPairsCopy<KeyT *, decltype(IndexIter), KeyT *,
+                                         int *, int, cuda::std::less<KeyT>>
+        merge_sort_pairs2(num_items);
+    for (int iter = 0; iter < 3; iter++) {
+      merge_sort_pairs2.exec(d_input.data().get(), IndexIter,
+                             d_output.data().get(), d_indices.data().get(),
+                             (int)num_items, cuda::std::less<KeyT>());
+      // Run a bulk write to actually get the sorted values
+      simpleIndexToValues(d_valinput.data().get(), d_valoutput.data().get(),
+                          d_indices.data().get(), (int)num_items);
+    }
+    h_output = d_output;
+    for (int i = 1; i < (int)num_items; i++) {
+      if (h_output[i - 1] > h_output[i]) {
+        std::cout << "merge sortpairs2 Error at index " << i << std::endl;
+      }
+    }
+
+    // auto IndexToSortedValsIter = thrust::make_transform_output_iterator(
+    //     d_valoutput.begin(),
+    //     SortPairsValueIndexer<ValueT>{d_valoutput.data().get()});
+    // auto IndexIter = thrust::make_counting_iterator(0);
+    //
+    // cubw::DeviceMergeSort::SortPairsCopy<KeyT *, decltype(IndexIter), KeyT *,
+    //                                      decltype(IndexToSortedValsIter),
+    //                                      int, cuda::std::less<KeyT>>
+    //     merge_sort_pairs2(num_items);
+    // for (int iter = 0; iter < 3; iter++) {
+    //   merge_sort_pairs2.exec(d_input.data().get(), IndexIter,
+    //                          d_output.data().get(), IndexToSortedValsIter,
+    //                          (int)num_items, cuda::std::less<KeyT>());
+    // }
+    // h_output = d_output;
+    // for (int i = 1; i < (int)num_items; i++) {
+    //   if (h_output[i - 1] > h_output[i]) {
+    //     std::cout << "merge sortpairs2 Error at index " << i << std::endl;
+    //   }
+    // }
 
     // Try the 1 block custom kernel
     {
