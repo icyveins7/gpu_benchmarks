@@ -69,6 +69,7 @@ int main(int argc, char **argv) {
   }
 
   thrust::device_vector<DataT> d_data = h_data;
+  thrust::device_vector<DataT> d_out(d_data.size());
   thrust::device_vector<NumSelectedT> d_num_selected(1);
 
 #ifdef USE_BIG_DATA
@@ -77,15 +78,49 @@ int main(int argc, char **argv) {
   LessThan<DataT> functor{5};
 #endif
 
-  cubw::DeviceSelect::IfInPlace<DataT *, NumSelectedT *, decltype(functor)>
-      if_inplace(length);
-  printf("Temp storage is %zu bytes\n", if_inplace.d_temp_storage.size());
-  if_inplace.exec(d_data.data().get(), d_num_selected.data().get(), length,
-                  functor);
-
+  {
+    cubw::DeviceSelect::IfInPlace<decltype(d_data.begin()), NumSelectedT *,
+                                  decltype(functor)>
+        if_inplace(length);
+    printf("Temp storage is %zu bytes\n", if_inplace.d_temp_storage.size());
+    if_inplace.exec(d_data.begin(), d_num_selected.data().get(), length,
+                    functor);
+  }
   h_num_selected = d_num_selected;
   printf("Num selected: %d\n", h_num_selected[0]);
   thrust::host_vector<DataT> h_out = d_data;
+  for (int i = 0; i < (int)h_num_selected[0]; i++) {
+#ifdef USE_BIG_DATA
+    if (h_out[i].val >= functor.value) {
+#else
+    if (h_out[i] >= functor.value) {
+#endif
+      std::cout << "Error at index " << i << std::endl;
+    }
+    if (length <= 64) {
+#ifdef USE_BIG_DATA
+      std::cout << h_out[i].val << " ";
+#else
+      std::cout << h_out[i] << " ";
+#endif
+    }
+  }
+  std::cout << std::endl << " -------------- " << std::endl;
+
+  {
+    d_data = h_data;
+    cubw::DeviceSelect::If<decltype(d_data.begin()), decltype(d_out.begin()),
+                           NumSelectedT *, decltype(functor)>
+        if_outofplace(length);
+    printf("Temp storage is %zu bytes\n", if_outofplace.d_temp_storage.size());
+    for (int i = 0; i < 3; ++i) {
+      if_outofplace.exec(d_data.begin(), d_out.begin(),
+                         d_num_selected.data().get(), length, functor);
+    }
+  }
+  h_num_selected = d_num_selected;
+  printf("Num selected: %d\n", h_num_selected[0]);
+  h_out = d_out;
   for (int i = 0; i < (int)h_num_selected[0]; i++) {
 #ifdef USE_BIG_DATA
     if (h_out[i].val >= functor.value) {
