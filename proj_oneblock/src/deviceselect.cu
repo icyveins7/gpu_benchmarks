@@ -15,6 +15,9 @@ template <typename T> struct LessThan {
   __host__ __device__ bool operator()(const T &a) const { return (a < value); }
 };
 
+// NOTE: using large struct like this does affect the workspace
+// mem requirements, but it only starts at a certain point (for small numbers
+// like length 64, it is no different to applying to raw ints for example)
 template <typename T> struct BigData {
   T val;
   T a1;
