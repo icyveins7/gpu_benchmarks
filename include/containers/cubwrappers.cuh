@@ -135,4 +135,37 @@ struct SortPairsCopy : public CubWrapper {
 
 } // namespace DeviceMergeSort
 
+// ===========================
+// DeviceSelect
+// ===========================
+namespace DeviceSelect {
+
+template <typename IteratorT, typename NumSelectedIteratorT, typename SelectOp>
+struct IfInPlace : public CubWrapper {
+  IfInPlace() {}
+  IfInPlace(int num_items) : CubWrapper() { resizeStorage((size_t)num_items); }
+
+  size_t getStorageBytes(size_t num_items) override {
+    size_t temp_storage_bytes = 0;
+    // Default-construct all types; pointers automatically become nullptrs
+    SelectOp select_op{};
+    IteratorT data{};
+    NumSelectedIteratorT num_selected{};
+    cub::DeviceSelect::If(nullptr, temp_storage_bytes, data, num_selected,
+                          num_items, select_op);
+    return temp_storage_bytes;
+  }
+
+  cudaError_t exec(IteratorT d_in, NumSelectedIteratorT d_num_selected,
+                   ::cuda::std::int64_t num_items, SelectOp select_op,
+                   cudaStream_t stream = 0) {
+    size_t temp_storage_bytes = this->d_temp_storage.size();
+    return cub::DeviceSelect::If(this->d_temp_storage.data().get(),
+                                 temp_storage_bytes, d_in, d_num_selected,
+                                 num_items, select_op, stream);
+  }
+};
+
+} // namespace DeviceSelect
+
 } // namespace cubw
