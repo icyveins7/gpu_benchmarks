@@ -1,4 +1,5 @@
 #include "containers/cubwrappers.cuh"
+#include "sharedmem.cuh"
 
 #include <iostream>
 
@@ -7,7 +8,7 @@
 #include <thrust/host_vector.h>
 
 // Compile-time toggle to use giant struct for tests
-// #define USE_BIG_DATA
+#define USE_BIG_DATA
 
 template <typename T> struct LessThan {
   T value;
@@ -39,6 +40,19 @@ template <typename T> struct LessThanBigData {
     return (a.val < value);
   }
 };
+
+template <typename T, typename SelectOp>
+__global__ void NaiveSelectIf(const T *data, T *output,
+                              unsigned int *d_num_selected, int initialLen,
+                              const SelectOp select_op) {
+
+  for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < initialLen;
+       i += blockDim.x * gridDim.x) {
+    if (select_op(data[i])) {
+      output[atomicAdd(d_num_selected, 1)] = data[i];
+    }
+  }
+}
 
 int main(int argc, char **argv) {
   printf("One block device select comparisons\n");
@@ -118,6 +132,33 @@ int main(int argc, char **argv) {
                          d_num_selected.data().get(), length, functor);
     }
   }
+  h_num_selected = d_num_selected;
+  printf("Num selected: %d\n", h_num_selected[0]);
+  h_out = d_out;
+  for (int i = 0; i < (int)h_num_selected[0]; i++) {
+#ifdef USE_BIG_DATA
+    if (h_out[i].val >= functor.value) {
+#else
+    if (h_out[i] >= functor.value) {
+#endif
+      std::cout << "Error at index " << i << std::endl;
+    }
+    if (length <= 64) {
+#ifdef USE_BIG_DATA
+      std::cout << h_out[i].val << " ";
+#else
+      std::cout << h_out[i] << " ";
+#endif
+    }
+  }
+  std::cout << std::endl << "-----------------" << std::endl;
+
+  // Attempt custom naive kernel
+  int tpb = 128;
+  int blks = (length + tpb - 1) / tpb;
+  d_num_selected[0] = 0;
+  NaiveSelectIf<<<blks, tpb>>>(d_data.data().get(), d_out.data().get(),
+                               d_num_selected.data().get(), length, functor);
   h_num_selected = d_num_selected;
   printf("Num selected: %d\n", h_num_selected[0]);
   h_out = d_out;
