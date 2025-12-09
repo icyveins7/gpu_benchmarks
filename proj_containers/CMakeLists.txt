@@ -31,6 +31,33 @@ target_sources(
   ${PROJECT_SOURCE_DIR}/bitset_speed.cu
 )
 
+# --------------------
+set_source_files_properties(${PROJECT_SOURCE_DIR}/sort.cu PROPERTIES LANGUAGE CUDA)
+add_executable(sort)
+
+target_include_directories(sort
+                           PRIVATE ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
+                           )
+
+target_sources(
+  sort PRIVATE
+  ${PROJECT_SOURCE_DIR}/sort.cu
+)
+
+# --------------------
+set_source_files_properties(${PROJECT_SOURCE_DIR}/deviceselect.cu PROPERTIES LANGUAGE CUDA)
+add_executable(deviceselect)
+
+target_include_directories(deviceselect
+                           PRIVATE ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
+                           )
+
+target_sources(
+  deviceselect PRIVATE
+  ${PROJECT_SOURCE_DIR}/deviceselect.cu
+)
+
+
 # -------------------- Tests
 if (GTEST_FOUND)
   message("Enabling tests for proj_containers")
