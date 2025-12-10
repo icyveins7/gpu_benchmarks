@@ -69,8 +69,10 @@ __global__ void SelectIfInplaceKernel(T *data, volatile int *d_block_offsets,
   __shared__ T s_data[ThreadsPerBlk];
   __shared__ unsigned int s_block_count;
   __shared__ unsigned int s_block_prefix;
-  if (threadIdx.x == 0)
+  if (threadIdx.x == 0) {
     s_block_count = 0;
+    s_block_prefix = 0;
+  }
   __syncthreads();
 
   // Read the current block, each thread just does 1
@@ -88,10 +90,14 @@ __global__ void SelectIfInplaceKernel(T *data, volatile int *d_block_offsets,
 
   // Read data for valid threads
   T threadData;
+  int sIdx = -1;
   if (threadIdx.x < numToReadThisBlk) {
     threadData = data[blockReadStart + threadIdx.x];
     if (select_op(threadData)) {
-      s_data[atomicAdd(&s_block_count, 1)] = threadData;
+      sIdx = atomicAdd(&s_block_count, 1);
+      // printf("thread %d sIdx %d\n", threadIdx.x, sIdx);
+      // NOTE: we haven't written to shared mem yet
+      // we just want to publish our prefixes and offsets asap so we delay this
     }
   }
   __syncthreads();
@@ -111,9 +117,11 @@ __global__ void SelectIfInplaceKernel(T *data, volatile int *d_block_offsets,
     // Programming guide suggests just marking it volatile means i don't need a
     // special builtin like __stcs:
     // https://docs.nvidia.com/cuda/cuda-c-programming-guide/#memory-fence-functions
+  }
 
-    // Update the global sum
-    atomicAdd(d_num_selected, s_block_count);
+  // Now we fill the shared mem
+  if (sIdx >= 0) {
+    s_data[sIdx] = threadData;
   }
 
   // First thread: decoupled lookback
@@ -180,6 +188,11 @@ __global__ void SelectIfInplaceKernel(T *data, volatile int *d_block_offsets,
   // Write data for each block
   if (threadIdx.x < s_block_count) {
     data[s_block_prefix + threadIdx.x] = s_data[threadIdx.x];
+  }
+
+  if (blockIdx.x == gridDim.x - 1 && threadIdx.x == 0) {
+    // Update the global sum
+    atomicAdd(d_num_selected, s_block_prefix + s_block_count);
   }
 }
 
@@ -288,8 +301,9 @@ int main(int argc, char **argv) {
   std::cout << std::endl << "-----------------" << std::endl;
 
   // Attempt custom naive out of place kernel
-  constexpr int tpb = 128;
-  int blks = (length + tpb - 1) / tpb;
+  constexpr int tpb = 128; // doesn't make much diff for out of place, but makes
+                           // in-place kernel below much worse if you reduce
+  int blks = length / tpb + (length % tpb > 0 ? 1 : 0);
   d_num_selected[0] = 0;
   NaiveSelectIf<<<blks, tpb>>>(d_data.data().get(), d_out.data().get(),
                                d_num_selected.data().get(), length, functor);
