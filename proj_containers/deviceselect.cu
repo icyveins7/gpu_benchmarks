@@ -141,6 +141,7 @@ __global__ void SelectIfInplaceKernel(T *data, volatile int *d_block_offsets,
   if (threadIdx.x == 0) {
     s_block_count = 0;
     s_block_prefix = 0;
+    // Get next progressive block instead of relying on blockIdx.x
     s_blockIdxToWorkOn = atomicAdd(d_dynamicBlockCounter, 1);
   }
   __syncthreads();
@@ -192,39 +193,144 @@ __global__ void SelectIfInplaceKernel(T *data, volatile int *d_block_offsets,
     s_data[sIdx] = threadData;
   }
 
-  // First thread: decoupled lookback
-  int rollingPrefix = 0;
-  if ((threadIdx.x == 0) && (s_blockIdxToWorkOn != 0)) {
+  // // First thread: decoupled lookback
+  // int rollingPrefix = 0;
+  // if ((threadIdx.x == 0) && (s_blockIdxToWorkOn != 0)) {
+  //   bool complete = false;
+  //   int blkIdx = thisBlockOffsetPrefixesIndex + 1;
+  //   while (!complete) {
+  //     int prevBlkPrefix = d_block_prefixes[blkIdx];
+  //     if (prevBlkPrefix >= 0) {
+  //       // Block has completed its own prefix
+  //       complete = true;
+  //       rollingPrefix += prevBlkPrefix;
+  //       break;
+  //     }
+  //
+  //     int prevBlkOffset = d_block_offsets[blkIdx];
+  //     if (prevBlkOffset < 0) {
+  //       // Block has not completed its own offset yet
+  //       __threadfence();
+  //       // We repeat on the same block
+  //       continue;
+  //     }
+  //     // Otherwise we increment
+  //     rollingPrefix += prevBlkOffset;
+  //
+  //     // Otherwise we look back further
+  //     if (blkIdx < (int)gridDim.x - 1)
+  //       blkIdx++;
+  //   }
+  //   s_block_prefix = rollingPrefix;
+  //   // printf("Block %d prefix should be %d\n", blockIdx.x, s_block_prefix);
+  //   // Update the block prefixes for next blocks
+  //   d_block_prefixes[thisBlockOffsetPrefixesIndex] =
+  //       rollingPrefix + s_block_count;
+  // }
+  // __syncthreads(); // wait for all threads to know where to write
+
+  // First warp: decoupled lookback
+  if ((threadIdx.x < 32) && (s_blockIdxToWorkOn != 0)) {
+    cg::coalesced_group activeWarp = cg::coalesced_threads();
+    int blkIdx = thisBlockOffsetPrefixesIndex + 1 + threadIdx.x;
+    int broadcastPrefix = -1;
+    int src_rank;
+    int rollingPrefix = 0;
     bool complete = false;
-    int blkIdx = thisBlockOffsetPrefixesIndex + 1;
     while (!complete) {
-      int prevBlkPrefix = d_block_prefixes[blkIdx];
-      if (prevBlkPrefix >= 0) {
-        // Block has completed its own prefix
-        complete = true;
-        rollingPrefix += prevBlkPrefix;
-        break;
+      int prevBlkPrefix = -1;
+      int prevBlkOffset = 0; // initialize to 0 to handle threads past tail
+      // do not look past the ending
+      if (blkIdx < (int)gridDim.x) {
+        prevBlkPrefix = d_block_prefixes[blkIdx];
+        prevBlkOffset = d_block_offsets[blkIdx];
+      }
+      // check if any prefix has been set
+      if (broadcastPrefix < 0 && activeWarp.any(prevBlkPrefix >= 0)) {
+        // find the index of the thread
+        unsigned int mask = activeWarp.ballot(prevBlkPrefix >= 0);
+        src_rank = __ffs((int)mask) - 1;
+        // Broadcast this to everyone
+        broadcastPrefix = activeWarp.shfl(prevBlkPrefix, src_rank);
+
+        // if (activeWarp.thread_rank() == src_rank) {
+        //   printf("working on blk %d, src rank %d found a previous prefix at "
+        //          "index %d: %d\n",
+        //          s_blockIdxToWorkOn, src_rank, blkIdx, broadcastPrefix);
+        // }
       }
 
-      int prevBlkOffset = d_block_offsets[blkIdx];
-      if (prevBlkOffset < 0) {
-        // Block has not completed its own offset yet
-        __threadfence();
-        // We repeat on the same block
+      // If no prefixes found, then at least make sure all offsets found,
+      // otherwise we must repeat
+      if (!activeWarp.all(prevBlkOffset >= 0)) {
+        if (activeWarp.thread_rank() == 0) {
+          // printf("working on blk %d, offsets not all valid\n",
+          //        s_blockIdxToWorkOn);
+        }
         continue;
       }
-      // Otherwise we increment
-      rollingPrefix += prevBlkOffset;
 
-      // Otherwise we look back further
-      if (blkIdx < (int)gridDim.x - 1)
-        blkIdx++;
+      // printf("BLK %d T %d BROADCAST PREFIX FROM %d, %d PREVBLKOFFSET %d\n",
+      //        s_blockIdxToWorkOn, activeWarp.thread_rank(), src_rank,
+      //        broadcastPrefix, prevBlkOffset);
+
+      // If we have found the prefix, we sum up to just before that thread and
+      // exit
+      if (broadcastPrefix >= 0) {
+        // printf("BLK %d T %d FINAL LOOP\n", s_blockIdxToWorkOn,
+        //        activeWarp.thread_rank());
+
+        // We want to do a generic halving-reduction, so just set all the other
+        // values to 0
+        prevBlkOffset =
+            (int)activeWarp.thread_rank() < src_rank ? prevBlkOffset : 0;
+        // printf("BLK %d T %d FINAL LOOP PREVBLKOFFSET %d\n",
+        // s_blockIdxToWorkOn,
+        //        activeWarp.thread_rank(), prevBlkOffset);
+        int val = prevBlkOffset;
+        for (int i = activeWarp.size() / 2; i > 0; i /= 2) {
+          val += activeWarp.shfl_down(val, i);
+        }
+        if (activeWarp.thread_rank() == 0) {
+          // printf("BLK %d FINAL LOOP SUM OFFSETS %d\n", s_blockIdxToWorkOn,
+          // val);
+          rollingPrefix += val;
+          rollingPrefix += broadcastPrefix;
+          // printf("working on blk %d, found prefix already, summing up to "
+          //        "thread %d, rollingPrefix finally %d\n",
+          //        s_blockIdxToWorkOn, src_rank, rollingPrefix);
+        }
+        complete = true;
+        break;
+      }
+      // Otherwise we sum all of them and go to the next one
+      else {
+        // printf("BLK %d T %d ACCUMULATION\n", s_blockIdxToWorkOn,
+        //        activeWarp.thread_rank());
+        int val = prevBlkOffset;
+        for (int i = activeWarp.size() / 2; i > 0; i /= 2) {
+          val += activeWarp.shfl_down(val, i);
+        }
+        if (activeWarp.thread_rank() == 0) {
+          // printf("working on blk %d, found incremental total offset %d\n",
+          //        s_blockIdxToWorkOn, val);
+          rollingPrefix += val;
+        }
+        blkIdx += 32;
+      }
     }
-    s_block_prefix = rollingPrefix;
-    // printf("Block %d prefix should be %d\n", blockIdx.x, s_block_prefix);
-    // Update the block prefixes for next blocks
-    d_block_prefixes[thisBlockOffsetPrefixesIndex] =
-        rollingPrefix + s_block_count;
+
+    if (activeWarp.thread_rank() == 0) {
+      s_block_prefix = rollingPrefix;
+      d_block_prefixes[thisBlockOffsetPrefixesIndex] =
+          rollingPrefix + s_block_count;
+      // printf("working on blk %d, computed final prefix %d, updated my prefix
+      // "
+      //        "to %d "
+      //        "after adding my %d\n",
+      //        s_blockIdxToWorkOn, s_block_prefix,
+      //        d_block_prefixes[thisBlockOffsetPrefixesIndex], s_block_count);
+    }
   }
   __syncthreads(); // wait for all threads to know where to write
 
@@ -348,6 +454,7 @@ int main(int argc, char **argv) {
   constexpr int tpb = 128; // doesn't make much diff for out of place, but makes
                            // in-place kernel below much worse if you reduce
   int blks = length / tpb + (length % tpb > 0 ? 1 : 0);
+  printf("Using %d blks\n", blks);
   d_num_selected[0] = 0;
   NaiveSelectIf<<<blks, tpb>>>(d_data.data().get(), d_out.data().get(),
                                d_num_selected.data().get(), length, functor);
@@ -373,7 +480,7 @@ int main(int argc, char **argv) {
   std::cout << std::endl << "-----------------" << std::endl;
 
   // Attempt in place kernel
-  for (int i = 0; i < 3; ++i) {
+  for (int i = 0; i < 1; ++i) {
     d_num_selected[0] = 0;
     d_data = h_data;
     thrust::device_vector<int> d_block_offsets(blks, -1);
