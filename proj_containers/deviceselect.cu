@@ -126,24 +126,27 @@ template <typename T, typename SelectOp, int ThreadsPerBlk>
 __global__ void SelectIfInplaceKernel(T *data, volatile int *d_block_offsets,
                                       volatile int *d_block_prefixes,
                                       unsigned int *d_num_selected,
+                                      unsigned int *d_dynamicBlockCounter,
                                       unsigned int initialLen,
                                       const SelectOp select_op) {
 
-  // Ignore the first block
-  if (blockIdx.x == 0)
-    return;
+  // // Ignore the first block
+  // if (blockIdx.x == 0)
+  //   return;
 
   __shared__ T s_data[ThreadsPerBlk];
   __shared__ unsigned int s_block_count;
   __shared__ unsigned int s_block_prefix;
+  __shared__ unsigned int s_blockIdxToWorkOn;
   if (threadIdx.x == 0) {
     s_block_count = 0;
     s_block_prefix = 0;
+    s_blockIdxToWorkOn = atomicAdd(d_dynamicBlockCounter, 1);
   }
   __syncthreads();
 
   // Read the current block, each thread just does 1
-  unsigned int blockReadStart = blockIdx.x * blockDim.x;
+  unsigned int blockReadStart = s_blockIdxToWorkOn * blockDim.x;
   if (blockReadStart >= initialLen) {
     return;
   }
@@ -166,18 +169,15 @@ __global__ void SelectIfInplaceKernel(T *data, volatile int *d_block_offsets,
   }
   __syncthreads();
 
-  // TODO: need to rework, since the initial kernel must know the real kernel's
-  // grid dims to know where to write the block prefixes to, otherwise the real
-  // 2nd kernel will freeze
-
-  unsigned int thisBlockOffsetPrefixesIndex = gridDim.x - 1 - blockIdx.x;
+  unsigned int thisBlockOffsetPrefixesIndex =
+      gridDim.x - 1 - s_blockIdxToWorkOn;
   // Thread 0: Populate the block offset, but not the prefix yet
   // We arrange the offsetprefixes in reverse i.e. block 0 writes to the last
   // element This makes it easier to 'look back' as it would be equivalent to
   // incrementing the index
   if (threadIdx.x == 0) {
     // We have the inclusive sum for block 0 already
-    if (blockIdx.x == 0) {
+    if (s_blockIdxToWorkOn == 0) {
       d_block_prefixes[thisBlockOffsetPrefixesIndex] = (int)s_block_count;
       __threadfence(); // prefix should be written first if available
     }
@@ -194,7 +194,7 @@ __global__ void SelectIfInplaceKernel(T *data, volatile int *d_block_offsets,
 
   // First thread: decoupled lookback
   int rollingPrefix = 0;
-  if ((threadIdx.x == 0) && (blockIdx.x != 0)) {
+  if ((threadIdx.x == 0) && (s_blockIdxToWorkOn != 0)) {
     bool complete = false;
     int blkIdx = thisBlockOffsetPrefixesIndex + 1;
     while (!complete) {
@@ -228,38 +228,13 @@ __global__ void SelectIfInplaceKernel(T *data, volatile int *d_block_offsets,
   }
   __syncthreads(); // wait for all threads to know where to write
 
-  // // First warp: decoupled lookback
-  // if (threadIdx.x < 32) {
-  //   if (blockIdx.x > 0) {
-  //     bool complete = false;
-  //     while (!complete) {
-  //       // Lookback until we hit something with no block offset
-  //       // NOTE: now to look back, we just go forwards
-  //       for (int i = threadIdx.x;
-  //            i < (int)gridDim.x - (int)thisBlockOffsetPrefixesIndex - 1;
-  //            i += 32) {
-  //         // First thread on first loop should read the +1 block, and so on
-  //         int prevBlkOffset =
-  //             (int)d_block_offsets[i + 1 + thisBlockOffsetPrefixesIndex];
-  //         bool prevBlkOffsetWritten = (prevBlkOffset >= 0);
-  //         bool allOffsetsFound = false;
-  //         if (prevBlkOffsetWritten) {
-  //           cg::coalesced_group g = cg::coalesced_threads();
-  //           g.size()
-  //         }
-  //         // __threadfence(); // maybe i dont need this any more?
-  //       }
-  //     }
-  //   }
-  // }
-
   // Write data for each block
   if (threadIdx.x < s_block_count) {
     data[s_block_prefix + threadIdx.x] = s_data[threadIdx.x];
   }
 
   // Last block updates the sum
-  if (blockIdx.x == gridDim.x - 1 && threadIdx.x == 0) {
+  if (s_blockIdxToWorkOn == gridDim.x - 1 && threadIdx.x == 0) {
     // Update the global sum
     d_num_selected[0] = s_block_prefix + s_block_count;
   }
@@ -403,14 +378,11 @@ int main(int argc, char **argv) {
     d_data = h_data;
     thrust::device_vector<int> d_block_offsets(blks, -1);
     thrust::device_vector<int> d_block_prefixes(blks, -1);
-    SelectIfInplaceInitKernel<DataT, decltype(functor), tpb>
-        <<<1, tpb>>>(d_data.data().get(), d_block_offsets.data().get(),
-                     d_block_prefixes.data().get(), d_num_selected.data().get(),
-                     blks, length, functor);
-    SelectIfInplaceKernel<DataT, decltype(functor), tpb>
-        <<<blks, tpb>>>(d_data.data().get(), d_block_offsets.data().get(),
-                        d_block_prefixes.data().get(),
-                        d_num_selected.data().get(), length, functor);
+    thrust::device_vector<unsigned int> d_dynamicBlockCounter(1, 0);
+    SelectIfInplaceKernel<DataT, decltype(functor), tpb><<<blks, tpb>>>(
+        d_data.data().get(), d_block_offsets.data().get(),
+        d_block_prefixes.data().get(), d_num_selected.data().get(),
+        d_dynamicBlockCounter.data().get(), length, functor);
   }
   h_num_selected = d_num_selected;
   printf("Num selected: %d\n", h_num_selected[0]);
