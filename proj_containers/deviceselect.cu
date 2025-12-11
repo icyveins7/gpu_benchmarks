@@ -230,6 +230,10 @@ __global__ void SelectIfInplaceKernel(T *data, volatile int *d_block_offsets,
   // __syncthreads(); // wait for all threads to know where to write
 
   // First warp: decoupled lookback
+  // NOTE: although this is significantly faster than the 1 thread version
+  // above, it appears to be eating way more registers per thread (55 vs 30) and
+  // reduces occupancy because of this; for comparison cub's one uses 38
+  // registers
   if ((threadIdx.x < 32) && (s_blockIdxToWorkOn != 0)) {
     cg::coalesced_group activeWarp = cg::coalesced_threads();
     int blkIdx = thisBlockOffsetPrefixesIndex + 1 + threadIdx.x;
@@ -252,68 +256,39 @@ __global__ void SelectIfInplaceKernel(T *data, volatile int *d_block_offsets,
         src_rank = __ffs((int)mask) - 1;
         // Broadcast this to everyone
         broadcastPrefix = activeWarp.shfl(prevBlkPrefix, src_rank);
-
-        // if (activeWarp.thread_rank() == src_rank) {
-        //   printf("working on blk %d, src rank %d found a previous prefix at "
-        //          "index %d: %d\n",
-        //          s_blockIdxToWorkOn, src_rank, blkIdx, broadcastPrefix);
-        // }
       }
 
       // If no prefixes found, then at least make sure all offsets found,
       // otherwise we must repeat
       if (!activeWarp.all(prevBlkOffset >= 0)) {
-        if (activeWarp.thread_rank() == 0) {
-          // printf("working on blk %d, offsets not all valid\n",
-          //        s_blockIdxToWorkOn);
-        }
         continue;
       }
 
-      // printf("BLK %d T %d BROADCAST PREFIX FROM %d, %d PREVBLKOFFSET %d\n",
-      //        s_blockIdxToWorkOn, activeWarp.thread_rank(), src_rank,
-      //        broadcastPrefix, prevBlkOffset);
-
-      // If we have found the prefix, we sum up to just before that thread and
-      // exit
+      // If we have found the prefix, we sum up to just
+      // before that thread and exit
       if (broadcastPrefix >= 0) {
-        // printf("BLK %d T %d FINAL LOOP\n", s_blockIdxToWorkOn,
-        //        activeWarp.thread_rank());
-
-        // We want to do a generic halving-reduction, so just set all the other
-        // values to 0
+        // We want to do a generic halving-reduction,
+        // so just set all the other values to 0
         prevBlkOffset =
             (int)activeWarp.thread_rank() < src_rank ? prevBlkOffset : 0;
-        // printf("BLK %d T %d FINAL LOOP PREVBLKOFFSET %d\n",
-        // s_blockIdxToWorkOn,
-        //        activeWarp.thread_rank(), prevBlkOffset);
         int val = prevBlkOffset;
         for (int i = activeWarp.size() / 2; i > 0; i /= 2) {
           val += activeWarp.shfl_down(val, i);
         }
         if (activeWarp.thread_rank() == 0) {
-          // printf("BLK %d FINAL LOOP SUM OFFSETS %d\n", s_blockIdxToWorkOn,
-          // val);
           rollingPrefix += val;
           rollingPrefix += broadcastPrefix;
-          // printf("working on blk %d, found prefix already, summing up to "
-          //        "thread %d, rollingPrefix finally %d\n",
-          //        s_blockIdxToWorkOn, src_rank, rollingPrefix);
         }
         complete = true;
         break;
       }
       // Otherwise we sum all of them and go to the next one
       else {
-        // printf("BLK %d T %d ACCUMULATION\n", s_blockIdxToWorkOn,
-        //        activeWarp.thread_rank());
         int val = prevBlkOffset;
         for (int i = activeWarp.size() / 2; i > 0; i /= 2) {
           val += activeWarp.shfl_down(val, i);
         }
         if (activeWarp.thread_rank() == 0) {
-          // printf("working on blk %d, found incremental total offset %d\n",
-          //        s_blockIdxToWorkOn, val);
           rollingPrefix += val;
         }
         blkIdx += 32;
@@ -324,12 +299,6 @@ __global__ void SelectIfInplaceKernel(T *data, volatile int *d_block_offsets,
       s_block_prefix = rollingPrefix;
       d_block_prefixes[thisBlockOffsetPrefixesIndex] =
           rollingPrefix + s_block_count;
-      // printf("working on blk %d, computed final prefix %d, updated my prefix
-      // "
-      //        "to %d "
-      //        "after adding my %d\n",
-      //        s_blockIdxToWorkOn, s_block_prefix,
-      //        d_block_prefixes[thisBlockOffsetPrefixesIndex], s_block_count);
     }
   }
   __syncthreads(); // wait for all threads to know where to write
