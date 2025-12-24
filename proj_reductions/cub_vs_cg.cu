@@ -2,6 +2,7 @@
 #include <random>
 
 #include <cooperative_groups.h>
+#include <cooperative_groups/reduce.h>
 #include <cub/cub.cuh>
 #include <thrust/device_vector.h>
 #include <thrust/host_vector.h>
@@ -28,12 +29,8 @@ __global__ void cubWarpReduceKernel(const T *x, const int len, T *out) {
   }
 }
 
-template <typename T, int THREADS_PER_BLK>
+template <typename T>
 __global__ void cgWarpReduceKernel(const T *x, const int len, T *out) {
-  constexpr int NUM_WARPS = THREADS_PER_BLK / 32; // assume factor of 32
-
-  int blkWarpIdx = threadIdx.x / 32;
-
   auto tilewarp = cg::tiled_partition<32>(cg::this_thread_block());
   for (int i = 0; i < len; i += blockDim.x * gridDim.x) {
     T val = 0;
@@ -64,18 +61,24 @@ int main(int argc, char *argv[]) {
   }
 
   thrust::device_vector<int> d_x = h_x;
-  thrust::device_vector<int> d_y(d_x.size());
+  thrust::device_vector<int> d_ycub(d_x.size());
+  thrust::device_vector<int> d_ycg(d_x.size());
 
-  {
+  for (int iter = 0; iter < 3; ++iter) {
     constexpr int tpb = 128;
     int numBlks = len / tpb + 1;
+
     cubWarpReduceKernel<int, tpb>
-        <<<numBlks, tpb>>>(d_x.data().get(), len, d_y.data().get());
+        <<<numBlks, tpb>>>(d_x.data().get(), len, d_ycub.data().get());
     printf("Warp cub storage = %zu\n",
            sizeof(typename cub::WarpReduce<int>::TempStorage));
+
+    cgWarpReduceKernel<int>
+        <<<numBlks, tpb>>>(d_x.data().get(), len, d_ycg.data().get());
   }
 
-  thrust::host_vector<int> h_y = d_y;
+  thrust::host_vector<int> h_ycub = d_ycub;
+  thrust::host_vector<int> h_ycg = d_ycg;
   for (int i = 0; i < len; i += 32) {
     int check = 0;
     for (int j = 0; j < 32; j++) {
@@ -83,12 +86,20 @@ int main(int argc, char *argv[]) {
         check += h_x[i + j];
     }
     int oIdx = i / 32;
-    if (h_y[oIdx] != check) {
-      printf("Error from %d: %d vs %d\n", i, h_y[oIdx], check);
+    if (h_ycub[oIdx] != check) {
+      printf("Error from %d: %d vs %d\n", i, h_ycub[oIdx], check);
       for (int j = 0; j < 32; j++) {
         printf(" %d, ", h_x[i + j]);
       }
       printf("\n");
+      break;
+    }
+  }
+
+  for (int i = 0; i < len; ++i) {
+    if (h_ycub[i] != h_ycg[i]) {
+      printf("Comparison CG/CUB Error from %d: %d vs %d\n", i, h_ycub[i],
+             h_ycg[i]);
       break;
     }
   }
