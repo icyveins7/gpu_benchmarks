@@ -44,3 +44,15 @@ target_sources(
   ${PROJECT_SOURCE_DIR}/thrustreduction.cu
 )
 
+# --------------------
+set_source_files_properties(cub_vs_cg.cu PROPERTIES LANGUAGE CUDA)
+add_executable(cub_vs_cg)
+
+target_include_directories(cub_vs_cg
+                           PRIVATE ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
+                           )
+
+target_sources(
+  cub_vs_cg PRIVATE
+  ${PROJECT_SOURCE_DIR}/cub_vs_cg.cu
+)
