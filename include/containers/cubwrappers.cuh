@@ -197,4 +197,44 @@ struct If : public CubWrapper {
 
 } // namespace DeviceSelect
 
+namespace DeviceScan {
+
+template <typename KeysInputIteratorT, typename ValuesInputIteratorT,
+          typename ValuesOutputIteratorT,
+          typename EqualityOpT = ::cuda::std::equal_to<>,
+          typename NumItemsT = uint32_t>
+struct InclusiveSumByKey : public CubWrapper {
+  InclusiveSumByKey() {}
+  InclusiveSumByKey(NumItemsT num_items) : CubWrapper() {
+    resizeStorage((size_t)num_items);
+  }
+
+  size_t getStorageBytes(size_t num_items) override {
+    size_t temp_storage_bytes = 0;
+    // Default-construct all types; pointers automatically become nullptrs
+    EqualityOpT equality_op{};
+    KeysInputIteratorT inputkeys{};
+    ValuesInputIteratorT input{};
+    ValuesOutputIteratorT output{};
+    cub::DeviceScan::InclusiveSumByKey(nullptr, temp_storage_bytes, inputkeys,
+                                       input, output, num_items, equality_op);
+    return temp_storage_bytes;
+  }
+
+  cudaError_t exec(KeysInputIteratorT d_keys_in,
+                   ValuesInputIteratorT d_values_in,
+                   ValuesOutputIteratorT d_values_out, NumItemsT num_items,
+                   EqualityOpT equality_op = EqualityOpT(),
+                   cudaStream_t stream = 0) {
+
+    size_t temp_storage_bytes = this->d_temp_storage.size();
+
+    return cub::DeviceScan::InclusiveSumByKey(
+        this->d_temp_storage.data().get(), temp_storage_bytes, d_keys_in,
+        d_values_in, d_values_out, num_items, equality_op, stream);
+  }
+};
+
+} // namespace DeviceScan
+
 } // namespace cubw

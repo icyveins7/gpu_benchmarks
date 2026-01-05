@@ -4,8 +4,16 @@
 #include <cub/cub.cuh>
 #include <thrust/device_vector.h>
 #include <thrust/host_vector.h>
+#include <thrust/iterator/counting_iterator.h>
+#include <thrust/iterator/transform_iterator.h>
 
+#include "containers/cubwrappers.cuh"
 #include "containers/image.cuh"
+
+struct IndexToRowFunctor {
+  int width;
+  __host__ __device__ int operator()(int i) { return i / width; }
+};
 
 template <typename Tdata, typename Tidx, int BLOCK_THREADS>
 __device__ void computeRowPrefixSums_BlockPerRow(
@@ -89,9 +97,20 @@ int main(int argc, char **argv) {
   containers::Image<int, int> rowSums(d_rowSums.data().get(), width, height);
   containers::Image<int, int> sat(d_sat.data().get(), width, height);
 
-  constexpr int tpb = 256;
-  int blks = (height + tpb - 1) / tpb;
-  computeSATkernel<int, int, tpb><<<blks, tpb>>>(image, rowSums, sat);
+  // Custom kernel method
+  {
+    constexpr int tpb = 256;
+    int blks = (height + tpb - 1) / tpb;
+    computeSATkernel<int, int, tpb><<<blks, tpb>>>(image, rowSums, sat);
+  }
+
+  // Generic CUB routine
+  auto rowKeyIterator = thrust::make_transform_iterator(
+      thrust::make_counting_iterator(0), IndexToRowFunctor{width});
+  cubw::DeviceScan::InclusiveSumByKey<decltype(rowKeyIterator), int *, int *>
+      cubwRowScan(width * height);
+  cubwRowScan.exec(rowKeyIterator, d_data.data().get(), d_rowSums.data().get(),
+                   width * height);
 
   h_rowSums = d_rowSums;
   h_sat = d_sat;
