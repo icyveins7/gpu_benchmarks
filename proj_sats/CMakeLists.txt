@@ -22,11 +22,11 @@ target_sources(
 
 
 # -------------------- Tests
-# if (GTEST_FOUND)
-#   message("Enabling tests for proj_remap")
-#
-#   # --------------------
-#   add_executable(test_remap test_remap.cu)
-#   target_link_libraries(test_remap ${CUDA_nppc_LIBRARY} ${CUDA_nppig_LIBRARY} GTest::gtest_main)
-#   gtest_discover_tests(test_remap)
-# endif()
+if (GTEST_FOUND)
+  message("Enabling tests for proj_sats")
+
+  # --------------------
+  add_executable(test_satstructs test_satstructs.cu)
+  target_link_libraries(test_satstructs GTest::gtest_main)
+  gtest_discover_tests(test_satstructs)
+endif()

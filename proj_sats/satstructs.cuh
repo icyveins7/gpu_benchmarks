@@ -150,11 +150,11 @@ int constructSectionsForDisk_prefixRows_SAT(const int radiusPixels,
     double y =
         -radiusPixels + (double)i; // include offset i.e. assume centre is 0,0
     double x = std::sqrt(radiusPixels * radiusPixels - y * y); // right root
-    rowOffsets.at(i) = (int)x; // round towards zero
+    rowOffsets.at(i) = (T)x; // round towards zero
   }
 
   // Now combine rows that have the same length i.e. offset
-  DiskSection<T> section{0, 0, -rowOffsets.at(0), rowOffsets.at(0)};
+  DiskSection<T> section{0, 0, (T)(-rowOffsets.at(0)), rowOffsets.at(0)};
   for (size_t i = 1; i < rowOffsets.size(); ++i) {
     if (rowOffsets.at(i) == rowOffsets.at(i - 1)) {
       // Change the current section
@@ -165,7 +165,7 @@ int constructSectionsForDisk_prefixRows_SAT(const int radiusPixels,
       sectionTypes[numSections] = section.type();
       numSections++;
       // Make a new section
-      section = {i, i, -rowOffsets.at(i), rowOffsets.at(i)};
+      section = {(T)i, (T)i, (T)(-rowOffsets.at(i)), rowOffsets.at(i)};
     }
   }
   // Push last section
