@@ -53,6 +53,18 @@ target_sources(
   run_length_encode PRIVATE
   ${PROJECT_SOURCE_DIR}/run_length_encode.cu
 )
+# --------------------
+set_source_files_properties(transpose.cu PROPERTIES LANGUAGE CUDA)
+add_executable(transpose)
+
+target_include_directories(transpose
+                           PRIVATE ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
+                           )
+
+target_sources(
+  transpose PRIVATE
+  ${PROJECT_SOURCE_DIR}/transpose.cu
+)
 
 # # -------------------- Tests
 # if (GTEST_FOUND)
