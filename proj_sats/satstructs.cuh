@@ -75,8 +75,11 @@ template <typename T> struct DiskRowSAT {
   __host__ __device__ static int lengthPixels(int radiusPixels) {
     return radiusPixels * 2 + 1;
   }
+  __host__ __device__ int numSectionsToIterate() const {
+    return numSections * 2 - 1;
+  }
   __host__ __device__ bool validSectionIndex(int i) const {
-    return i >= 0 && i < (numSections * 2 - 1);
+    return i >= 0 && i < numSectionsToIterate();
   }
 
   /**
@@ -116,7 +119,7 @@ template <typename T> struct DiskRowSAT {
    * @param i Input index
    * @return Appropriate section
    */
-  __host__ __device__ int getSection(int i) const {
+  __host__ __device__ DiskSection<T> &getSection(int i) const {
     return sections[accessIndex(i)];
   }
 
@@ -128,7 +131,7 @@ template <typename T> struct DiskRowSAT {
    * @param i Input index
    * @return Appropriate section type
    */
-  __host__ __device__ int getSectionType(int i) const {
+  __host__ __device__ uint8_t getSectionType(int i) const {
     return sectionTypes[accessIndex(i)];
   }
 };

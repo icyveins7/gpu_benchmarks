@@ -16,13 +16,13 @@ template <typename Tdata, typename Tidx = int> struct Image {
       : data(_data), width(_width), height(_height),
         bytesPerRow(width * sizeof(Tdata)) {}
 
-  __host__ __device__ bool rowIsValid(Tidx y) { return y < height; }
-  __host__ __device__ bool colIsValid(Tidx x) { return x < width; }
+  __host__ __device__ bool rowIsValid(Tidx y) const { return y < height; }
+  __host__ __device__ bool colIsValid(Tidx x) const { return x < width; }
 
   /**
    * @brief Returns a pointer to the specified row.
    */
-  __host__ __device__ Tdata *row(Tidx y) {
+  __host__ __device__ Tdata *row(Tidx y) const {
     return reinterpret_cast<Tdata *>(reinterpret_cast<uint8_t *>(data) +
                                      y * bytesPerRow);
   }
@@ -37,6 +37,32 @@ template <typename Tdata, typename Tidx = int> struct Image {
    */
   __host__ __device__ const Tdata &at(Tidx y, Tidx x) const {
     return row(y)[x];
+  }
+
+  /**
+   * @brief Returns the element by value if in range, otherwise returns the
+   * specified default value.
+   */
+  __host__ __device__ Tdata atWithDefault(Tidx y, Tidx x,
+                                          Tdata defaultValue = 0) const {
+    return rowIsValid(y) && colIsValid(x) ? row(y)[x] : defaultValue;
+  }
+
+  /**
+   * @brief Returns the element by value if in range, otherwise returns the
+   * specified pointer's dereferenced value. This prevents an early memory
+   * access if it is not required e.g. use row end values for indices extending
+   * past the width.
+
+   * @param defaultValuePtr Pointer location to dereference in the case of out
+   of bounds indices. Defaults to nullptr, which will instead access the first
+   value from *data.
+   */
+  __host__ __device__ Tdata atWithDefaultPointer(
+      Tidx y, Tidx x, const Tdata *defaultValuePtr = nullptr) const {
+    // Prevent nullptr access by defaulting to start of data
+    const Tdata *ptr = defaultValuePtr == nullptr ? data : defaultValuePtr;
+    return rowIsValid(y) && colIsValid(x) ? row(y)[x] : *ptr;
   }
 };
 
