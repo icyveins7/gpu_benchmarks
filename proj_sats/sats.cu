@@ -326,9 +326,11 @@ int main(int argc, char **argv) {
   thrust::device_vector<sats::DiskSection<int16_t>> d_multidiskSections(
       totalUsedSections);
   thrust::device_vector<uint8_t> d_multidiskSectionTypes(totalUsedSections);
-  thrust::copy(h_multidiskSections.begin(), h_multidiskSections.end(),
+  thrust::copy(h_multidiskSections.begin(),
+               h_multidiskSections.begin() + totalUsedSections,
                d_multidiskSections.begin());
-  thrust::copy(h_multidiskSectionTypes.begin(), h_multidiskSectionTypes.end(),
+  thrust::copy(h_multidiskSectionTypes.begin(),
+               h_multidiskSectionTypes.begin() + totalUsedSections,
                d_multidiskSectionTypes.begin());
   // Make container
   thrust::host_vector<sats::DiskRowSAT<int16_t>> h_multidisks(numDisks);
