@@ -33,7 +33,7 @@ __global__ void transposeKernel(T *odata, const T *idata, const int rows,
 
   for (int j = 0; j < TILE_DIM; j += blockDim.y)
     // Write only in range
-    if (x < rows && y + j < cols)
+    if (x < cols && y + j < rows)
       odata[(y + j) * cols + x] = tile[threadIdx.x][threadIdx.y + j];
 }
 
