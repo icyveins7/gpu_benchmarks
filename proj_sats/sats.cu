@@ -212,6 +212,7 @@ int main(int argc, char **argv) {
   thrust::device_vector<int> d_data(h_data);
   thrust::device_vector<int> d_rowSums(h_data.size());
   thrust::device_vector<int> d_transpose(h_data.size());
+  thrust::device_vector<int> d_transpose2(h_data.size());
   thrust::device_vector<int> d_sat(h_data.size());
   thrust::device_vector<int> d_out(h_data.size());
 
@@ -275,9 +276,9 @@ int main(int argc, char **argv) {
                  (int)width);
   // In-place row-sums on the transpose (width is now the original height)
   cubwColScanTranspose.exec(colTransposeKeyIterator, d_transpose.data().get(),
-                            d_transpose.data().get(), width * height);
+                            d_transpose2.data().get(), width * height);
   // Transposing back
-  transpose<int>(d_sat.data().get(), d_transpose.data().get(), width, height);
+  transpose<int>(d_sat.data().get(), d_transpose2.data().get(), width, height);
 
   // === 3. Perform convolution calculations via lookups
   {
@@ -289,18 +290,50 @@ int main(int argc, char **argv) {
         <<<blks, tpb>>>(d_disk, image, rowSums, sat, out);
   }
 
+  thrust::host_vector<int> h_transpose = d_transpose;
+  thrust::host_vector<int> h_transpose2 = d_transpose2;
   h_rowSums = d_rowSums;
   h_sat = d_sat;
   h_out = d_out;
 
-  // Check row sums
+  // ======================= Check row sums (GOOD)
+  printf("Checking initial row sums...\n");
   for (int i = 0; i < height; ++i) {
     int sum = 0;
     for (int j = 0; j < width; ++j) {
       sum += h_data[i * width + j];
       if (sum != h_rowSums[i * width + j]) {
-        printf("Mismatch at (%d, %d): expected %d vs %d\n", i, j, sum,
+        printf("RowSums Mismatch at (%d, %d): expected %d vs %d\n", i, j, sum,
                h_rowSums[i * width + j]);
+        break;
+      }
+    }
+  }
+
+  // ======================= Check row sums across transposed matrix (GOOD)
+  printf("Checking row sums across initial row sums transposed...\n");
+  for (int i = 0; i < width; ++i) { // there are 'width' rows now
+    int sum = 0;
+    for (int j = 0; j < height; ++j) { // and 'height' columns
+      sum += h_transpose[i * height + j];
+      if (sum != h_transpose2[i * height + j]) {
+        printf("RowSums On TransposedRowSums Mismatch at (%d, %d): expected %d "
+               "vs %d\n",
+               i, j, sum, h_transpose2[i * height + j]);
+        break;
+      }
+    }
+  }
+
+  // ======================= Check SATs by checking column sums (GOOD)
+  printf("Checking SATS by examining column sums...\n");
+  for (int j = 0; j < width; ++j) {
+    int sum = 0;
+    for (int i = 0; i < height; ++i) {
+      sum += h_rowSums[i * width + j];
+      if (sum != h_sat[i * width + j]) {
+        printf("SATS Mismatch at (%d, %d): expected %d vs %d\n", i, j, sum,
+               h_sat[i * width + j]);
         break;
       }
     }

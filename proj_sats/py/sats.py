@@ -62,7 +62,7 @@ def circleToString(
 
     # Simple print
     for row in mat:
-        s = "".join(["%c " % labelchars[i % len(labelchars)] if i > 0 else "X " for i in row])
+        s = "".join(["%c " % labelchars[i % len(labelchars)] if i > 0 else "- " for i in row])
         s += "\n"
         slist.append(s)
 
