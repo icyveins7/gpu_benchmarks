@@ -13,7 +13,7 @@
 template <typename T, int TILE_DIM = 32>
 __global__ void transposeKernel(T *odata, const T *idata, const int rows,
                                 const int cols) {
-  __shared__ float tile[TILE_DIM][TILE_DIM + 1];
+  __shared__ T tile[TILE_DIM][TILE_DIM + 1];
 
   int x = blockIdx.x * TILE_DIM + threadIdx.x;
   int y = blockIdx.y * TILE_DIM + threadIdx.y;
