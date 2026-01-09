@@ -64,7 +64,8 @@ template <typename T = int16_t> struct DiskSection {
  *
  * @tparam T Internal type for DiskSections
  */
-template <typename T> struct DiskRowSAT {
+template <typename T, typename Tscale = double> struct DiskRowSAT {
+  Tscale scale = 1.0;
   int radiusPixels; // TODO: maybe i don't need this?
   int numSections;
   DiskSection<T>

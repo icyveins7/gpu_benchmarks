@@ -2,7 +2,7 @@
 
 namespace containers {
 
-template <typename Tdata, typename Tidx = int> struct Image {
+template <typename Tdata, typename Tidx = unsigned int> struct Image {
   Tdata *data;
   Tidx width;
   Tidx height;
@@ -37,6 +37,42 @@ template <typename Tdata, typename Tidx = int> struct Image {
    */
   __host__ __device__ const Tdata &at(Tidx y, Tidx x) const {
     return row(y)[x];
+  }
+
+  /**
+   * @brief Returns a reference to the last element of a row.
+
+   * @detail Useful for scenarios where out of bounds access should be treated
+   * as using the last element i.e. 'same-element extrapolation'.
+   */
+  __host__ __device__ Tdata &rowEnd(Tidx y) { return row(y)[width - 1]; }
+
+  /**
+   * @brief Returns a const reference to the last element of a row.
+
+   * @detail Useful for scenarios where out of bounds access should be treated
+   * as using the last element i.e. 'same-element extrapolation'.
+   */
+  __host__ __device__ const Tdata &rowEnd(Tidx y) const {
+    return row(y)[width - 1];
+  }
+
+  /**
+   * @brief Returns a reference to the last element of a column.
+   *
+   * @detail Useful for scenarios where out of bounds access should be treated
+   * as using the last element i.e. 'same-element extrapolation'.
+   */
+  __host__ __device__ Tdata &colEnd(Tidx x) { return row(height - 1)[x]; }
+
+  /**
+   * @brief Returns a const reference to the last element of a column.
+   *
+   * @detail Useful for scenarios where out of bounds access should be treated
+   * as using the last element i.e. 'same-element extrapolation'.
+   */
+  __host__ __device__ const Tdata &colEnd(Tidx x) const {
+    return row(height - 1)[x];
   }
 
   /**
