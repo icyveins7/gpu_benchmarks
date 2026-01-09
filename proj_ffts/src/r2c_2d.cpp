@@ -115,6 +115,9 @@ int main(int argc, char *argv[]){
   fft.exec(d_x, d_y);
   fft.exec(d_x, d_y);
 
+  cuFFTWrapper_2D<CUFFT_C2R> fftc2r(fft_size, batch_size);
+  fftc2r.exec(d_y, d_x);
+  fftc2r.exec(d_y, d_x);
 
   // Read output and print
   thrust::host_vector<std::complex<float>> h_y = d_y;
