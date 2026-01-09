@@ -86,4 +86,8 @@ No additional speedup compared to batch size 2; GPU occupancy is already 100% he
 
 IPP 2D: 8.34s.
 
+### Ballpark timings for the A10
 
+Batch size 1 is sufficient to occupy the A10 at 10000x10000, using 32f (or 32fc).
+C2C uses 3 kernels, and occupies $3.4 + 3.5 + 3.4 = 10.3ms$.
+R2C/C2R (equal speeds) uses 4 kernels, and occupies $2+1.8+1.7+1.7 = 7.2ms$. This is definitely faster, and should be preferred when trying to do 2D real image convolutions.
