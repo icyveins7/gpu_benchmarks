@@ -4,6 +4,8 @@
 #include <type_traits>
 #include <vector>
 
+#include <thrust/host_vector.h>
+
 #define LOOKUP_TYPE_PIXEL 0
 #define LOOKUP_TYPE_ROW 0
 #define LOOKUP_TYPE_COL 0
@@ -68,9 +70,9 @@ template <typename T, typename Tscale = double> struct DiskRowSAT {
   Tscale scale = 1.0;
   int radiusPixels; // TODO: maybe i don't need this?
   int numSections;
-  DiskSection<T>
-      *sections;         // there should be at most (radiusPixels + 1) sections
-  uint8_t *sectionTypes; // matched with sections
+  const DiskSection<T>
+      *sections; // there should be at most (radiusPixels + 1) sections
+  const uint8_t *sectionTypes; // matched with sections
 
   __host__ __device__ int lengthPixels() const { return radiusPixels * 2 + 1; }
   __host__ __device__ static int lengthPixels(int radiusPixels) {
@@ -120,7 +122,7 @@ template <typename T, typename Tscale = double> struct DiskRowSAT {
    * @param i Input index
    * @return Appropriate section
    */
-  __host__ __device__ DiskSection<T> &getSection(int i) const {
+  __host__ __device__ const DiskSection<T> &getSection(int i) const {
     return sections[accessIndex(i)];
   }
 
@@ -192,6 +194,70 @@ template <typename T> struct DiskSelectionRule {
     float radius = sqrtf(dy * dy + dx * dx);
     return min(maxDisks, (int)(radius / stepSize));
   }
+
+  __host__ int getLinearlyShrinkingDiskRadius(int index,
+                                              int radiusPixels) const {
+    return (double)((maxDisks - index) * radiusPixels) / (double)maxDisks;
+  }
 };
+
+template <typename T>
+thrust::host_vector<int> constructMultipleDisksViaRule(
+    const int radiusPixels, thrust::host_vector<DiskSection<T>> &h_sections,
+    thrust::host_vector<uint8_t> &h_sectionTypes,
+    thrust::host_vector<int> &h_diskRadii, const DiskSelectionRule<T> rule) {
+
+  std::vector<int> maxNumSections(rule.maxDisks);
+  h_diskRadii.resize(rule.maxDisks);
+
+  // Create disk radii
+  int maxNumSectionsTotal = 0;
+  for (int i = 0; i < rule.maxDisks; ++i) {
+    h_diskRadii[i] = rule.getLinearlyShrinkingDiskRadius(i, radiusPixels) + 1;
+    maxNumSections.at(i) =
+        getMaximumSectionsForDisk_prefixRows_SAT(h_diskRadii[i]);
+
+    printf("Disk %d: radius %d, %d max sections\n", i, h_diskRadii[i],
+           maxNumSections.at(i));
+
+    maxNumSectionsTotal += maxNumSections.at(i);
+  }
+
+  h_sections.resize(maxNumSectionsTotal);
+  h_sectionTypes.resize(maxNumSectionsTotal);
+  thrust::host_vector<int> h_numSectionsPerDisk(rule.maxDisks);
+
+  // Now actually create the sections
+  int numSectionTotal = 0;
+  for (int i = 0; i < rule.maxDisks; ++i) {
+
+    int numSections = constructSectionsForDisk_prefixRows_SAT(
+        h_diskRadii[i], &h_sections[numSectionTotal],
+        &h_sectionTypes[numSectionTotal]);
+
+    printf("Disk %d: actual sections %d\n", i, numSections);
+
+    h_numSectionsPerDisk[i] = numSections;
+
+    numSectionTotal += numSections;
+  }
+
+  return h_numSectionsPerDisk;
+}
+
+template <typename T>
+void createContainer_DiskRowSAT(
+    DiskRowSAT<T> *disks, const double *diskScales, const int *diskRadiusPixels,
+    const thrust::host_vector<int> &numSectionsPerDisk,
+    DiskSection<T> *d_sections, const uint8_t *d_sectionTypes) {
+  int totalSectionsSoFar = 0;
+  for (int i = 0; i < (int)numSectionsPerDisk.size(); ++i) {
+    int numSections = numSectionsPerDisk[i];
+    disks[i] = {diskScales[i], diskRadiusPixels[i], numSectionsPerDisk[i],
+                d_sections + totalSectionsSoFar,
+                d_sectionTypes + totalSectionsSoFar};
+    totalSectionsSoFar += numSections;
+  }
+}
 
 } // namespace sats

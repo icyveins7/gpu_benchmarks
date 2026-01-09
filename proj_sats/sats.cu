@@ -303,10 +303,45 @@ int main(int argc, char **argv) {
   printf("Disk length %d, with %d sections\n", d_disk.lengthPixels(),
          d_disk.numSections);
 
+  // Pre-compute multiple disks into a container
+  thrust::host_vector<sats::DiskSection<int16_t>> h_multidiskSections;
+  thrust::host_vector<uint8_t> h_multidiskSectionTypes;
+  thrust::host_vector<int> h_multidiskRadii;
+  int numDisks = 2;
+  sats::DiskSelectionRule<int16_t> diskRule{0.5f * width,
+                                            (int16_t)(0.5f * width),
+                                            (int16_t)(0.5f * height), numDisks};
+  thrust::host_vector<int> h_multidiskNumSections =
+      sats::constructMultipleDisksViaRule(radiusPixels, h_multidiskSections,
+                                          h_multidiskSectionTypes,
+                                          h_multidiskRadii, diskRule);
+
+  int totalUsedSections = std::accumulate(h_multidiskNumSections.begin(),
+                                          h_multidiskNumSections.end(), 0);
+  printf("Multidisk sections size used %d / %zu\n", totalUsedSections,
+         h_multidiskSections.size());
+  printf("Multidisk section types size used %d / %zu\n", totalUsedSections,
+         h_multidiskSectionTypes.size());
+  // Copy the sections and section types like before
+  thrust::device_vector<sats::DiskSection<int16_t>> d_multidiskSections(
+      totalUsedSections);
+  thrust::device_vector<uint8_t> d_multidiskSectionTypes(totalUsedSections);
+  thrust::copy(h_multidiskSections.begin(), h_multidiskSections.end(),
+               d_multidiskSections.begin());
+  thrust::copy(h_multidiskSectionTypes.begin(), h_multidiskSectionTypes.end(),
+               d_multidiskSectionTypes.begin());
+  // Make container
+  thrust::host_vector<sats::DiskRowSAT<int16_t>> h_multidisks(numDisks);
+  std::vector<double> h_diskScales = {1.0, 1.0};
+  sats::createContainer_DiskRowSAT<int16_t>(
+      h_multidisks.data(), h_diskScales.data(), h_multidiskRadii.data(),
+      h_multidiskNumSections, d_multidiskSections.data().get(),
+      d_multidiskSectionTypes.data().get());
+
   // === 1. Perform prefix sums across rows
 
-  // Custom kernel method (not enough occupancy to do this, must optimize beyond
-  // 1 block per row)
+  // Custom kernel method (not enough occupancy to do this, must optimize
+  // beyond 1 block per row)
   // {
   //   constexpr int tpb = 256;
   //   int blks = (height + tpb - 1) / tpb;
@@ -329,7 +364,7 @@ int main(int argc, char **argv) {
 
   // === 3. Perform convolution calculations via lookups
   {
-    constexpr int factor = 2;
+    constexpr int factor = 1;
     constexpr dim3 tpb(32, 4);
     dim3 blks((width + tpb.x - 1) / tpb.x,
               (height + tpb.y - 1) / tpb.y / factor);
@@ -403,6 +438,13 @@ int main(int argc, char **argv) {
       printf("\n");
     }
   }
+
+  // ============================================================
+  // ============================================================
+  // ============================================================
+  // ============================================================
+  // ============================================================
+  // ============================================================
 
   return 0;
 }
