@@ -75,8 +75,8 @@ __global__ void computeSATkernel(containers::Image<Tdata, Tidx> image,
 }
 
 template <typename Tdata, typename Tidx>
-__device__ Tdata getSATelement(const containers::Image<Tdata, Tidx> sat, Tidx y,
-                               Tidx x) {
+__device__ Tdata getSATelement(const containers::Image<Tdata, Tidx> sat, int y,
+                               int x) {
   /*
   NOTE: Although the SAT is defined for a given M x N dimensions,
   access outside the bounds should be well-handled, similar to the
@@ -199,6 +199,38 @@ __global__ void convolve_via_SAT_and_rowSums_naive_kernel(
   }
 }
 
+template <typename Tdata, typename Tidx, typename Tsection = int16_t,
+          typename Tscale = double>
+__global__ void convolve_via_SAT_and_rowSums_dynamicDisks_kernel(
+    const sats::DiskRowSAT<Tsection, Tscale> *disks,
+    const sats::DiskSelectionRule<Tidx> rule,
+    const containers::Image<Tdata, Tidx> orig,
+    const containers::Image<Tdata, Tidx> rowSums,
+    const containers::Image<Tdata, Tidx> sat,
+    containers::Image<Tdata, Tidx> out) {
+
+  for (int y = blockIdx.y * blockDim.y + threadIdx.y; y < orig.height;
+       y += blockDim.y * gridDim.y) {
+    for (int x = blockIdx.x * blockDim.x + threadIdx.x; x < orig.width;
+         x += blockDim.x * gridDim.x) {
+
+      // Determine the disk required
+      // Example here is to use radius-based linear steps starting from the
+      // centre to determine the disk index. Any other rule should work
+      unsigned int diskIndex = rule.getDiskIndex(y, x);
+      const sats::DiskRowSAT<Tsection, Tscale> &disk = disks[diskIndex];
+
+      // Every thread (potentially) uses its own disk
+      Tscale val =
+          sumOverDisk_SAT_and_rowSums_threadwork<Tdata, Tidx, Tsection, Tscale>(
+              disk, orig, rowSums, sat, x, y);
+
+      // Value is ready here, write it back
+      out.at(y, x) = static_cast<Tdata>(val * disk.scale);
+    }
+  }
+}
+
 int main(int argc, char **argv) {
   printf("Summed area tables\n");
 
@@ -229,12 +261,14 @@ int main(int argc, char **argv) {
   thrust::device_vector<int> d_sat(h_data.size());
   thrust::device_vector<int> d_out(h_data.size());
 
-  containers::Image<int, int> image(d_data.data().get(), width, height);
-  containers::Image<int, int> rowSums(d_rowSums.data().get(), width, height);
-  containers::Image<int, int> transposeImage(d_transpose.data().get(), height,
-                                             width);
-  containers::Image<int, int> sat(d_sat.data().get(), width, height);
-  containers::Image<int, int> out(d_out.data().get(), width, height);
+  containers::Image<int, unsigned int> image(d_data.data().get(), width,
+                                             height);
+  containers::Image<int, unsigned int> rowSums(d_rowSums.data().get(), width,
+                                               height);
+  containers::Image<int, unsigned int> transposeImage(d_transpose.data().get(),
+                                                      height, width);
+  containers::Image<int, unsigned int> sat(d_sat.data().get(), width, height);
+  containers::Image<int, unsigned int> out(d_out.data().get(), width, height);
 
   // CUB related prep
   auto rowKeyIterator = thrust::make_transform_iterator(
@@ -299,7 +333,7 @@ int main(int argc, char **argv) {
     constexpr dim3 tpb(32, 4);
     dim3 blks((width + tpb.x - 1) / tpb.x,
               (height + tpb.y - 1) / tpb.y / factor);
-    convolve_via_SAT_and_rowSums_naive_kernel<int, int, int16_t>
+    convolve_via_SAT_and_rowSums_naive_kernel<int, unsigned int, int16_t>
         <<<blks, tpb>>>(d_disk, image, rowSums, sat, out);
   }
 

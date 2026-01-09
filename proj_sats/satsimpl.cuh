@@ -180,4 +180,18 @@ int constructSectionsForDisk_prefixRows_SAT(const int radiusPixels,
   return numSections;
 }
 
+template <typename T> struct DiskSelectionRule {
+  float stepSize;
+  T centreX;
+  T centreY;
+  int maxDisks;
+
+  __host__ __device__ unsigned int getDiskIndex(int y, int x) const {
+    float dy = y - centreY;
+    float dx = x - centreX;
+    float radius = sqrtf(dy * dy + dx * dx);
+    return min(maxDisks, (int)(radius / stepSize));
+  }
+};
+
 } // namespace sats
