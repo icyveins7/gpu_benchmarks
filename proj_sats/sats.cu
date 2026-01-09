@@ -9,7 +9,7 @@
 
 #include "containers/cubwrappers.cuh"
 #include "containers/image.cuh"
-#include "satstructs.cuh"
+#include "satsimpl.cuh"
 #include "transpose.cuh"
 
 struct IndexToRowFunctor {
