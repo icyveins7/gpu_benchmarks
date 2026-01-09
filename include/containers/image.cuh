@@ -1,8 +1,12 @@
 #include <cstdint>
+#include <type_traits>
 
 namespace containers {
 
 template <typename Tdata, typename Tidx = unsigned int> struct Image {
+  static_assert(std::is_integral_v<Tidx>, "Tidx must be an integer type");
+  static_assert(std::is_unsigned_v<Tidx>, "Tidx must be an unsigned type");
+
   Tdata *data;
   Tidx width;
   Tidx height;
