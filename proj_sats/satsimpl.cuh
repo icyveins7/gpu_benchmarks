@@ -4,6 +4,8 @@
 #include <type_traits>
 #include <vector>
 
+#include <pinnedalloc.cuh>
+#include <thrust/device_vector.h>
 #include <thrust/host_vector.h>
 
 #define LOOKUP_TYPE_PIXEL 0
@@ -182,25 +184,77 @@ int constructSectionsForDisk_prefixRows_SAT(const int radiusPixels,
   return numSections;
 }
 
-template <typename T> struct DiskSelectionRule {
+template <typename Tidx> struct DiskSelectionRule {
   float stepSize;
-  T centreX;
-  T centreY;
-  int maxDisks;
+  Tidx centreX;
+  Tidx centreY;
+  unsigned int maxDisks;
+
+  DiskSelectionRule(float _stepSize, Tidx _centreX, Tidx _centreY,
+                    int _maxDisks) {
+    stepSize = _stepSize;
+    centreX = _centreX;
+    centreY = _centreY;
+    maxDisks = _maxDisks;
+  }
 
   __host__ __device__ unsigned int getDiskIndex(int y, int x) const {
     float dy = y - centreY;
     float dx = x - centreX;
     float radius = sqrtf(dy * dy + dx * dx);
-    return min(maxDisks, (int)(radius / stepSize));
+    return min(maxDisks - 1, (int)(radius / stepSize));
   }
 
   __host__ int getLinearlyShrinkingDiskRadius(int index,
                                               int radiusPixels) const {
     return (double)((maxDisks - index) * radiusPixels) / (double)maxDisks;
   }
+
+  __host__ void print() const {
+    printf("Disk Selection Rule:\n"
+           "   stepSize: %f\n"
+           "   centreX: %d\n"
+           "   centreY: %d\n"
+           "   maxDisks: %d\n",
+           stepSize, centreX, centreY, maxDisks);
+  }
 };
 
+template <typename Tidx>
+struct RadialThresholdLinearGradientRule : public DiskSelectionRule<Tidx> {
+  float minRadius; // disk index is 0 until this radius
+  float maxRadius; // last disk index is hit at this radius
+
+  RadialThresholdLinearGradientRule(float _stepSize, Tidx _centreX,
+                                    Tidx _centreY, float _minRadius,
+                                    float _maxRadius)
+      : DiskSelectionRule<Tidx>(
+            _stepSize, _centreX, _centreY,
+            (unsigned int)((_maxRadius - _minRadius) / (_stepSize) + 1)) {
+    minRadius = _minRadius;
+    maxRadius = _maxRadius;
+  }
+
+  __host__ __device__ unsigned int getDiskIndex(int y, int x) const {
+    float dy = y - this->centreY;
+    float dx = x - this->centreX;
+    float radius = sqrtf(dy * dy + dx * dx);
+
+    if (radius < minRadius) {
+      return 0;
+    } else {
+      float incRadius = radius - minRadius;
+      return min(this->maxDisks - 1,
+                 (unsigned int)(incRadius / this->stepSize));
+    }
+  }
+};
+
+/**
+ * @brief This function is used only as a test/example to show how to generate
+ * multiple disks from a rule. It should be used as a guide, not as a
+ * generalizable method.
+ */
 template <typename T>
 thrust::host_vector<int> constructMultipleDisksViaRule(
     const int radiusPixels, thrust::host_vector<DiskSection<T>> &h_sections,
@@ -212,7 +266,7 @@ thrust::host_vector<int> constructMultipleDisksViaRule(
 
   // Create disk radii
   int maxNumSectionsTotal = 0;
-  for (int i = 0; i < rule.maxDisks; ++i) {
+  for (int i = 0; i < (int)rule.maxDisks; ++i) {
     h_diskRadii[i] = rule.getLinearlyShrinkingDiskRadius(i, radiusPixels) + 1;
     maxNumSections.at(i) =
         getMaximumSectionsForDisk_prefixRows_SAT(h_diskRadii[i]);
@@ -229,7 +283,7 @@ thrust::host_vector<int> constructMultipleDisksViaRule(
 
   // Now actually create the sections
   int numSectionTotal = 0;
-  for (int i = 0; i < rule.maxDisks; ++i) {
+  for (int i = 0; i < (int)rule.maxDisks; ++i) {
 
     int numSections = constructSectionsForDisk_prefixRows_SAT(
         h_diskRadii[i], &h_sections[numSectionTotal],
@@ -259,5 +313,22 @@ void createContainer_DiskRowSAT(
     totalSectionsSoFar += numSections;
   }
 }
+
+template <typename Tdata, typename Tsection = int16_t> class Convolver {
+private:
+  Convolver() {}
+
+protected:
+  thrust::pinned_host_vector<DiskSection<Tsection>> m_h_sections;
+  thrust::pinned_host_vector<uint8_t> m_h_sectionTypes;
+
+  thrust::device_vector<DiskSection<Tsection>> m_d_sections;
+  thrust::device_vector<uint8_t> m_d_sectionTypes;
+};
+
+template <typename Tdata, typename Tsection = int16_t>
+class Convolver_PrefixRowsSAT : public Convolver<Tdata, Tsection> {
+public:
+};
 
 } // namespace sats

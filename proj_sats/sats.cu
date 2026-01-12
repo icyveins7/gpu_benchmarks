@@ -184,9 +184,9 @@ __global__ void convolve_via_SAT_and_rowSums_naive_kernel(
     const containers::Image<Tdata, Tidx> sat,
     containers::Image<Tdata, Tidx> out) {
 
-  for (int y = blockIdx.y * blockDim.y + threadIdx.y; y < orig.height;
+  for (int y = blockIdx.y * blockDim.y + threadIdx.y; y < (int)orig.height;
        y += blockDim.y * gridDim.y) {
-    for (int x = blockIdx.x * blockDim.x + threadIdx.x; x < orig.width;
+    for (int x = blockIdx.x * blockDim.x + threadIdx.x; x < (int)orig.width;
          x += blockDim.x * gridDim.x) {
 
       Tscale val =
@@ -200,10 +200,9 @@ __global__ void convolve_via_SAT_and_rowSums_naive_kernel(
 }
 
 template <typename Tdata, typename Tidx, typename Tsection = int16_t,
-          typename Tscale = double>
+          typename Tscale = double, typename Trule>
 __global__ void convolve_via_SAT_and_rowSums_dynamicDisks_kernel(
-    const sats::DiskRowSAT<Tsection, Tscale> *disks,
-    const sats::DiskSelectionRule<Tidx> rule,
+    const sats::DiskRowSAT<Tsection, Tscale> *disks, const Trule rule,
     const containers::Image<Tdata, Tidx> orig,
     const containers::Image<Tdata, Tidx> rowSums,
     const containers::Image<Tdata, Tidx> sat,
@@ -224,6 +223,12 @@ __global__ void convolve_via_SAT_and_rowSums_dynamicDisks_kernel(
       Tscale val =
           sumOverDisk_SAT_and_rowSums_threadwork<Tdata, Tidx, Tsection, Tscale>(
               disk, orig, rowSums, sat, x, y);
+
+      // if (threadIdx.x == 0 && threadIdx.y == 0) {
+      //   printf(" Disk index for (row %d, col %d) is %d -> %d sections\n", y,
+      //   x,
+      //          diskIndex, disk.numSections);
+      // }
 
       // Value is ready here, write it back
       out.at(y, x) = static_cast<Tdata>(val * disk.scale);
@@ -307,10 +312,14 @@ int main(int argc, char **argv) {
   thrust::host_vector<sats::DiskSection<int16_t>> h_multidiskSections;
   thrust::host_vector<uint8_t> h_multidiskSectionTypes;
   thrust::host_vector<int> h_multidiskRadii;
-  int numDisks = 2;
-  sats::DiskSelectionRule<int16_t> diskRule{0.5f * width,
-                                            (int16_t)(0.5f * width),
-                                            (int16_t)(0.5f * height), numDisks};
+  int numDisks = 60;
+  // sats::DiskSelectionRule<int16_t> diskRule{0.5f * width,
+  //                                           (int16_t)(0.5f * width),
+  //                                           (int16_t)(0.5f * height),
+  //                                           numDisks};
+  sats::RadialThresholdLinearGradientRule<int16_t> diskRule(
+      0.5f * width / 150.0f / 3.0f, (int16_t)(0.5f * width),
+      (int16_t)(0.5f * height), 0.5f * width * 130.0 / 150.0, 0.5f * width);
   thrust::host_vector<int> h_multidiskNumSections =
       sats::constructMultipleDisksViaRule(radiusPixels, h_multidiskSections,
                                           h_multidiskSectionTypes,
@@ -339,6 +348,8 @@ int main(int argc, char **argv) {
       h_multidisks.data(), h_diskScales.data(), h_multidiskRadii.data(),
       h_multidiskNumSections, d_multidiskSections.data().get(),
       d_multidiskSectionTypes.data().get());
+
+  thrust::device_vector<sats::DiskRowSAT<int16_t>> d_multidisks = h_multidisks;
 
   // === 1. Perform prefix sums across rows
 
@@ -447,6 +458,18 @@ int main(int argc, char **argv) {
   // ============================================================
   // ============================================================
   // ============================================================
+
+  // === 4. Perform convolution calculations via lookups
+  {
+    diskRule.print();
+    constexpr int factor = 1;
+    constexpr dim3 tpb(32, 4);
+    dim3 blks((width + tpb.x - 1) / tpb.x,
+              (height + tpb.y - 1) / tpb.y / factor);
+    convolve_via_SAT_and_rowSums_dynamicDisks_kernel<int, unsigned int, int16_t,
+                                                     double><<<blks, tpb>>>(
+        d_multidisks.data().get(), diskRule, image, rowSums, sat, out);
+  }
 
   return 0;
 }
