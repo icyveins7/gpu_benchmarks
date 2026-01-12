@@ -8,6 +8,10 @@
 #include <thrust/device_vector.h>
 #include <thrust/host_vector.h>
 
+#include "containers/cubwrappers.cuh"
+#include "containers/image.cuh"
+#include "transpose.cuh"
+
 #define LOOKUP_TYPE_PIXEL 0
 #define LOOKUP_TYPE_ROW 0
 #define LOOKUP_TYPE_COL 0
@@ -314,11 +318,202 @@ void createContainer_DiskRowSAT(
   }
 }
 
-template <typename Tdata, typename Tsection = int16_t> class Convolver {
+// ===========================================================================
+// ===========================================================================
+// ===========================================================================
+// ===========================================================================
+// ===========================================================================
+// ===========================================================================
+
+struct IndexToRowFunctor {
+  int width = 1;
+  __host__ __device__ int operator()(int i) { return i / width; }
+};
+
+// template <typename Tdata, typename Tidx>
+// __device__ Tdata getSATelement(const containers::Image<Tdata, Tidx> sat, int
+// y,
+//                                int x) {
+//   /*
+//   NOTE: Although the SAT is defined for a given M x N dimensions,
+//   access outside the bounds should be well-handled, similar to the
+//   row-prefixes.
+//
+//   1) Anything with a negative index should be considered to be 0.
+//     This applies to a, b or c.
+//
+//   2) For either row/col indices indexing past the ends, the
+//   end row/col value will be used. This is similar to the prefix sum.
+//
+//   3) For cases where the row AND col are both out of bounds, the result
+//   will be the bottom-right value. 'SAT of the whole image + border = SAT
+//   of the whole image'
+//
+//   IMPORTANT: you cannot assume that the points a, b, c and d always
+//   follow some rules because of their direction. This is because the
+//   rectangle sections themselves are OFFSET from the thread's target
+//   position. For example, the thread handling the bottom-right most point
+//   of the image will likely have a rectangle that fully exists below the
+//   image, with all points a-d being out of bounds to the
+//   bottom/right/bottomright.
+//
+//   However, the check is actually pretty simple; regardless of what is out of
+//   bounds, we need only clip both dimensions to their row/col max index
+//   values.
+//   */
+//
+//   if (y < 0 || x < 0) {
+//     return 0;
+//   }
+//
+//   // Clip to row and/or col ending values
+//   return sat.atWithDefaultPointer(
+//       y, x, &sat.at(min(sat.height - 1, y), min(sat.width - 1, x)));
+// }
+//
+// template <typename Tdata, typename Tidx, typename Tsection = int16_t,
+//           typename Tscale = double>
+// __device__ Tscale sumOverDisk_SAT_and_rowSums_threadwork(
+//     const sats::DiskRowSAT<Tsection, Tscale> disk,
+//     const containers::Image<Tdata, Tidx> orig,
+//     const containers::Image<Tdata, Tidx> rowSums,
+//     const containers::Image<Tdata, Tidx> sat, const int x, const int y) {
+//   // Each thread's output value, and then loop over the sections to
+//   // accumulate
+//   Tdata val = 0;
+//   for (int i = 0; i < disk.numSectionsToIterate(); ++i) {
+//     uint8_t sectionType = disk.getSectionType(i);
+//     sats::DiskSection<Tsection> section = disk.getSection(i);
+//
+//     // There is no warp divergence here!
+//     // All threads in a warp will be tackling the same type
+//     if (sectionType == LOOKUP_TYPE_PIXEL) {
+//       // Simply look up the pixel from the original image
+//       val += orig.atWithDefault(y + section.startRow, x + section.startCol,
+//                                 0); // pixels outside the image treated as 0
+//     } else if (sectionType == LOOKUP_TYPE_ROW) {
+//       // Look up the row, and then the columns
+//       int row = y + section.startRow;
+//       int left = x + section.startCol - 1; // exclude starting col
+//       int right = x + section.endCol;
+//
+//       if (rowSums.rowIsValid(row)) {
+//         // A valid row should treat the negative indices as 0 for prefix
+//         // sums and it should treat the out of range on the right as the
+//         // final col value
+//         Tdata a = rowSums.atWithDefault(row, left, 0);
+//         Tdata b =
+//             rowSums.atWithDefaultPointer(row, right, &rowSums.rowEnd(row));
+//         val += b - a;
+//       }
+//
+//     } else if (sectionType == LOOKUP_TYPE_RECT) {
+//       // Look up the SAT, assuming a y descending format:
+//       //       a -------- b
+//       //       |          |
+//       //       |          |
+//       //       c -------- d
+//       int2 topLeft =
+//           make_int2(x + section.startCol - 1, y + section.startRow - 1);
+//       Tdata a = getSATelement(sat, topLeft.y, topLeft.x);
+//
+//       int2 topRight = make_int2(x + section.endCol, y + section.startRow -
+//       1); Tdata b = getSATelement(sat, topRight.y, topRight.x);
+//
+//       int2 bottomLeft = make_int2(x + section.startCol - 1, y +
+//       section.endRow); Tdata c = getSATelement(sat, bottomLeft.y,
+//       bottomLeft.x);
+//
+//       int2 bottomRight = make_int2(x + section.endCol, y + section.endRow);
+//       Tdata d = getSATelement(sat, bottomRight.y, bottomRight.x);
+//
+//       val += a + d - b - c;
+//     }
+//   } // end loop over disk sections
+//
+//   return val;
+// }
+//
+// template <typename Tdata, typename Tidx, typename Tsection = int16_t,
+//           typename Tscale = double>
+// __global__ void convolve_via_SAT_and_rowSums_naive_kernel(
+//     const sats::DiskRowSAT<Tsection, Tscale> disk,
+//     const containers::Image<Tdata, Tidx> orig,
+//     const containers::Image<Tdata, Tidx> rowSums,
+//     const containers::Image<Tdata, Tidx> sat,
+//     containers::Image<Tdata, Tidx> out) {
+//
+//   for (int y = blockIdx.y * blockDim.y + threadIdx.y; y < (int)orig.height;
+//        y += blockDim.y * gridDim.y) {
+//     for (int x = blockIdx.x * blockDim.x + threadIdx.x; x < (int)orig.width;
+//          x += blockDim.x * gridDim.x) {
+//
+//       Tscale val =
+//           sumOverDisk_SAT_and_rowSums_threadwork<Tdata, Tidx, Tsection,
+//           Tscale>(
+//               disk, orig, rowSums, sat, x, y);
+//
+//       // Value is ready here, write it back
+//       out.at(y, x) = static_cast<Tdata>(val * disk.scale);
+//     }
+//   }
+// }
+//
+// template <typename Tdata, typename Tidx, typename Tsection = int16_t,
+//           typename Tscale = double, typename Trule>
+// __global__ void convolve_via_SAT_and_rowSums_dynamicDisks_kernel(
+//     const sats::DiskRowSAT<Tsection, Tscale> *disks, const Trule rule,
+//     const containers::Image<Tdata, Tidx> orig,
+//     const containers::Image<Tdata, Tidx> rowSums,
+//     const containers::Image<Tdata, Tidx> sat,
+//     containers::Image<Tdata, Tidx> out) {
+//
+//   for (int y = blockIdx.y * blockDim.y + threadIdx.y; y < orig.height;
+//        y += blockDim.y * gridDim.y) {
+//     for (int x = blockIdx.x * blockDim.x + threadIdx.x; x < orig.width;
+//          x += blockDim.x * gridDim.x) {
+//
+//       // Determine the disk required
+//       // Example here is to use radius-based linear steps starting from the
+//       // centre to determine the disk index. Any other rule should work
+//       unsigned int diskIndex = rule.getDiskIndex(y, x);
+//       const sats::DiskRowSAT<Tsection, Tscale> &disk = disks[diskIndex];
+//
+//       // Every thread (potentially) uses its own disk
+//       Tscale val =
+//           sumOverDisk_SAT_and_rowSums_threadwork<Tdata, Tidx, Tsection,
+//           Tscale>(
+//               disk, orig, rowSums, sat, x, y);
+//
+//       // if (threadIdx.x == 0 && threadIdx.y == 0) {
+//       //   printf(" Disk index for (row %d, col %d) is %d -> %d sections\n",
+//       y,
+//       //   x,
+//       //          diskIndex, disk.numSections);
+//       // }
+//
+//       // Value is ready here, write it back
+//       out.at(y, x) = static_cast<Tdata>(val * disk.scale);
+//     }
+//   }
+// }
+
+template <typename Tdata, typename Tsection = int16_t> class DiskConvolver {
 private:
-  Convolver() {}
+  DiskConvolver(int height, int width) : m_height(height), m_width(width) {}
+
+public:
+  void resizeSections(size_t numSections) {
+    m_h_sections.resize(numSections);
+    m_h_sectionTypes.resize(numSections);
+    m_d_sections.resize(numSections);
+    m_d_sectionTypes.resize(numSections);
+  }
 
 protected:
+  int m_height;
+  int m_width;
+
   thrust::pinned_host_vector<DiskSection<Tsection>> m_h_sections;
   thrust::pinned_host_vector<uint8_t> m_h_sectionTypes;
 
@@ -327,8 +522,89 @@ protected:
 };
 
 template <typename Tdata, typename Tsection = int16_t>
-class Convolver_PrefixRowsSAT : public Convolver<Tdata, Tsection> {
+class DiskConvolver_PrefixRowsSAT : public DiskConvolver<Tdata, Tsection> {
 public:
+  DiskConvolver_PrefixRowsSAT(int height, int width)
+      : DiskConvolver<Tdata, Tsection>(height, width),
+        m_d_rowSums(width * height), m_d_transpose(width * height),
+        m_d_sat(width * height), m_cubwRowScan(width * height),
+        m_cubwColScanTranspose(width * height) {}
+
+  void exec(const Tdata *d_img, const sats::DiskRowSAT<Tsection> d_disk,
+            Tdata *d_out, const dim3 tpb = dim3(32, 4),
+            cudaStream_t stream = 0) {
+    // Run pre-process to fill row sums and SAT
+    preprocess(d_img, stream);
+
+    // Wrap device arrays in containers
+    containers::Image<int, unsigned int> image(d_img, this->m_width,
+                                               this->m_height);
+    containers::Image<int, unsigned int> rowSums(this->m_d_rowSums.data().get(),
+                                                 this->m_width, this->m_height);
+    containers::Image<int, unsigned int> sat(this->m_d_sat.data().get(),
+                                             this->m_width, this->m_height);
+    containers::Image<int, unsigned int> out(d_out, this->m_width,
+                                             this->m_height);
+
+    // Perform convolutions via lookups
+    constexpr int factor = 1;
+    dim3 blks((this->width + tpb.x - 1) / tpb.x,
+              (this->height + tpb.y - 1) / tpb.y / factor);
+    // convolve_via_SAT_and_rowSums_naive_kernel<Tdata, unsigned int, Tsection>
+    //     <<<blks, tpb, 0, stream>>>(d_disk, image, rowSums, sat, out);
+  }
+
+  const thrust::device_vector<Tdata> &d_rowSums() const { return m_d_rowSums; }
+  const thrust::device_vector<Tdata> &d_transpose() const {
+    return m_d_transpose;
+  }
+  const thrust::device_vector<Tdata> &d_sat() const { return m_d_sat; }
+
+private:
+  thrust::device_vector<Tdata> m_d_rowSums;
+  thrust::device_vector<Tdata> m_d_transpose;
+  thrust::device_vector<Tdata> m_d_sat;
+
+  cubw::DeviceScan::InclusiveSumByKey<
+      thrust::transform_iterator<IndexToRowFunctor,
+                                 thrust::counting_iterator<int>>,
+      int *, int *>
+      m_cubwRowScan;
+
+  cubw::DeviceScan::InclusiveSumByKey<
+      thrust::transform_iterator<IndexToRowFunctor,
+                                 thrust::counting_iterator<int>>,
+      int *, int *>
+      m_cubwColScanTranspose;
+
+  void preprocess(const Tdata *d_data, cudaStream_t stream = 0) {
+    // CUB related prep
+    auto rowKeyIterator = thrust::make_transform_iterator(
+        thrust::make_counting_iterator(0), IndexToRowFunctor{this->m_width});
+    auto colTransposeKeyIterator = thrust::make_transform_iterator(
+        thrust::make_counting_iterator(0), IndexToRowFunctor{this->m_height});
+
+    // 1. Inclusive prefix sums across rows
+    this->m_cubwRowScan.exec(
+        rowKeyIterator, d_data, this->m_d_rowSums.data().get(),
+        this->m_width * this->m_height, ::cuda::std::equal_to<>(), stream);
+
+    // 2. Inclusive prefix sums across columns
+    // 2a. Transpose row sums
+    transpose<int>(this->m_d_transpose.data().get(),
+                   this->m_d_rowSums.data().get(), (int)this->m_height,
+                   (int)this->m_width, stream);
+
+    // 2b. Sum across rows of transpose (column sums)
+    this->m_cubwColScanTranspose.exec(
+        colTransposeKeyIterator, this->m_d_transpose.data().get(),
+        this->m_d_transpose.data().get(), this->m_width * this->m_height,
+        ::cuda::std::equal_to<>(), stream);
+
+    // 2c. Transpose back into SAT
+    transpose<int>(this->m_d_sat.data().get(), this->m_d_transpose.data().get(),
+                   (int)this->m_width, (int)this->m_height, stream);
+  }
 };
 
 } // namespace sats
