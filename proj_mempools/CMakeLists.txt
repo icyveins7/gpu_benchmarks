@@ -18,6 +18,19 @@ target_sources(
   ${PROJECT_SOURCE_DIR}/limitedpoolsize.cu
   ${CMAKE_SOURCE_DIR}/src/containers/streams.cu
 )
+# --------------------
+set_source_files_properties(multithread_to_stream.cu PROPERTIES LANGUAGE CUDA)
+add_executable(multithread_to_stream)
+
+target_include_directories(multithread_to_stream
+                           PRIVATE ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
+                           )
+
+target_sources(
+  multithread_to_stream PRIVATE
+  ${PROJECT_SOURCE_DIR}/multithread_to_stream.cu
+  ${CMAKE_SOURCE_DIR}/src/containers/streams.cu
+)
 
 # -------------------- Tests
 # if (GTEST_FOUND)
