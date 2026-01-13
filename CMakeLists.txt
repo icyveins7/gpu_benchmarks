@@ -119,4 +119,5 @@ add_subdirectory(proj_windowccl)
 add_subdirectory(proj_basicops)
 add_subdirectory(proj_cooperativegrid)
 add_subdirectory(proj_sats)
+add_subdirectory(proj_mempools)
 
