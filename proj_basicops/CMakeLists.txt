@@ -65,6 +65,18 @@ target_sources(
   transpose PRIVATE
   ${PROJECT_SOURCE_DIR}/transpose.cu
 )
+# --------------------
+set_source_files_properties(cub_using_device_length.cu PROPERTIES LANGUAGE CUDA)
+add_executable(cub_using_device_length)
+
+target_include_directories(cub_using_device_length
+                           PRIVATE ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
+                           )
+
+target_sources(
+  cub_using_device_length PRIVATE
+  ${PROJECT_SOURCE_DIR}/cub_using_device_length.cu
+)
 
 # # -------------------- Tests
 # if (GTEST_FOUND)
