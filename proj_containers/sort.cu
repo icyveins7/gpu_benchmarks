@@ -205,13 +205,25 @@ int main() {
 
     // Try merge sort
 
-    cubw::DeviceMergeSort::SortKeysCopy<KeyT *, KeyT *, int,
-                                        cuda::std::less<int>>
+    // // Directly from pointers
+    // cubw::DeviceMergeSort::SortKeysCopy<KeyT *, KeyT *, int,
+    //                                     cuda::std::less<int>>
+    //     merge_sort_keys(num_items);
+    //
+    // for (int iter = 0; iter < 3; iter++) {
+    //   merge_sort_keys.exec(d_input.data().get(), d_output.data().get(),
+    //                        (int)num_items, cuda::std::less<KeyT>());
+    // }
+
+    // Using iterators also works
+    cubw::DeviceMergeSort::SortKeysCopy<thrust::device_vector<KeyT>::iterator,
+                                        thrust::device_vector<KeyT>::iterator,
+                                        int, cuda::std::less<int>>
         merge_sort_keys(num_items);
 
     for (int iter = 0; iter < 3; iter++) {
-      merge_sort_keys.exec(d_input.data().get(), d_output.data().get(),
-                           (int)num_items, cuda::std::less<KeyT>());
+      merge_sort_keys.exec(d_input.begin(), d_output.begin(), (int)num_items,
+                           cuda::std::less<KeyT>());
     }
     h_output = d_output;
     for (int i = 1; i < (int)num_items; i++) {
