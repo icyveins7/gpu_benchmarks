@@ -1,4 +1,5 @@
 #include <iostream>
+#include <limits>
 #include <random>
 
 #include <cub/cub.cuh>
@@ -30,26 +31,26 @@ template <typename T> struct InputLimitedLengthFunctor {
 };
 
 template <typename T> struct ComparisonFunctor {
-  __device__ __host__ bool operator()(const InputWithIndex<T> &a,
-                                      const InputWithIndex<T> &b) const {
+  __device__ __host__ bool operator()(const T &a, const T &b) const {
     auto aval = a.data;
     auto bval = b.data;
     return aval < bval;
   }
 };
 
-template <typename T> struct OutputLimitedLengthFunctor {
-  T *d_output;
+template <typename Tout, typename Tcomparison>
+struct OutputLimitedLengthFunctor {
+  Tout *d_output;
   size_t *d_usedLength;
 
-  template <typename Tuple> __device__ __host__ T operator()(Tuple out) const {
-    int idx = thrust::get<0>(out);
-    int val = thrust::get<1>(out);
-    if (idx < *d_usedLength) {
-      d_output[idx] = val; // perform the write directly
-    }
-
-    return -1; // dummy value to output iterator
+  __device__ __host__ Tcomparison operator()(const Tcomparison &out) const {
+    // if (out.index < *d_usedLength) {
+    //   d_output[out.index] = out.data; // perform the write directly
+    // }
+    //
+    // return -1; // dummy value to output iterator
+    //
+    return Tcomparison{out.index + 1, out.data};
   };
 };
 
@@ -58,18 +59,28 @@ int main() {
          "scalar.\n");
 
   size_t length = 100;
-  thrust::host_vector<int> h_input(length);
+
+  using Tin = int;
+  using Tcomparison = InputWithIndex<int>;
+  // using Tin = InputWithIndex<int>;
+  using Tout = InputWithIndex<int>;
+
+  // Create data
+  thrust::host_vector<Tin> h_input(length);
   for (size_t i = 0; i < length; ++i) {
     h_input[i] = std::rand() % 10;
+    // h_input[i] = {i, std::rand() % 10};
   }
-  thrust::device_vector<int> d_input = h_input;
+  thrust::device_vector<Tin> d_input = h_input;
 
+  // Create 'used' length
   thrust::host_vector<size_t> h_usedLength(1);
   h_usedLength[0] = length / 2;
   thrust::device_vector<size_t> d_usedLength = h_usedLength;
 
-  thrust::device_vector<int> d_output(h_usedLength[0]);
-  thrust::host_vector<int> h_output(h_usedLength[0]);
+  // Allocate output
+  thrust::device_vector<Tout> d_output(length);
+  thrust::host_vector<Tout> h_output(length);
 
   // I want to merge sort with the max 'length' but only actually operate on
   // the data kept in 'd_usedLength'.
@@ -77,19 +88,34 @@ int main() {
   // Turn an incrementing index into the indexed data value, or a sentinel value
   // if out of range. Also attach the incrementing index along with it
   auto inputIter = thrust::make_transform_iterator(
-      thrust::make_counting_iterator(0),
-      InputLimitedLengthFunctor<int>{d_input.data().get(),
-                                     d_usedLength.data().get(), -1});
+      thrust::make_counting_iterator<size_t>(0),
+      InputLimitedLengthFunctor<int>{
+          d_input.data().get(), d_usedLength.data().get(),
+          std::numeric_limits<Tin>::max() // we use a max value since we want it
+                                          // to be sorted at the back
+      });
+  // ==== This is okay
 
   // Discard the output, but pass the output through the functor which does the
   // length-checked writes
-  // auto outputIter = thrust::make_transform_output_iterator(
-  //     thrust::make_discard_iterator(),
-  //     OutputLimitedLengthFunctor<int>{d_output.data().get(),
-  //                                     d_usedLength.data().get()});
-  auto outputIter = thrust::make_discard_iterator();
+  OutputLimitedLengthFunctor<Tout, Tcomparison> outputFunctor{
+      d_output.data().get(), d_usedLength.data().get()};
+  auto outputIter = thrust::make_transform_output_iterator(
+      d_output.data().get(), outputFunctor);
+  // ===== This simply does not work.
+  // Looks similar to this issue: https://github.com/NVIDIA/cccl/issues/903
 
-  // // invoke the cub calls
+  // invoke the cub calls
+  size_t storage_bytes;
+  // cub::DeviceMergeSort::SortKeysCopy(nullptr, storage_bytes, inputIter,
+  //                                    outputIter, length,
+  //                                    ComparisonFunctor<Tcomparison>{});
+  // thrust::device_vector<char> d_temp_storage(storage_bytes);
+  // cub::DeviceMergeSort::SortKeysCopy(d_temp_storage.data().get(),
+  // storage_bytes,
+  //                                    inputIter, outputIter, length,
+  //                                    ComparisonFunctor<Tcomparison>{});
+
   // cubw::DeviceMergeSort::SortKeysCopy<decltype(inputIter),
   // decltype(outputIter),
   //                                     size_t, ComparisonFunctor<int>>
@@ -106,7 +132,11 @@ int main() {
   }
   printf("\n");
   for (size_t i = 0; i < length; ++i) {
-    printf("%d%c", h_output[i], i == h_usedLength[0] - 1 ? '|' : ' ');
+    // printf("%d%c", h_output[i], i == h_usedLength[0] - 1 ? '|' : ' ');
+    const char *valchar = (h_output[i].data == std::numeric_limits<Tin>::max())
+                              ? "X"
+                              : std::to_string(h_output[i].data).c_str();
+    printf("%s%c", valchar, i == h_usedLength[0] - 1 ? '|' : ' ');
   }
   printf("\n");
 }
