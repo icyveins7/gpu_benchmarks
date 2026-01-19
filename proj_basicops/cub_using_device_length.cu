@@ -62,7 +62,7 @@ struct OutputLimitedLengthFunctor {
   };
 };
 
-int main() {
+int main(int argc, char *argv[]) {
   printf("Testing cub calls using a length kept in a device global memory "
          "scalar.\n");
 
@@ -155,6 +155,10 @@ int main() {
   using KeyT = unsigned int;
   using NumItemsT = unsigned int;
   NumItemsT length = 100;
+  if (argc > 1) {
+    length = atoi(argv[1]);
+  }
+  printf("Using max length of %u\n", length);
 
   thrust::host_vector<KeyT> h_keys(length);
   for (size_t i = 0; i < length; ++i) {
@@ -168,27 +172,53 @@ int main() {
 
   thrust::host_vector<NumItemsT> h_usedLength = {length / 2};
   thrust::device_vector<NumItemsT> d_usedLength = h_usedLength;
-  printf("Launching cdp_exec()\n");
-  cubwSorter.cdp_exec(d_keys.data().get(), d_keys_out.data().get(),
-                      d_usedLength.data().get());
+  printf("Launching cdp_exec() with a used length of %u\n", h_usedLength[0]);
 
-  cudaDeviceSynchronize();
+  for (int i = 0; i < 3; ++i) {
+    cubwSorter.cdp_exec(d_keys.data().get(), d_keys_out.data().get(),
+                        d_usedLength.data().get());
+  }
 
   thrust::host_vector<KeyT> h_keys_out = d_keys_out;
 
-  // Check
-  for (size_t i = 0; i < length; ++i) {
-    printf("%u%c", h_keys[i], i == h_usedLength[0] - 1 ? '|' : ' ');
-  }
-  printf("\n");
+  // Check and print
+  if (length <= 100) {
+    for (size_t i = 0; i < length; ++i) {
+      printf("%u%c", h_keys[i], i == h_usedLength[0] - 1 ? '|' : ' ');
+    }
+    printf("\n");
 
-  for (size_t i = 0; i < length; ++i) {
-    const char *valchar = h_keys_out[i] == std::numeric_limits<KeyT>::max()
-                              ? "X"
-                              : std::to_string(h_keys_out[i]).c_str();
-    printf("%s%c", valchar, i == h_usedLength[0] - 1 ? '|' : ' ');
+    for (size_t i = 0; i < length; ++i) {
+      printf("%s%c",
+             h_keys_out[i] == std::numeric_limits<KeyT>::max()
+                 ? "X"
+                 : std::to_string(h_keys_out[i]).c_str(),
+             i == h_usedLength[0] - 1 ? '|' : ' ');
+    }
+    printf("\n");
   }
-  printf("\n");
+
+  // Retry with the host side traditional call
+  thrust::device_vector<KeyT> d_keys_out2(d_keys_out.size(),
+                                          std::numeric_limits<KeyT>::max());
+
+  for (int i = 0; i < 3; ++i) {
+    cubwSorter.exec(d_keys.data().get(), d_keys_out2.data().get(),
+                    h_usedLength[0]);
+  }
+
+  thrust::host_vector<KeyT> h_keys_out2 = d_keys_out2;
+
+  if (length <= 100) {
+    for (size_t i = 0; i < length; ++i) {
+      printf("%s%c",
+             h_keys_out2[i] == std::numeric_limits<KeyT>::max()
+                 ? "X"
+                 : std::to_string(h_keys_out2[i]).c_str(),
+             i == h_usedLength[0] - 1 ? '|' : ' ');
+    }
+    printf("\n");
+  }
 
 #endif
 }
