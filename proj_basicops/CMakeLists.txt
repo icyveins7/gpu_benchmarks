@@ -73,6 +73,7 @@ target_include_directories(cub_using_device_length
                            PRIVATE ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
                            )
 
+# Turn this on, otherwise CDP doesn't work with CUB
 set_property(TARGET cub_using_device_length PROPERTY CUDA_SEPARABLE_COMPILATION ON)
 
 target_sources(
