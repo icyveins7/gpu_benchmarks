@@ -37,6 +37,25 @@ protected:
 namespace DeviceRadixSort {
 
 template <typename KeyT, typename NumItemsT>
+__global__ void
+SortKeysCDP_kernel(void *d_temp_storage, size_t temp_storage_bytes,
+                   const KeyT *d_keys_in, KeyT *d_keys_out,
+                   NumItemsT *d_num_items, int begin_bit = 0,
+                   int end_bit = sizeof(KeyT) * 8, cudaStream_t stream = 0) {
+  if (blockIdx.x != 0)
+    return;
+
+  NumItemsT num_items = *d_num_items;
+
+  // Launch CUB routine
+  if (threadIdx.x == 0) {
+    cub::DeviceRadixSort::SortKeys(d_temp_storage, temp_storage_bytes,
+                                   d_keys_in, d_keys_out, num_items, begin_bit,
+                                   end_bit, stream);
+  }
+}
+
+template <typename KeyT, typename NumItemsT>
 struct SortKeys : public CubWrapper {
   SortKeys() {}
   SortKeys(NumItemsT num_items) : CubWrapper() {
@@ -52,13 +71,27 @@ struct SortKeys : public CubWrapper {
   }
 
   cudaError_t exec(const KeyT *d_keys_in, KeyT *d_keys_out, NumItemsT num_items,
-                   int begin_bit = 0, int end_bit = sizeof(KeyT) * 8,
-                   cudaStream_t stream = 0) {
+                   cudaStream_t stream = 0, int begin_bit = 0,
+                   int end_bit = sizeof(KeyT) * 8) {
     size_t temp_storage_bytes = this->d_temp_storage.size();
     return cub::DeviceRadixSort::SortKeys(
         this->d_temp_storage.data().get(),
         temp_storage_bytes, // we only do this because it expects a ref
         d_keys_in, d_keys_out, num_items, begin_bit, end_bit, stream);
+  }
+
+  void cdp_exec(const KeyT *d_keys_in, KeyT *d_keys_out, NumItemsT *d_num_items,
+                cudaStream_t stream = 0, int begin_bit = 0,
+                int end_bit = sizeof(KeyT) * 8) {
+
+    size_t temp_storage_bytes = this->d_temp_storage.size();
+    SortKeysCDP_kernel<KeyT, NumItemsT><<<1, 1, 0, stream>>>(
+        this->d_temp_storage.data().get(), temp_storage_bytes, d_keys_in,
+        d_keys_out, d_num_items, begin_bit, end_bit, stream);
+
+    cudaError_t err = cudaGetLastError();
+    if (err != cudaSuccess)
+      throw std::runtime_error(cudaGetErrorString(err));
   }
 };
 

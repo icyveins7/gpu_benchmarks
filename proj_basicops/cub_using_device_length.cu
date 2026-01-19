@@ -11,6 +11,14 @@
 
 #include "containers/cubwrappers.cuh"
 
+// attempt to use fancy iterators to work around
+// device side length
+// #define TEST_1_FANCY_ITERATOR
+
+// use CDP to launch, reading in the device side length
+// inside the parent kernel
+#define TEST_2_CDP
+
 template <typename T> struct InputWithIndex {
   size_t index;
   T data;
@@ -58,6 +66,7 @@ int main() {
   printf("Testing cub calls using a length kept in a device global memory "
          "scalar.\n");
 
+#if defined(TEST_1_FANCY_ITERATOR)
   size_t length = 100;
 
   using Tin = int;
@@ -139,4 +148,47 @@ int main() {
     printf("%s%c", valchar, i == h_usedLength[0] - 1 ? '|' : ' ');
   }
   printf("\n");
+#endif
+
+#if defined(TEST_2_CDP)
+
+  using KeyT = unsigned int;
+  using NumItemsT = unsigned int;
+  NumItemsT length = 100;
+
+  thrust::host_vector<KeyT> h_keys(length);
+  for (size_t i = 0; i < length; ++i) {
+    h_keys[i] = std::rand() % 10;
+  }
+  thrust::device_vector<KeyT> d_keys = h_keys;
+  thrust::device_vector<KeyT> d_keys_out(d_keys.size(),
+                                         std::numeric_limits<KeyT>::max());
+
+  cubw::DeviceRadixSort::SortKeys<KeyT, NumItemsT> cubwSorter(length);
+
+  thrust::host_vector<NumItemsT> h_usedLength = {length / 2};
+  thrust::device_vector<NumItemsT> d_usedLength = h_usedLength;
+  printf("Launching cdp_exec()\n");
+  cubwSorter.cdp_exec(d_keys.data().get(), d_keys_out.data().get(),
+                      d_usedLength.data().get());
+
+  cudaDeviceSynchronize();
+
+  thrust::host_vector<KeyT> h_keys_out = d_keys_out;
+
+  // Check
+  for (size_t i = 0; i < length; ++i) {
+    printf("%u%c", h_keys[i], i == h_usedLength[0] - 1 ? '|' : ' ');
+  }
+  printf("\n");
+
+  for (size_t i = 0; i < length; ++i) {
+    const char *valchar = h_keys_out[i] == std::numeric_limits<KeyT>::max()
+                              ? "X"
+                              : std::to_string(h_keys_out[i]).c_str();
+    printf("%s%c", valchar, i == h_usedLength[0] - 1 ? '|' : ' ');
+  }
+  printf("\n");
+
+#endif
 }

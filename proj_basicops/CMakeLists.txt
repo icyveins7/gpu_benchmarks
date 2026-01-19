@@ -73,6 +73,8 @@ target_include_directories(cub_using_device_length
                            PRIVATE ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
                            )
 
+set_property(TARGET cub_using_device_length PROPERTY CUDA_SEPARABLE_COMPILATION ON)
+
 target_sources(
   cub_using_device_length PRIVATE
   ${PROJECT_SOURCE_DIR}/cub_using_device_length.cu
