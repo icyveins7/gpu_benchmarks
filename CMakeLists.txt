@@ -120,4 +120,5 @@ add_subdirectory(proj_basicops)
 add_subdirectory(proj_cooperativegrid)
 add_subdirectory(proj_sats)
 add_subdirectory(proj_mempools)
+add_subdirectory(proj_floodfill)
 
