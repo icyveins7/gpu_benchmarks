@@ -79,6 +79,7 @@ set_property(TARGET cub_using_device_length PROPERTY CUDA_SEPARABLE_COMPILATION 
 target_sources(
   cub_using_device_length PRIVATE
   ${PROJECT_SOURCE_DIR}/cub_using_device_length.cu
+  ${PROJECT_SOURCE_DIR}/../src/containers/streams.cu
 )
 
 # # -------------------- Tests

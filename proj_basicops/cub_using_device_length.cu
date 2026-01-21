@@ -10,6 +10,7 @@
 #include <thrust/iterator/zip_iterator.h>
 
 #include "containers/cubwrappers.cuh"
+#include "containers/streams.cuh"
 
 // attempt to use fancy iterators to work around
 // device side length
@@ -174,9 +175,11 @@ int main(int argc, char *argv[]) {
   thrust::device_vector<NumItemsT> d_usedLength = h_usedLength;
   printf("Launching cdp_exec() with a used length of %u\n", h_usedLength[0]);
 
+  containers::CudaStream stream;
+
   for (int i = 0; i < 3; ++i) {
     cubwSorter.cdp_exec(d_keys.data().get(), d_keys_out.data().get(),
-                        d_usedLength.data().get());
+                        d_usedLength.data().get(), stream());
   }
 
   thrust::host_vector<KeyT> h_keys_out = d_keys_out;
@@ -204,7 +207,7 @@ int main(int argc, char *argv[]) {
 
   for (int i = 0; i < 3; ++i) {
     cubwSorter.exec(d_keys.data().get(), d_keys_out2.data().get(),
-                    h_usedLength[0]);
+                    h_usedLength[0], stream());
   }
 
   thrust::host_vector<KeyT> h_keys_out2 = d_keys_out2;
