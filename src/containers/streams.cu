@@ -1,4 +1,4 @@
-#include "containers.cuh"
+#include "containers/streams.cuh"
 
 namespace containers {
 
