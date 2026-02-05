@@ -3,6 +3,33 @@
 #include <iostream>
 #include <type_traits>
 
+/**
+ * @brief Downsamples an image by a factor of xRatio and yRatio while
+ * maintaining the centre of the image.
+ *
+ * @detail Coordinates are assumed to be at the centre of pixels.
+ * This means that for odd dimensions, the middle pixel lies exactly on
+ * the centre of the image, e.g.
+ *
+ * X X X
+ * X C X
+ * X X X
+ *
+ * For even dimensions, the true centre of the image actually lies between
+ * pixels, e.g.
+ *
+ * X X X X
+ *
+ * X X X X
+ *    C
+ * X X X X
+ *
+ * X X X X
+ *
+ * However, for the purposes of downsampling, we do not perform interpolation
+ * and merely drop samples, so for the even dimensions scenario we will always
+ * pick the bottom-right (larger index) pixel.
+ */
 template <typename Tidx = int> struct CentreAlignedDownsampler {
   static_assert(std::is_integral<Tidx>::value, "Tidx must be integral");
 
@@ -26,6 +53,22 @@ template <typename Tidx = int> struct CentreAlignedDownsampler {
 
     printf("%d x %d, ratio %d/%d, x %d to %d, y %d to %d\n", _inWidth,
            _inHeight, xRatio, yRatio, xStartIdx, xEndIdx, yStartIdx, yEndIdx);
+  }
+
+  __host__ __device__ double trueCentreX() const {
+    return (double)inWidth / 2.0 - 0.5;
+  }
+
+  __host__ __device__ double trueCentreY() const {
+    return (double)inHeight / 2.0 - 0.5;
+  }
+
+  __host__ __device__ double trueDownsampledCentreX() const {
+    return (double)outputWidth() / 2.0 - 0.5;
+  }
+
+  __host__ __device__ double trueDownsampledCentreY() const {
+    return (double)outputHeight() / 2.0 - 0.5;
   }
 
   __host__ __device__ Tidx outputWidth() const {

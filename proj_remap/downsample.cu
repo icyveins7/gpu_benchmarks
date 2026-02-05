@@ -7,6 +7,9 @@
 void test(int width, int height, int ratio) {
   CentreAlignedDownsampler<> ds(width, height, ratio, ratio);
   printf("output %d x %d\n", ds.outputHeight(), ds.outputWidth());
+  printf("input centre at %.1f, %.1f\n", ds.trueCentreX(), ds.trueCentreY());
+  printf("output centre at %.1f, %.1f\n", ds.trueDownsampledCentreX(),
+         ds.trueDownsampledCentreY());
   std::vector<int> x(width * height);
   std::iota(x.begin(), x.end(), 0);
   if (width < 100 && height < 100) {
