@@ -52,6 +52,18 @@ target_sources(
 )
 target_link_libraries(check_npp_edges ${CUDA_nppc_LIBRARY} ${CUDA_nppig_LIBRARY})
 
+# --------------------
+set_source_files_properties(downsample.cu PROPERTIES LANGUAGE CUDA)
+add_executable(downsample)
+
+target_include_directories(downsample
+                           PRIVATE ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
+                           )
+
+target_sources(
+  downsample PRIVATE
+  ${PROJECT_SOURCE_DIR}/downsample.cu
+)
 
 # -------------------- Tests
 if (GTEST_FOUND)
