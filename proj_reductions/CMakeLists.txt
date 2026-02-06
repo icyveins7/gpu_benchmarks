@@ -56,3 +56,17 @@ target_sources(
   cub_vs_cg PRIVATE
   ${PROJECT_SOURCE_DIR}/cub_vs_cg.cu
 )
+
+# --------------------
+set_source_files_properties(check_nan_handling.cu PROPERTIES LANGUAGE CUDA)
+add_executable(check_nan_handling)
+
+target_include_directories(check_nan_handling
+                           PRIVATE ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
+                           )
+
+target_sources(
+  check_nan_handling PRIVATE
+  ${PROJECT_SOURCE_DIR}/check_nan_handling.cu
+)
+
