@@ -81,6 +81,18 @@ target_sources(
   ${PROJECT_SOURCE_DIR}/cub_using_device_length.cu
   ${PROJECT_SOURCE_DIR}/../src/containers/streams.cu
 )
+# --------------------
+set_source_files_properties(cub_combine_sequence_starts_and_lengths.cu PROPERTIES LANGUAGE CUDA)
+add_executable(cub_combine_sequence_starts_and_lengths)
+
+target_include_directories(cub_combine_sequence_starts_and_lengths
+                           PRIVATE ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
+                           )
+
+target_sources(
+  cub_combine_sequence_starts_and_lengths PRIVATE
+  ${PROJECT_SOURCE_DIR}/cub_combine_sequence_starts_and_lengths.cu
+)
 
 # # -------------------- Tests
 # if (GTEST_FOUND)
