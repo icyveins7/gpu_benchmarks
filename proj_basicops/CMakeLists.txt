@@ -93,6 +93,29 @@ target_sources(
   cub_combine_sequence_starts_and_lengths PRIVATE
   ${PROJECT_SOURCE_DIR}/cub_combine_sequence_starts_and_lengths.cu
 )
+# --------------------
+set_source_files_properties(gather_vs_custom.cu PROPERTIES LANGUAGE CUDA)
+add_executable(gather_vs_custom)
+
+target_include_directories(gather_vs_custom
+                           PRIVATE ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
+                           )
+
+target_sources(
+  gather_vs_custom PRIVATE
+  ${PROJECT_SOURCE_DIR}/gather_vs_custom.cu
+)
+add_executable(gather_vs_custom2)
+
+target_include_directories(gather_vs_custom2
+                           PRIVATE ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
+                           )
+
+target_sources(
+  gather_vs_custom2 PRIVATE
+  ${PROJECT_SOURCE_DIR}/gather_vs_custom.cu
+)
+target_compile_options(gather_vs_custom2 PRIVATE -DGATHER_TWO_ARRAYS)
 
 # # -------------------- Tests
 # if (GTEST_FOUND)
