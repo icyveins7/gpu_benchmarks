@@ -117,6 +117,19 @@ target_sources(
 )
 target_compile_options(gather_vs_custom2 PRIVATE -DGATHER_TWO_ARRAYS)
 
+# --------------------
+set_source_files_properties(events_vs_nvtx.cu PROPERTIES LANGUAGE CUDA)
+add_executable(events_vs_nvtx)
+
+target_include_directories(events_vs_nvtx
+                           PRIVATE ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
+                           )
+
+target_sources(
+  events_vs_nvtx PRIVATE
+  ${PROJECT_SOURCE_DIR}/events_vs_nvtx.cu
+)
+
 # # -------------------- Tests
 # if (GTEST_FOUND)
 #   message("Enabling tests for proj_basicops")
