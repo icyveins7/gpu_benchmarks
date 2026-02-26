@@ -147,6 +147,12 @@ int main(int argc, char *argv[]) {
   // repeat once
   thrust::gather(d_idx.begin(), d_idx.end(), d_in.begin(), d_out.begin());
   thrust::gather(d_idx.begin(), d_idx.end(), d_in2.begin(), d_out2.begin());
+
+  // we can also try to use a struct and gather that instead to compare
+  thrust::device_vector<int2> d_in3(d_in.size());
+  thrust::device_vector<int2> d_out3(d_out.size());
+  thrust::gather(d_idx.begin(), d_idx.end(), d_in3.begin(), d_out3.begin());
+  thrust::gather(d_idx.begin(), d_idx.end(), d_in3.begin(), d_out3.begin());
 #endif
 
   return 0;
