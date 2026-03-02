@@ -7,6 +7,8 @@
 #include <thrust/device_vector.h>
 #include <thrust/host_vector.h>
 
+#include <random>
+
 #define ERROR_EXPECTED_INACTIVE_GOT_ACTIVE 1
 #define ERROR_EXPECTED_ACTIVE_GOT_INACTIVE 2
 #define ERROR_NEIGHBOUR_MISMATCH           3
@@ -350,7 +352,9 @@ TEST(CudaWindowCCL, NaiveLocal_random64x64_1percent){
   const double fraction = 0.01;
   std::fill(img.begin(), img.begin() + (int)(fraction * rows * cols), 1);
   std::fill(img.begin() + (int)(fraction * rows * cols), img.end(), 0);
-  std::random_shuffle(img.begin(), img.end());
+  std::random_device rd;
+  std::mt19937 g(rd());
+  std::shuffle(img.begin(), img.end(), g);
 
   const int2 tileDims = {32, 4};
   const int2 windowDist = {1, 1};
@@ -368,7 +372,9 @@ TEST(CudaWindowCCL, NaiveLocal_random8192x1024_1percent){
   const double fraction = 0.01;
   std::fill(img.begin(), img.begin() + (int)(fraction * rows * cols), 1);
   std::fill(img.begin() + (int)(fraction * rows * cols), img.end(), 0);
-  std::random_shuffle(img.begin(), img.end());
+  std::random_device rd;
+  std::mt19937 g(rd());
+  std::shuffle(img.begin(), img.end(), g);
 
   const int2 tileDims = {32, 4};
   const int2 windowDist = {1, 1};
@@ -385,7 +391,9 @@ TEST(CudaWindowCCL, NaiveLocal_random8192x1024_1percent_CooperativeGlobal){
   const double fraction = 0.01;
   std::fill(img.begin(), img.begin() + (int)(fraction * rows * cols), 1);
   std::fill(img.begin() + (int)(fraction * rows * cols), img.end(), 0);
-  std::random_shuffle(img.begin(), img.end());
+  std::random_device rd;
+  std::mt19937 g(rd());
+  std::shuffle(img.begin(), img.end(), g);
 
   const int2 tileDims = {32, 4};
   const int2 windowDist = {1, 1};
@@ -402,7 +410,9 @@ TEST(CudaWindowCCL, NaiveLocal_random8192x1024_50percent){
   const double fraction = 0.50;
   std::fill(img.begin(), img.begin() + (int)(fraction * rows * cols), 1);
   std::fill(img.begin() + (int)(fraction * rows * cols), img.end(), 0);
-  std::random_shuffle(img.begin(), img.end());
+  std::random_device rd;
+  std::mt19937 g(rd());
+  std::shuffle(img.begin(), img.end(), g);
 
   const int2 tileDims = {32, 4};
   const int2 windowDist = {1, 1};
@@ -436,7 +446,9 @@ TEST(CudaWindowCCL, NeighbourChainerLocal_random64x64_1percent){
   const double fraction = 0.01;
   std::fill(img.begin(), img.begin() + (int)(fraction * rows * cols), 1);
   std::fill(img.begin() + (int)(fraction * rows * cols), img.end(), 0);
-  std::random_shuffle(img.begin(), img.end());
+  std::random_device rd;
+  std::mt19937 g(rd());
+  std::shuffle(img.begin(), img.end(), g);
 
   const int2 tileDims = {32, 4};
   const int2 windowDist = {1, 1};
@@ -453,7 +465,9 @@ TEST(CudaWindowCCL, NeighbourChainerLocal_random64x64_50percent){
   const double fraction = 0.5;
   std::fill(img.begin(), img.begin() + (int)(fraction * rows * cols), 1);
   std::fill(img.begin() + (int)(fraction * rows * cols), img.end(), 0);
-  std::random_shuffle(img.begin(), img.end());
+  std::random_device rd;
+  std::mt19937 g(rd());
+  std::shuffle(img.begin(), img.end(), g);
 
   const int2 tileDims = {32, 4};
   const int2 windowDist = {1, 1};
@@ -470,7 +484,9 @@ TEST(CudaWindowCCL, NeighbourChainerLocal_random512x512_1percent){
   const double fraction = 0.01;
   std::fill(img.begin(), img.begin() + (int)(fraction * rows * cols), 1);
   std::fill(img.begin() + (int)(fraction * rows * cols), img.end(), 0);
-  std::random_shuffle(img.begin(), img.end());
+  std::random_device rd;
+  std::mt19937 g(rd());
+  std::shuffle(img.begin(), img.end(), g);
 
   const int2 tileDims = {32, 4};
   const int2 windowDist = {1, 1};
@@ -488,7 +504,9 @@ TEST(CudaWindowCCL, NeighbourChainerLocal_random8192x1024_1percent){
   const double fraction = 0.01;
   std::fill(img.begin(), img.begin() + (int)(fraction * rows * cols), 1);
   std::fill(img.begin() + (int)(fraction * rows * cols), img.end(), 0);
-  std::random_shuffle(img.begin(), img.end());
+  std::random_device rd;
+  std::mt19937 g(rd());
+  std::shuffle(img.begin(), img.end(), g);
 
   const int2 tileDims = {32, 4};
   const int2 windowDist = {1, 1};
@@ -505,7 +523,9 @@ TEST(CudaWindowCCL, NeighbourChainerLocal_random8192x1024_50percent){
   const double fraction = 0.50;
   std::fill(img.begin(), img.begin() + (int)(fraction * rows * cols), 1);
   std::fill(img.begin() + (int)(fraction * rows * cols), img.end(), 0);
-  std::random_shuffle(img.begin(), img.end());
+  std::random_device rd;
+  std::mt19937 g(rd());
+  std::shuffle(img.begin(), img.end(), g);
 
   const int2 tileDims = {32, 4};
   const int2 windowDist = {1, 1};
