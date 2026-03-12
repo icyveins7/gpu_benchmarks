@@ -145,17 +145,25 @@ template <typename T, typename Tscale = double> struct DiskRowSAT {
   }
 };
 
-int getMaximumSectionsForDisk_prefixRows_SAT(const int radiusPixels) {
+int getMaximumSectionsForDisk_prefixRows_SAT(const double radiusPixels) {
+  // rounds towards zero for the radius i.e. if radius 1.1 then only extend 1
+  // pixel. +1 to account for the centre pixel. note that our disk sections
+  // are mirrored so we don't store 2*radiusPixels
   return radiusPixels + 1;
 }
 
+/**
+ * @brief Constructs the disk sections. Assumes pre-allocation according to
+ * getMaximumSectionsForDisk_prefixRows_SAT() for sections and sectionTypes.
+ */
 template <typename T>
-int constructSectionsForDisk_prefixRows_SAT(const int radiusPixels,
+int constructSectionsForDisk_prefixRows_SAT(const double radiusPixels,
                                             DiskSection<T> *sections,
                                             uint8_t *sectionTypes) {
   int numSections = 0;
 
-  std::vector<T> rowOffsets(radiusPixels + 1);
+  std::vector<T> rowOffsets(
+      getMaximumSectionsForDisk_prefixRows_SAT(radiusPixels));
 
   // Go down the rows, including the middle row
   for (size_t i = 0; i < rowOffsets.size(); ++i) {
