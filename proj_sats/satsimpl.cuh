@@ -205,6 +205,7 @@ DiskSection<T> getDiskSectionsForRow(const DiskSection<T> *sections,
       return sections[i];
     }
   }
+  throw std::runtime_error("Row out of range");
 }
 
 template <typename Tidx> struct DiskSelectionRule {
