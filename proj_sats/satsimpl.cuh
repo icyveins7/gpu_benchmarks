@@ -196,6 +196,17 @@ int constructSectionsForDisk_prefixRows_SAT(const double radiusPixels,
   return numSections;
 }
 
+template <typename T>
+DiskSection<T> getDiskSectionsForRow(const DiskSection<T> *sections,
+                                     const int numActualSections,
+                                     const int row) {
+  for (int i = 0; i < numActualSections; ++i) {
+    if (row >= sections[i].startRow && row <= sections[i].endRow) {
+      return sections[i];
+    }
+  }
+}
+
 template <typename Tidx> struct DiskSelectionRule {
   float stepSize;
   Tidx centreX;
