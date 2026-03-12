@@ -251,40 +251,43 @@ int main(int argc, char **argv) {
     radiusPixels = atoi(argv[3]);
   printf(" Radius in pixels: %d\n", radiusPixels);
 
-  thrust::host_vector<int> h_data(height * width);
+  using Tdata = int64_t;
+
+  thrust::host_vector<Tdata> h_data(height * width);
   for (int i = 0; i < height * width; i++) {
-    h_data[i] = std::rand() % 10;
+    h_data[i] = std::rand() % 10 - 5;
   }
-  thrust::host_vector<int> h_rowSums(height * width);
-  thrust::host_vector<int> h_sat(height * width);
-  thrust::host_vector<int> h_out(height * width);
+  thrust::host_vector<Tdata> h_rowSums(height * width);
+  thrust::host_vector<Tdata> h_sat(height * width);
+  thrust::host_vector<Tdata> h_out(height * width);
 
-  thrust::device_vector<int> d_data(h_data);
-  thrust::device_vector<int> d_rowSums(h_data.size());
-  thrust::device_vector<int> d_transpose(h_data.size());
-  thrust::device_vector<int> d_transpose2(h_data.size());
-  thrust::device_vector<int> d_sat(h_data.size());
-  thrust::device_vector<int> d_out(h_data.size());
+  thrust::device_vector<Tdata> d_data(h_data);
+  thrust::device_vector<Tdata> d_rowSums(h_data.size());
+  thrust::device_vector<Tdata> d_transpose(h_data.size());
+  thrust::device_vector<Tdata> d_transpose2(h_data.size());
+  thrust::device_vector<Tdata> d_sat(h_data.size());
+  thrust::device_vector<Tdata> d_out(h_data.size());
 
-  containers::Image<int, unsigned int> image(d_data.data().get(), width,
-                                             height);
-  containers::Image<int, unsigned int> rowSums(d_rowSums.data().get(), width,
+  containers::Image<Tdata, unsigned int> image(d_data.data().get(), width,
                                                height);
-  containers::Image<int, unsigned int> transposeImage(d_transpose.data().get(),
-                                                      height, width);
-  containers::Image<int, unsigned int> sat(d_sat.data().get(), width, height);
-  containers::Image<int, unsigned int> out(d_out.data().get(), width, height);
+  containers::Image<Tdata, unsigned int> rowSums(d_rowSums.data().get(), width,
+                                                 height);
+  containers::Image<Tdata, unsigned int> transposeImage(
+      d_transpose.data().get(), height, width);
+  containers::Image<Tdata, unsigned int> sat(d_sat.data().get(), width, height);
+  containers::Image<Tdata, unsigned int> out(d_out.data().get(), width, height);
 
   // CUB related prep
   auto rowKeyIterator = thrust::make_transform_iterator(
       thrust::make_counting_iterator(0), IndexToRowFunctor{width});
-  cubw::DeviceScan::InclusiveSumByKey<decltype(rowKeyIterator), int *, int *>
+  cubw::DeviceScan::InclusiveSumByKey<decltype(rowKeyIterator), Tdata *,
+                                      Tdata *>
       cubwRowScan(width * height);
 
   auto colTransposeKeyIterator = thrust::make_transform_iterator(
       thrust::make_counting_iterator(0), IndexToRowFunctor{height});
-  cubw::DeviceScan::InclusiveSumByKey<decltype(colTransposeKeyIterator), int *,
-                                      int *>
+  cubw::DeviceScan::InclusiveSumByKey<decltype(colTransposeKeyIterator),
+                                      Tdata *, Tdata *>
       cubwColScanTranspose(height * width);
 
   // Pre-compute disk
@@ -367,13 +370,14 @@ int main(int argc, char **argv) {
 
   // === 2a. Perform prefix sums across columns (via explicitly transposed
   // matrix) Transpose into the SAT matrix
-  transpose<int>(d_transpose.data().get(), d_rowSums.data().get(), (int)height,
-                 (int)width);
+  transpose<Tdata>(d_transpose.data().get(), d_rowSums.data().get(),
+                   (int)height, (int)width);
   // In-place row-sums on the transpose (width is now the original height)
   cubwColScanTranspose.exec(colTransposeKeyIterator, d_transpose.data().get(),
                             d_transpose2.data().get(), width * height);
   // Transposing back
-  transpose<int>(d_sat.data().get(), d_transpose2.data().get(), width, height);
+  transpose<Tdata>(d_sat.data().get(), d_transpose2.data().get(), width,
+                   height);
 
   // === 3. Perform convolution calculations via lookups
   {
@@ -381,7 +385,7 @@ int main(int argc, char **argv) {
     constexpr dim3 tpb(32, 4);
     dim3 blks((width + tpb.x - 1) / tpb.x,
               (height + tpb.y - 1) / tpb.y / factor);
-    convolve_via_SAT_and_rowSums_naive_kernel<int, unsigned int, int16_t>
+    convolve_via_SAT_and_rowSums_naive_kernel<Tdata, unsigned int, int16_t>
         <<<blks, tpb>>>(d_disk, image, rowSums, sat, out);
   }
 
@@ -466,9 +470,10 @@ int main(int argc, char **argv) {
     constexpr dim3 tpb(32, 4);
     dim3 blks((width + tpb.x - 1) / tpb.x,
               (height + tpb.y - 1) / tpb.y / factor);
-    convolve_via_SAT_and_rowSums_dynamicDisks_kernel<int, unsigned int, int16_t,
-                                                     double><<<blks, tpb>>>(
-        d_multidisks.data().get(), diskRule, image, rowSums, sat, out);
+    convolve_via_SAT_and_rowSums_dynamicDisks_kernel<Tdata, unsigned int,
+                                                     int16_t, double>
+        <<<blks, tpb>>>(d_multidisks.data().get(), diskRule, image, rowSums,
+                        sat, out);
   }
 
   return 0;
