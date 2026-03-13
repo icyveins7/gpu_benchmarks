@@ -6,6 +6,7 @@ project(
   LANGUAGES CXX CUDA)
 
 # --------------------
+if (CUDAToolkit_VERSION VERSION_LESS "13.0")
 set_source_files_properties(floodfillnpp.cu PROPERTIES LANGUAGE CUDA)
 add_executable(floodfillnpp)
 
@@ -25,6 +26,7 @@ target_sources(
   floodfillnpp PRIVATE
   ${PROJECT_SOURCE_DIR}/floodfillnpp.cu
 )
+endif()
 
 # # -------------------- Tests
 # if (GTEST_FOUND)
