@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <stdexcept>
 #include <type_traits>
 #include <vector>
 
@@ -196,16 +197,29 @@ int constructSectionsForDisk_prefixRows_SAT(const double radiusPixels,
   return numSections;
 }
 
+/**
+ * @brief Retrieve the disk section for a given row.
+ */
 template <typename T>
-DiskSection<T> getDiskSectionsForRow(const DiskSection<T> *sections,
-                                     const int numActualSections,
-                                     const int row) {
+DiskSection<T> getDiskSectionForRow(const DiskSection<T> *sections,
+                                    const int numActualSections,
+                                    const int row) {
+  int targetRow = row;
+  int finalRow = sections[numActualSections - 1].endRow;
+  int totalRows = (finalRow - 1) * 2 + 1;
+  if (targetRow > totalRows)
+    throw std::runtime_error("Row exceeds max row");
+
+  // Mirrored side
+  if (targetRow > finalRow)
+    targetRow = totalRows - targetRow - 1;
+
   for (int i = 0; i < numActualSections; ++i) {
-    if (row >= sections[i].startRow && row <= sections[i].endRow) {
+    if (targetRow >= sections[i].startRow && targetRow <= sections[i].endRow) {
       return sections[i];
     }
   }
-  throw std::runtime_error("Row out of range");
+  throw std::runtime_error("Unable to find row?");
 }
 
 template <typename Tidx> struct DiskSelectionRule {
