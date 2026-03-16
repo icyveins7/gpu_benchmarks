@@ -116,6 +116,10 @@ template <typename T, typename Tscale = double> struct DiskRowSAT {
   __host__ __device__ static int lengthPixels(int radiusPixels) {
     return radiusPixels * 2 + 1;
   }
+  /**
+   * @brief Returns the total number of sections to iterate over
+   * (as opposed to the number that is stored, which is about half).
+   */
   __host__ __device__ int numSectionsToIterate() const {
     return numSections * 2 - 1;
   }
@@ -141,7 +145,7 @@ template <typename T, typename Tscale = double> struct DiskRowSAT {
    * numSections - 1 - (i - numSections + 1) =
    * 2 * numSections - 2 - i
    *
-   * @param i Input index
+   * @param i Input index, 0 to numSectionsToIterate()
    * @return Appropriate access index for the section
    */
   __host__ __device__ int accessIndex(int i) const {
@@ -157,11 +161,22 @@ template <typename T, typename Tscale = double> struct DiskRowSAT {
    * section.
    * @detail Assumes input index has been validated (see validSectionIndex()).
    *
-   * @param i Input index
+   * @param i Input index, 0 to numSectionsToIterate()
    * @return Appropriate section
    */
   __host__ __device__ const DiskSection<T> &getSection(int i) const {
-    return sections[accessIndex(i)];
+    bool isMirrored = i >= numSections;
+    i = accessIndex(i);
+    auto section = sections[i];
+    // Flip the section rows
+    // e.g. row -5 to -1 should now be row 1 to 5
+    if (isMirrored) {
+      auto startRow = -section.endRow;
+      auto endRow = -section.startRow;
+      section.startRow = startRow;
+      section.endRow = endRow;
+    }
+    return section;
   }
 
   /**
@@ -169,7 +184,7 @@ template <typename T, typename Tscale = double> struct DiskRowSAT {
    * section.
    * @detail Assumes input index has been validated (see validSectionIndex()).
    *
-   * @param i Input index
+   * @param i Input index, 0 to numSectionsToIterate()
    * @return Appropriate section type
    */
   __host__ __device__ uint8_t getSectionType(int i) const {
@@ -257,7 +272,7 @@ DiskSection<T> getDiskSectionForRow(const DiskSection<T> *sections,
                                     int *idx = nullptr) {
   int targetRow = row;
   int finalRow = -sections[0].startRow;
-  int totalRows = finalRow * 2 + 1;
+  // int totalRows = finalRow * 2 + 1;
   if (targetRow > finalRow || targetRow < sections[0].startRow)
     throw std::runtime_error("Row out of bounds");
 

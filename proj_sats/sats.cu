@@ -113,16 +113,16 @@ __device__ Tdata getSATelement(const containers::Image<Tdata, Tidx> sat, int y,
       y, x, &sat.at(min(sat.height - 1, y), min(sat.width - 1, x)));
 }
 
-template <typename Tdata, typename Tidx, typename Tsection = int16_t,
-          typename Tscale = double>
+template <typename Tin, typename Trowsum, typename Tsat, typename Tidx,
+          typename Tsection = int16_t, typename Tscale = double>
 __device__ Tscale sumOverDisk_SAT_and_rowSums_threadwork(
     const sats::DiskRowSAT<Tsection, Tscale> disk,
-    const containers::Image<Tdata, Tidx> orig,
-    const containers::Image<Tdata, Tidx> rowSums,
-    const containers::Image<Tdata, Tidx> sat, const int x, const int y) {
+    const containers::Image<Tin, Tidx> orig,
+    const containers::Image<Trowsum, Tidx> rowSums,
+    const containers::Image<Tsat, Tidx> sat, const int x, const int y) {
   // Each thread's output value, and then loop over the sections to
   // accumulate
-  Tdata val = 0;
+  Tin val = 0;
   for (int i = 0; i < disk.numSectionsToIterate(); ++i) {
     uint8_t sectionType = disk.getSectionType(i);
     sats::DiskSection<Tsection> section = disk.getSection(i);
@@ -131,14 +131,16 @@ __device__ Tscale sumOverDisk_SAT_and_rowSums_threadwork(
     // All threads in a warp will be tackling the same type
     if (sectionType == sats::SectionType::LOOKUP_TYPE_PIXEL) {
       // Simply look up the pixel from the original image
-      val += orig.atWithDefault(y + section.startRow, x + section.startCol,
-                                0); // pixels outside the image treated as 0
+      Tin pixel =
+          orig.atWithDefault(y + section.startRow, x + section.startCol,
+                             0); // pixels outside the image treated as 0
+      val += pixel;
 
-      // DEBUG
-      if (x == 0 && y == 0) {
-        printf("%d, %d -> pixel, val %ld\n", y + section.startRow,
-               x + section.startCol, val);
-      }
+      // // DEBUG
+      // if (x == 1 && y == 0) {
+      //   printf("%d, %d -> pixel, val + %ld to %ld\n", y + section.startRow,
+      //          x + section.startCol, pixel, val);
+      // }
     } else if (sectionType == sats::SectionType::LOOKUP_TYPE_ROW) {
       // Look up the row, and then the columns
       int row = y + section.startRow;
@@ -149,15 +151,15 @@ __device__ Tscale sumOverDisk_SAT_and_rowSums_threadwork(
         // A valid row should treat the negative indices as 0 for prefix
         // sums and it should treat the out of range on the right as the
         // final col value
-        Tdata a = rowSums.atWithDefault(row, left, 0);
-        Tdata b =
+        Trowsum a = rowSums.atWithDefault(row, left, 0);
+        Trowsum b =
             rowSums.atWithDefaultPointer(row, right, &rowSums.rowEnd(row));
         val += b - a;
-        // DEBUG
-        if (x == 0 && y == 0) {
-          printf("row %d, col %d : %d -> row, val %ld\n", row, left, right,
-                 val);
-        }
+        // // DEBUG
+        // if (x == 1 && y == 0) {
+        //   printf("row %d, col %d : %d -> row, val + %ld to %ld\n", row, left,
+        //          right, b - a, val);
+        // }
       }
 
     } else if (sectionType == sats::SectionType::LOOKUP_TYPE_RECT) {
@@ -168,16 +170,16 @@ __device__ Tscale sumOverDisk_SAT_and_rowSums_threadwork(
       //       c -------- d
       int2 topLeft =
           make_int2(x + section.startCol - 1, y + section.startRow - 1);
-      Tdata a = getSATelement(sat, topLeft.y, topLeft.x);
+      Tsat a = getSATelement(sat, topLeft.y, topLeft.x);
 
       int2 topRight = make_int2(x + section.endCol, y + section.startRow - 1);
-      Tdata b = getSATelement(sat, topRight.y, topRight.x);
+      Tsat b = getSATelement(sat, topRight.y, topRight.x);
 
       int2 bottomLeft = make_int2(x + section.startCol - 1, y + section.endRow);
-      Tdata c = getSATelement(sat, bottomLeft.y, bottomLeft.x);
+      Tsat c = getSATelement(sat, bottomLeft.y, bottomLeft.x);
 
       int2 bottomRight = make_int2(x + section.endCol, y + section.endRow);
-      Tdata d = getSATelement(sat, bottomRight.y, bottomRight.x);
+      Tsat d = getSATelement(sat, bottomRight.y, bottomRight.x);
 
       val += a + d - b - c;
     }
@@ -186,14 +188,14 @@ __device__ Tscale sumOverDisk_SAT_and_rowSums_threadwork(
   return val;
 }
 
-template <typename Tdata, typename Tidx, typename Tsection = int16_t,
-          typename Tscale = double>
+template <typename Tin, typename Trowsum, typename Tsat, typename Tout,
+          typename Tidx, typename Tsection = int16_t, typename Tscale = double>
 __global__ void convolve_via_SAT_and_rowSums_naive_kernel(
     const sats::DiskRowSAT<Tsection, Tscale> disk,
-    const containers::Image<Tdata, Tidx> orig,
-    const containers::Image<Tdata, Tidx> rowSums,
-    const containers::Image<Tdata, Tidx> sat,
-    containers::Image<Tdata, Tidx> out) {
+    const containers::Image<Tin, Tidx> orig,
+    const containers::Image<Trowsum, Tidx> rowSums,
+    const containers::Image<Tsat, Tidx> sat,
+    containers::Image<Tout, Tidx> out) {
 
   for (int y = blockIdx.y * blockDim.y + threadIdx.y; y < (int)orig.height;
        y += blockDim.y * gridDim.y) {
@@ -201,11 +203,12 @@ __global__ void convolve_via_SAT_and_rowSums_naive_kernel(
          x += blockDim.x * gridDim.x) {
 
       Tscale val =
-          sumOverDisk_SAT_and_rowSums_threadwork<Tdata, Tidx, Tsection, Tscale>(
+          sumOverDisk_SAT_and_rowSums_threadwork<Tin, Trowsum, Tsat, Tidx,
+                                                 Tsection, Tscale>(
               disk, orig, rowSums, sat, x, y);
 
       // Value is ready here, write it back
-      out.at(y, x) = static_cast<Tdata>(val * disk.scale);
+      out.at(y, x) = static_cast<Tout>(val * disk.scale);
     }
   }
 }
@@ -262,37 +265,37 @@ int main(int argc, char **argv) {
     radiusPixels = atoi(argv[3]);
   printf(" Radius in pixels: %f\n", radiusPixels);
 
-  using Tdata = int64_t;
+  using Tin = int32_t;  // input is small
+  using Tout = int64_t; // use 64-bit for everything else
 
-  thrust::host_vector<Tdata> h_data(height * width);
+  thrust::host_vector<Tin> h_data(height * width);
   for (int i = 0; i < height * width; i++) {
     h_data[i] = std::rand() % 10 - 5;
   }
-  thrust::host_vector<Tdata> h_rowSums(height * width);
-  thrust::host_vector<Tdata> h_sat(height * width);
-  thrust::host_vector<Tdata> h_out(height * width);
+  thrust::host_vector<Tout> h_rowSums(height * width);
+  thrust::host_vector<Tout> h_sat(height * width);
+  thrust::host_vector<Tout> h_out(height * width);
 
   // thrust::device_vector<Tdata> d_data(h_data);
-  containers::DeviceImageStorage<Tdata> d_data(width, height);
+  containers::DeviceImageStorage<Tin> d_data(width, height);
   thrust::copy(h_data.begin(), h_data.end(), d_data.vec.begin());
 
-  containers::DeviceImageStorage<Tdata> d_rowSums(width, height);
-  containers::DeviceImageStorage<Tdata> d_transpose(width, height);
-  containers::DeviceImageStorage<Tdata> d_transpose2(width, height);
-  containers::DeviceImageStorage<Tdata> d_sat(width, height);
-  containers::DeviceImageStorage<Tdata> d_out(width, height);
+  containers::DeviceImageStorage<Tout> d_rowSums(width, height);
+  containers::DeviceImageStorage<Tout> d_transpose(width, height);
+  containers::DeviceImageStorage<Tout> d_transpose2(width, height);
+  containers::DeviceImageStorage<Tout> d_sat(width, height);
+  containers::DeviceImageStorage<Tout> d_out(width, height);
 
   // CUB related prep
   auto rowKeyIterator = thrust::make_transform_iterator(
       thrust::make_counting_iterator(0), IndexToRowFunctor{width});
-  cubw::DeviceScan::InclusiveSumByKey<decltype(rowKeyIterator), Tdata *,
-                                      Tdata *>
+  cubw::DeviceScan::InclusiveSumByKey<decltype(rowKeyIterator), Tin *, Tout *>
       cubwRowScan(width * height);
 
   auto colTransposeKeyIterator = thrust::make_transform_iterator(
       thrust::make_counting_iterator(0), IndexToRowFunctor{height});
-  cubw::DeviceScan::InclusiveSumByKey<decltype(colTransposeKeyIterator),
-                                      Tdata *, Tdata *>
+  cubw::DeviceScan::InclusiveSumByKey<decltype(colTransposeKeyIterator), Tout *,
+                                      Tout *>
       cubwColScanTranspose(height * width);
 
   // Pre-compute disk
@@ -389,15 +392,15 @@ int main(int argc, char **argv) {
 
   // === 2a. Perform prefix sums across columns (via explicitly transposed
   // matrix) Transpose into the SAT matrix
-  transpose<Tdata>(d_transpose.vec.data().get(), d_rowSums.vec.data().get(),
-                   (int)height, (int)width);
+  transpose<Tout>(d_transpose.vec.data().get(), d_rowSums.vec.data().get(),
+                  (int)height, (int)width);
   // In-place row-sums on the transpose (width is now the original height)
   cubwColScanTranspose.exec(colTransposeKeyIterator,
                             d_transpose.vec.data().get(),
                             d_transpose2.vec.data().get(), width * height);
   // Transposing back
-  transpose<Tdata>(d_sat.vec.data().get(), d_transpose2.vec.data().get(), width,
-                   height);
+  transpose<Tout>(d_sat.vec.data().get(), d_transpose2.vec.data().get(), width,
+                  height);
 
   // === 3. Perform convolution calculations via lookups
   {
@@ -405,7 +408,8 @@ int main(int argc, char **argv) {
     constexpr dim3 tpb(32, 4);
     dim3 blks((width + tpb.x - 1) / tpb.x,
               (height + tpb.y - 1) / tpb.y / factor);
-    convolve_via_SAT_and_rowSums_naive_kernel<Tdata, unsigned int, int16_t>
+    convolve_via_SAT_and_rowSums_naive_kernel<Tin, Tout, Tout, Tout,
+                                              unsigned int, int16_t>
         <<<blks, tpb>>>(d_disk, d_data.image(), d_rowSums.image(),
                         d_sat.image(), d_out.image());
   }
@@ -417,6 +421,7 @@ int main(int argc, char **argv) {
   h_out = d_out.vec;
 
   // ======================= Check row sums (GOOD)
+  printf("====\n");
   printf("Checking initial row sums...\n");
   for (int i = 0; i < height; ++i) {
     int sum = 0;
@@ -454,6 +459,34 @@ int main(int argc, char **argv) {
       if (sum != h_sat[i * width + j]) {
         printf("SATS Mismatch at (%d, %d): expected %d vs %d\n", i, j, sum,
                h_sat[i * width + j]);
+        break;
+      }
+    }
+  }
+
+  // ======================= Check outputs
+  printf("Checking outputs...\n");
+  for (int i = 0; i < height; ++i) {
+    for (int j = 0; j < width; ++j) {
+      Tout val = 0;
+      for (int r = -(int)radiusPixels; r <= (int)radiusPixels; ++r) {
+        // get the section for this offset
+        auto section =
+            sats::getDiskSectionForRow(h_sections.data(), numSections, r);
+        int y = r + i;
+        if (y < 0 || y >= height)
+          continue;
+        for (int x = section.startCol + j; x <= section.endCol + j; ++x) {
+          if (x < 0 || x >= width)
+            continue;
+          // printf("Accessing (%d, %d) for (%d, %d)\n", y, x, i, j);
+          val += h_data[y * width + x];
+        }
+      }
+      // assumes scale 1.0
+      if (val != h_out[i * width + j]) {
+        printf("Output Mismatch at (%d, %d): expected %d vs %d\n", i, j, val,
+               h_out[i * width + j]);
         break;
       }
     }
