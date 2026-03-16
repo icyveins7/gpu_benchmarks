@@ -3,8 +3,24 @@
 #include <cstdint>
 #include <type_traits>
 
+#include <thrust/device_vector.h>
+#include <thrust/host_vector.h>
+
 namespace containers {
 
+/**
+ * @brief Container to hold an image pointer to data and its width/height,
+ * along with helpful methods for accessing the data.
+ * Primarily used with kernels, which cannot accept RAII structs like
+ * device_vectors. See DeviceImageStorage for associated RAII struct.
+ *
+ * @tparam Tdata Type of data
+ * @tparam Tidx Type of indices used in methods
+ * @param data Pointer to data, usually a device pointer
+ * @param width Width of image in pixels
+ * @param height Height of image in pixels
+ * @param bytesPerRow Offset of each row in bytes
+ */
 template <typename Tdata, typename Tidx = unsigned int> struct Image {
   static_assert(std::is_integral_v<Tidx>, "Tidx must be an integer type");
   static_assert(std::is_unsigned_v<Tidx>, "Tidx must be an unsigned type");
@@ -18,7 +34,7 @@ template <typename Tdata, typename Tidx = unsigned int> struct Image {
    * @brief Constructor. Automatically sets bytePerRow, assuming no padding.
    * Otherwise, list-initialization for the members can/should be used directly.
    */
-  __host__ __device__ Image(Tdata *_data, Tidx _width, Tidx _height)
+  __host__ __device__ Image(Tdata *_data, const Tidx _width, const Tidx _height)
       : data(_data), width(_width), height(_height),
         bytesPerRow(width * sizeof(Tdata)) {}
 
@@ -105,6 +121,37 @@ template <typename Tdata, typename Tidx = unsigned int> struct Image {
     // Prevent nullptr access by defaulting to start of data
     const Tdata *ptr = defaultValuePtr == nullptr ? data : defaultValuePtr;
     return rowIsValid(y) && colIsValid(x) ? row(y)[x] : *ptr;
+  }
+};
+
+/**
+ * @brief A holder container that uses thrust::device_vector for an Image.
+ * Use this for RAII of a device_vector that allows you to easily return an
+ * Image struct for kernel calls.
+ *
+ * @tparam Tdata Type of Image data
+ * @tparam Tidx Type of Image indices
+ * @param width Image width in pixels
+ * @param height Image height in pixels
+ */
+template <typename Tdata, typename Tidx = unsigned int>
+struct DeviceImageStorage {
+  thrust::device_vector<Tdata> vec;
+  Tidx width;
+  Tidx height;
+
+  DeviceImageStorage() : width(0), height(0) {}
+  DeviceImageStorage(const Tidx _width, const Tidx _height)
+      : vec(_width * _height), width(_width), height(_height) {}
+
+  /**
+   * @brief Primary useful method. Returns a new Image struct that encloses the
+   * pointer alone, allowing it to be passed to a kernel by value.
+   *
+   * @return Image struct
+   */
+  Image<Tdata, Tidx> image() {
+    return Image<Tdata, Tidx>(vec.data().get(), width, height);
   }
 };
 
