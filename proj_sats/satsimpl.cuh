@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <stdexcept>
+#include <string>
 #include <type_traits>
 #include <vector>
 
@@ -13,13 +14,43 @@
 #include "containers/image.cuh"
 #include "transpose.cuh"
 
-#define LOOKUP_TYPE_PIXEL 0
-#define LOOKUP_TYPE_ROW 0
-#define LOOKUP_TYPE_COL 0
-#define LOOKUP_TYPE_RECT 0
-
 namespace sats {
 
+enum SectionType : uint8_t {
+  LOOKUP_TYPE_PIXEL,
+  LOOKUP_TYPE_ROW,
+  LOOKUP_TYPE_COL,
+  LOOKUP_TYPE_RECT
+};
+
+std::string sectionTypeString(uint8_t type) {
+  switch (type) {
+  case LOOKUP_TYPE_PIXEL:
+    return "PIXEL";
+  case LOOKUP_TYPE_ROW:
+    return "ROW";
+  case LOOKUP_TYPE_COL:
+    return "COL";
+  case LOOKUP_TYPE_RECT:
+    return "RECT";
+  default:
+    throw std::runtime_error("Unknown section type");
+  }
+}
+
+/**
+ * @brief Describes a single section of a disk.
+ * All internal values like startRow/endRow are OFFSETS i.e.
+ * they should begin from (roughly) -radiusPixels to +radiusPixels.
+ *
+ * @example
+ * For a simple radius 1 disk,
+ * - O -  => start/endRow = -1/-1, start/endCol = 0/0
+ * O O O  => start/endRow = 0/0, start/endCol = -1/1
+ * - O -  => start/endRow = 1/1, start/endCol = 0/0
+ *
+ * @tparam T Internal index type
+ */
 template <typename T = int16_t> struct DiskSection {
   static_assert(std::is_integral_v<T>,
                 "T must be an integer type for ConstantDiskSection");
@@ -37,15 +68,15 @@ template <typename T = int16_t> struct DiskSection {
   __host__ __device__ uint8_t type() const {
     if (startRow == endRow) {
       if (startCol == endCol) {
-        return LOOKUP_TYPE_PIXEL;
+        return SectionType::LOOKUP_TYPE_PIXEL;
       } else {
-        return LOOKUP_TYPE_ROW;
+        return SectionType::LOOKUP_TYPE_ROW;
       }
     } else {
       if (startCol == endCol) {
-        return LOOKUP_TYPE_COL;
+        return SectionType::LOOKUP_TYPE_COL;
       } else {
-        return LOOKUP_TYPE_RECT;
+        return SectionType::LOOKUP_TYPE_RECT;
       }
     }
   }
@@ -167,10 +198,24 @@ int constructSectionsForDisk_prefixRows_SAT(const double radiusPixels,
       getMaximumSectionsForDisk_prefixRows_SAT(radiusPixels));
 
   // Go down the rows, including the middle row
+  /*
+  NOTE: assumption is that for non-integer valued radius, the centre pixel is
+  still on the centre row/col index exactly. e.g. for radius 1.01,
+  O X O
+  X C X
+  O X O
+  --> row 1 is still the centre
+
+  Hence the following cast:
+  */
+  int pixelCentre = (int)radiusPixels;
+
   for (size_t i = 0; i < rowOffsets.size(); ++i) {
     double y =
-        -radiusPixels + (double)i; // include offset i.e. assume centre is 0,0
+        -pixelCentre + (double)i; // include offset i.e. assume centre is 0,0
     double x = std::sqrt(radiusPixels * radiusPixels - y * y); // right root
+
+    // printf("y = %f, x = %f\n", y, x);
     rowOffsets.at(i) = (T)x; // round towards zero
   }
 
@@ -181,6 +226,9 @@ int constructSectionsForDisk_prefixRows_SAT(const double radiusPixels,
       // Change the current section
       section.endRow = i;
     } else {
+      // Amend the section row values to be actual offsets
+      section.startRow -= pixelCentre;
+      section.endRow -= pixelCentre;
       // Push current section
       sections[numSections] = section;
       sectionTypes[numSections] = section.type();
@@ -189,6 +237,9 @@ int constructSectionsForDisk_prefixRows_SAT(const double radiusPixels,
       section = {(T)i, (T)i, (T)(-rowOffsets.at(i)), rowOffsets.at(i)};
     }
   }
+  // Amend the section row values to be actual offsets
+  section.startRow -= pixelCentre;
+  section.endRow -= pixelCentre;
   // Push last section
   sections[numSections] = section;
   sectionTypes[numSections] = section.type();
@@ -202,20 +253,24 @@ int constructSectionsForDisk_prefixRows_SAT(const double radiusPixels,
  */
 template <typename T>
 DiskSection<T> getDiskSectionForRow(const DiskSection<T> *sections,
-                                    const int numActualSections,
-                                    const int row) {
+                                    const int numActualSections, const int row,
+                                    int *idx = nullptr) {
   int targetRow = row;
-  int finalRow = sections[numActualSections - 1].endRow;
-  int totalRows = (finalRow - 1) * 2 + 1;
-  if (targetRow > totalRows)
-    throw std::runtime_error("Row exceeds max row");
+  int finalRow = -sections[0].startRow;
+  int totalRows = finalRow * 2 + 1;
+  if (targetRow > finalRow || targetRow < sections[0].startRow)
+    throw std::runtime_error("Row out of bounds");
 
   // Mirrored side
-  if (targetRow > finalRow)
-    targetRow = totalRows - targetRow - 1;
+  if (targetRow > 0)
+    targetRow = -targetRow;
+
+  // printf("Target row: %d from row %d\n", targetRow, row);
 
   for (int i = 0; i < numActualSections; ++i) {
     if (targetRow >= sections[i].startRow && targetRow <= sections[i].endRow) {
+      if (idx != nullptr)
+        *idx = i;
       return sections[i];
     }
   }

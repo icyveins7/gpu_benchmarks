@@ -129,11 +129,17 @@ __device__ Tscale sumOverDisk_SAT_and_rowSums_threadwork(
 
     // There is no warp divergence here!
     // All threads in a warp will be tackling the same type
-    if (sectionType == LOOKUP_TYPE_PIXEL) {
+    if (sectionType == sats::SectionType::LOOKUP_TYPE_PIXEL) {
       // Simply look up the pixel from the original image
       val += orig.atWithDefault(y + section.startRow, x + section.startCol,
                                 0); // pixels outside the image treated as 0
-    } else if (sectionType == LOOKUP_TYPE_ROW) {
+
+      // DEBUG
+      if (x == 0 && y == 0) {
+        printf("%d, %d -> pixel, val %ld\n", y + section.startRow,
+               x + section.startCol, val);
+      }
+    } else if (sectionType == sats::SectionType::LOOKUP_TYPE_ROW) {
       // Look up the row, and then the columns
       int row = y + section.startRow;
       int left = x + section.startCol - 1; // exclude starting col
@@ -147,9 +153,14 @@ __device__ Tscale sumOverDisk_SAT_and_rowSums_threadwork(
         Tdata b =
             rowSums.atWithDefaultPointer(row, right, &rowSums.rowEnd(row));
         val += b - a;
+        // DEBUG
+        if (x == 0 && y == 0) {
+          printf("row %d, col %d : %d -> row, val %ld\n", row, left, right,
+                 val);
+        }
       }
 
-    } else if (sectionType == LOOKUP_TYPE_RECT) {
+    } else if (sectionType == sats::SectionType::LOOKUP_TYPE_RECT) {
       // Look up the SAT, assuming a y descending format:
       //       a -------- b
       //       |          |
@@ -239,17 +250,17 @@ __global__ void convolve_via_SAT_and_rowSums_dynamicDisks_kernel(
 int main(int argc, char **argv) {
   printf("Summed area tables\n");
 
-  int height = 16, width = 16;
+  int height = 5, width = 5;
   if (argc >= 3) {
     height = atoi(argv[1]);
     width = atoi(argv[2]);
   }
   printf(" Image size (rows x columns): %d x %d\n", height, width);
 
-  int radiusPixels = 3;
+  double radiusPixels = 1.1;
   if (argc >= 4)
     radiusPixels = atoi(argv[3]);
-  printf(" Radius in pixels: %d\n", radiusPixels);
+  printf(" Radius in pixels: %f\n", radiusPixels);
 
   using Tdata = int64_t;
 
@@ -261,21 +272,15 @@ int main(int argc, char **argv) {
   thrust::host_vector<Tdata> h_sat(height * width);
   thrust::host_vector<Tdata> h_out(height * width);
 
-  thrust::device_vector<Tdata> d_data(h_data);
-  thrust::device_vector<Tdata> d_rowSums(h_data.size());
-  thrust::device_vector<Tdata> d_transpose(h_data.size());
-  thrust::device_vector<Tdata> d_transpose2(h_data.size());
-  thrust::device_vector<Tdata> d_sat(h_data.size());
-  thrust::device_vector<Tdata> d_out(h_data.size());
+  // thrust::device_vector<Tdata> d_data(h_data);
+  containers::DeviceImageStorage<Tdata> d_data(width, height);
+  thrust::copy(h_data.begin(), h_data.end(), d_data.vec.begin());
 
-  containers::Image<Tdata, unsigned int> image(d_data.data().get(), width,
-                                               height);
-  containers::Image<Tdata, unsigned int> rowSums(d_rowSums.data().get(), width,
-                                                 height);
-  containers::Image<Tdata, unsigned int> transposeImage(
-      d_transpose.data().get(), height, width);
-  containers::Image<Tdata, unsigned int> sat(d_sat.data().get(), width, height);
-  containers::Image<Tdata, unsigned int> out(d_out.data().get(), width, height);
+  containers::DeviceImageStorage<Tdata> d_rowSums(width, height);
+  containers::DeviceImageStorage<Tdata> d_transpose(width, height);
+  containers::DeviceImageStorage<Tdata> d_transpose2(width, height);
+  containers::DeviceImageStorage<Tdata> d_sat(width, height);
+  containers::DeviceImageStorage<Tdata> d_out(width, height);
 
   // CUB related prep
   auto rowKeyIterator = thrust::make_transform_iterator(
@@ -305,55 +310,69 @@ int main(int argc, char **argv) {
   thrust::copy(h_sectionTypes.begin(), h_sectionTypes.begin() + numSections,
                d_sectionTypes.begin());
   // Make container
-  sats::DiskRowSAT<int16_t> d_disk{1.0, radiusPixels, numSections,
+  sats::DiskRowSAT<int16_t> d_disk{1.0, (int)radiusPixels, numSections,
                                    d_sections.data().get(),
                                    d_sectionTypes.data().get()};
-  printf("Disk length %d, with %d sections\n", d_disk.lengthPixels(),
-         d_disk.numSections);
+  printf("Disk length %d, with %d sections, scale %f\n", d_disk.lengthPixels(),
+         d_disk.numSections, d_disk.scale);
+  for (int i = 0; i < numSections; ++i) {
+    printf("Section %d: type %s row %d:%d col %d:%d\n", i,
+           sats::sectionTypeString(h_sectionTypes[i]).c_str(),
+           h_sections[i].startRow, h_sections[i].endRow, h_sections[i].startCol,
+           h_sections[i].endCol);
+  }
+  printf("-----\n");
+  for (int i = -(int)radiusPixels; i < (int)radiusPixels + 1; ++i) {
+    auto section =
+        sats::getDiskSectionForRow(h_sections.data(), numSections, i);
+    printf("Row %d -> col %d : %d\n", i, section.startCol, section.endCol);
+  }
+  printf("-----\n");
 
-  // Pre-compute multiple disks into a container
-  thrust::host_vector<sats::DiskSection<int16_t>> h_multidiskSections;
-  thrust::host_vector<uint8_t> h_multidiskSectionTypes;
-  thrust::host_vector<int> h_multidiskRadii;
-  int numDisks = 60;
-  // sats::DiskSelectionRule<int16_t> diskRule{0.5f * width,
-  //                                           (int16_t)(0.5f * width),
-  //                                           (int16_t)(0.5f * height),
-  //                                           numDisks};
-  sats::RadialThresholdLinearGradientRule<int16_t> diskRule(
-      0.5f * width / 150.0f / 3.0f, (int16_t)(0.5f * width),
-      (int16_t)(0.5f * height), 0.5f * width * 130.0 / 150.0, 0.5f * width);
-  thrust::host_vector<int> h_multidiskNumSections =
-      sats::constructMultipleDisksViaRule(radiusPixels, h_multidiskSections,
-                                          h_multidiskSectionTypes,
-                                          h_multidiskRadii, diskRule);
-
-  int totalUsedSections = std::accumulate(h_multidiskNumSections.begin(),
-                                          h_multidiskNumSections.end(), 0);
-  printf("Multidisk sections size used %d / %zu\n", totalUsedSections,
-         h_multidiskSections.size());
-  printf("Multidisk section types size used %d / %zu\n", totalUsedSections,
-         h_multidiskSectionTypes.size());
-  // Copy the sections and section types like before
-  thrust::device_vector<sats::DiskSection<int16_t>> d_multidiskSections(
-      totalUsedSections);
-  thrust::device_vector<uint8_t> d_multidiskSectionTypes(totalUsedSections);
-  thrust::copy(h_multidiskSections.begin(),
-               h_multidiskSections.begin() + totalUsedSections,
-               d_multidiskSections.begin());
-  thrust::copy(h_multidiskSectionTypes.begin(),
-               h_multidiskSectionTypes.begin() + totalUsedSections,
-               d_multidiskSectionTypes.begin());
-  // Make container
-  thrust::host_vector<sats::DiskRowSAT<int16_t>> h_multidisks(numDisks);
-  std::vector<double> h_diskScales = {1.0, 1.0};
-  sats::createContainer_DiskRowSAT<int16_t>(
-      h_multidisks.data(), h_diskScales.data(), h_multidiskRadii.data(),
-      h_multidiskNumSections, d_multidiskSections.data().get(),
-      d_multidiskSectionTypes.data().get());
-
-  thrust::device_vector<sats::DiskRowSAT<int16_t>> d_multidisks = h_multidisks;
-
+  // // Pre-compute multiple disks into a container
+  // thrust::host_vector<sats::DiskSection<int16_t>> h_multidiskSections;
+  // thrust::host_vector<uint8_t> h_multidiskSectionTypes;
+  // thrust::host_vector<int> h_multidiskRadii;
+  // int numDisks = 60;
+  // // sats::DiskSelectionRule<int16_t> diskRule{0.5f * width,
+  // //                                           (int16_t)(0.5f * width),
+  // //                                           (int16_t)(0.5f * height),
+  // //                                           numDisks};
+  // sats::RadialThresholdLinearGradientRule<int16_t> diskRule(
+  //     0.5f * width / 150.0f / 3.0f, (int16_t)(0.5f * width),
+  //     (int16_t)(0.5f * height), 0.5f * width * 130.0 / 150.0, 0.5f * width);
+  // thrust::host_vector<int> h_multidiskNumSections =
+  //     sats::constructMultipleDisksViaRule(radiusPixels, h_multidiskSections,
+  //                                         h_multidiskSectionTypes,
+  //                                         h_multidiskRadii, diskRule);
+  //
+  // int totalUsedSections = std::accumulate(h_multidiskNumSections.begin(),
+  //                                         h_multidiskNumSections.end(), 0);
+  // printf("Multidisk sections size used %d / %zu\n", totalUsedSections,
+  //        h_multidiskSections.size());
+  // printf("Multidisk section types size used %d / %zu\n", totalUsedSections,
+  //        h_multidiskSectionTypes.size());
+  // // Copy the sections and section types like before
+  // thrust::device_vector<sats::DiskSection<int16_t>> d_multidiskSections(
+  //     totalUsedSections);
+  // thrust::device_vector<uint8_t> d_multidiskSectionTypes(totalUsedSections);
+  // thrust::copy(h_multidiskSections.begin(),
+  //              h_multidiskSections.begin() + totalUsedSections,
+  //              d_multidiskSections.begin());
+  // thrust::copy(h_multidiskSectionTypes.begin(),
+  //              h_multidiskSectionTypes.begin() + totalUsedSections,
+  //              d_multidiskSectionTypes.begin());
+  // // Make container
+  // thrust::host_vector<sats::DiskRowSAT<int16_t>> h_multidisks(numDisks);
+  // std::vector<double> h_diskScales = {1.0, 1.0};
+  // sats::createContainer_DiskRowSAT<int16_t>(
+  //     h_multidisks.data(), h_diskScales.data(), h_multidiskRadii.data(),
+  //     h_multidiskNumSections, d_multidiskSections.data().get(),
+  //     d_multidiskSectionTypes.data().get());
+  //
+  // thrust::device_vector<sats::DiskRowSAT<int16_t>> d_multidisks =
+  // h_multidisks;
+  //
   // === 1. Perform prefix sums across rows
 
   // Custom kernel method (not enough occupancy to do this, must optimize
@@ -365,18 +384,19 @@ int main(int argc, char **argv) {
   // }
 
   // Generic CUB routine
-  cubwRowScan.exec(rowKeyIterator, d_data.data().get(), d_rowSums.data().get(),
-                   width * height);
+  cubwRowScan.exec(rowKeyIterator, d_data.vec.data().get(),
+                   d_rowSums.vec.data().get(), width * height);
 
   // === 2a. Perform prefix sums across columns (via explicitly transposed
   // matrix) Transpose into the SAT matrix
-  transpose<Tdata>(d_transpose.data().get(), d_rowSums.data().get(),
+  transpose<Tdata>(d_transpose.vec.data().get(), d_rowSums.vec.data().get(),
                    (int)height, (int)width);
   // In-place row-sums on the transpose (width is now the original height)
-  cubwColScanTranspose.exec(colTransposeKeyIterator, d_transpose.data().get(),
-                            d_transpose2.data().get(), width * height);
+  cubwColScanTranspose.exec(colTransposeKeyIterator,
+                            d_transpose.vec.data().get(),
+                            d_transpose2.vec.data().get(), width * height);
   // Transposing back
-  transpose<Tdata>(d_sat.data().get(), d_transpose2.data().get(), width,
+  transpose<Tdata>(d_sat.vec.data().get(), d_transpose2.vec.data().get(), width,
                    height);
 
   // === 3. Perform convolution calculations via lookups
@@ -386,14 +406,15 @@ int main(int argc, char **argv) {
     dim3 blks((width + tpb.x - 1) / tpb.x,
               (height + tpb.y - 1) / tpb.y / factor);
     convolve_via_SAT_and_rowSums_naive_kernel<Tdata, unsigned int, int16_t>
-        <<<blks, tpb>>>(d_disk, image, rowSums, sat, out);
+        <<<blks, tpb>>>(d_disk, d_data.image(), d_rowSums.image(),
+                        d_sat.image(), d_out.image());
   }
 
-  thrust::host_vector<int> h_transpose = d_transpose;
-  thrust::host_vector<int> h_transpose2 = d_transpose2;
-  h_rowSums = d_rowSums;
-  h_sat = d_sat;
-  h_out = d_out;
+  thrust::host_vector<int> h_transpose = d_transpose.vec;
+  thrust::host_vector<int> h_transpose2 = d_transpose2.vec;
+  h_rowSums = d_rowSums.vec;
+  h_sat = d_sat.vec;
+  h_out = d_out.vec;
 
   // ======================= Check row sums (GOOD)
   printf("Checking initial row sums...\n");
@@ -454,6 +475,22 @@ int main(int argc, char **argv) {
       }
       printf("\n");
     }
+
+    printf("-------- SAT:\n");
+    for (int i = 0; i < height; ++i) {
+      for (int j = 0; j < width; ++j) {
+        printf("%4d ", h_sat[i * width + j]);
+      }
+      printf("\n");
+    }
+
+    printf("-------- Output:\n");
+    for (int i = 0; i < height; ++i) {
+      for (int j = 0; j < width; ++j) {
+        printf("%4d ", h_out[i * width + j]);
+      }
+      printf("\n");
+    }
   }
 
   // ============================================================
@@ -463,18 +500,18 @@ int main(int argc, char **argv) {
   // ============================================================
   // ============================================================
 
-  // === 4. Perform convolution calculations via lookups
-  {
-    diskRule.print();
-    constexpr int factor = 1;
-    constexpr dim3 tpb(32, 4);
-    dim3 blks((width + tpb.x - 1) / tpb.x,
-              (height + tpb.y - 1) / tpb.y / factor);
-    convolve_via_SAT_and_rowSums_dynamicDisks_kernel<Tdata, unsigned int,
-                                                     int16_t, double>
-        <<<blks, tpb>>>(d_multidisks.data().get(), diskRule, image, rowSums,
-                        sat, out);
-  }
+  // // === 4. Perform convolution calculations via lookups
+  // {
+  //   diskRule.print();
+  //   constexpr int factor = 1;
+  //   constexpr dim3 tpb(32, 4);
+  //   dim3 blks((width + tpb.x - 1) / tpb.x,
+  //             (height + tpb.y - 1) / tpb.y / factor);
+  //   convolve_via_SAT_and_rowSums_dynamicDisks_kernel<Tdata, unsigned int,
+  //                                                    int16_t, double>
+  //       <<<blks, tpb>>>(d_multidisks.data().get(), diskRule, image, rowSums,
+  //                       sat, out);
+  // }
 
   return 0;
 }
