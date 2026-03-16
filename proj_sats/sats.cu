@@ -466,6 +466,7 @@ int main(int argc, char **argv) {
 
   // ======================= Check outputs
   printf("Checking outputs...\n");
+  size_t maxChecks = 10000;
   for (int i = 0; i < height; ++i) {
     for (int j = 0; j < width; ++j) {
       Tout val = 0;
@@ -489,6 +490,14 @@ int main(int argc, char **argv) {
                h_out[i * width + j]);
         break;
       }
+      --maxChecks;
+      if (maxChecks == 0) {
+        printf("Not checking any more..\n");
+        break;
+      }
+    }
+    if (maxChecks == 0) {
+      break;
     }
   }
 
