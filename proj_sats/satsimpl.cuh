@@ -58,22 +58,23 @@ template <typename T = int16_t> struct DiskSection {
                 "T must be signed for ConstantDiskSection");
 
   T startRow;
-  T endRow; // inclusive
-  T startCol;
-  T endCol; // inclusive
+  T endRow;    // inclusive
+  T colOffset; // extends from -colOffset to +colOffset, since symmetric
+  // T startCol;
+  // T endCol; // inclusive
 
-  __host__ __device__ T widthPixels() const { return endCol - startCol + 1; }
+  __host__ __device__ T widthPixels() const { return colOffset * 2 + 1; }
   __host__ __device__ T heightPixels() const { return endRow - startRow + 1; }
 
   __host__ __device__ uint8_t type() const {
     if (startRow == endRow) {
-      if (startCol == endCol) {
+      if (colOffset == 0) {
         return SectionType::LOOKUP_TYPE_PIXEL;
       } else {
         return SectionType::LOOKUP_TYPE_ROW;
       }
     } else {
-      if (startCol == endCol) {
+      if (colOffset == 0) {
         return SectionType::LOOKUP_TYPE_COL;
       } else {
         return SectionType::LOOKUP_TYPE_RECT;
@@ -235,7 +236,7 @@ int constructSectionsForDisk_prefixRows_SAT(const double radiusPixels,
   }
 
   // Now combine rows that have the same length i.e. offset
-  DiskSection<T> section{0, 0, (T)(-rowOffsets.at(0)), rowOffsets.at(0)};
+  DiskSection<T> section{0, 0, rowOffsets.at(0)};
   for (size_t i = 1; i < rowOffsets.size(); ++i) {
     if (rowOffsets.at(i) == rowOffsets.at(i - 1)) {
       // Change the current section
@@ -249,7 +250,7 @@ int constructSectionsForDisk_prefixRows_SAT(const double radiusPixels,
       sectionTypes[numSections] = section.type();
       numSections++;
       // Make a new section
-      section = {(T)i, (T)i, (T)(-rowOffsets.at(i)), rowOffsets.at(i)};
+      section = {(T)i, (T)i, rowOffsets.at(i)};
     }
   }
   // Amend the section row values to be actual offsets

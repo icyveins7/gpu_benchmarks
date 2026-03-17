@@ -133,9 +133,9 @@ __device__ Tscale sumOverDisk_SAT_and_rowSums_threadwork(
     // All threads in a warp will be tackling the same type
     if (sectionType == sats::SectionType::LOOKUP_TYPE_PIXEL) {
       // Simply look up the pixel from the original image
-      Tin pixel =
-          orig.atWithDefault(y + section.startRow, x + section.startCol,
-                             0); // pixels outside the image treated as 0
+      Tin pixel = orig.atWithDefault(
+          y + section.startRow, x, // colOffset should be 0 already
+          0);                      // pixels outside the image treated as 0
       val += pixel;
 
       // // DEBUG
@@ -145,9 +145,9 @@ __device__ Tscale sumOverDisk_SAT_and_rowSums_threadwork(
       // }
     } else if (sectionType == sats::SectionType::LOOKUP_TYPE_ROW) {
       // Look up the row, and then the columns
-      int row = y + section.startRow;      // same as end row by definition
-      int left = x + section.startCol - 1; // exclude starting col
-      int right = x + section.endCol;
+      int row = y + section.startRow;       // same as end row by definition
+      int left = x - section.colOffset - 1; // exclude starting col
+      int right = x + section.colOffset;
 
       if (rowSums.rowIsValid(row)) {
         // A valid row should treat the negative indices as 0 for prefix
@@ -182,16 +182,18 @@ __device__ Tscale sumOverDisk_SAT_and_rowSums_threadwork(
       //       |          |
       //       c -------- d
       int2 topLeft =
-          make_int2(x + section.startCol - 1, y + section.startRow - 1);
+          make_int2(x - section.colOffset - 1, y + section.startRow - 1);
       Tsat a = getSATelement(sat, topLeft.y, topLeft.x);
 
-      int2 topRight = make_int2(x + section.endCol, y + section.startRow - 1);
+      int2 topRight =
+          make_int2(x + section.colOffset, y + section.startRow - 1);
       Tsat b = getSATelement(sat, topRight.y, topRight.x);
 
-      int2 bottomLeft = make_int2(x + section.startCol - 1, y + section.endRow);
+      int2 bottomLeft =
+          make_int2(x - section.colOffset - 1, y + section.endRow);
       Tsat c = getSATelement(sat, bottomLeft.y, bottomLeft.x);
 
-      int2 bottomRight = make_int2(x + section.endCol, y + section.endRow);
+      int2 bottomRight = make_int2(x + section.colOffset, y + section.endRow);
       Tsat d = getSATelement(sat, bottomRight.y, bottomRight.x);
 
       val += a + d - b - c;
@@ -334,14 +336,14 @@ int main(int argc, char **argv) {
   for (int i = 0; i < numSections; ++i) {
     printf("Section %d: type %s row %d:%d col %d:%d\n", i,
            sats::sectionTypeString(h_sectionTypes[i]).c_str(),
-           h_sections[i].startRow, h_sections[i].endRow, h_sections[i].startCol,
-           h_sections[i].endCol);
+           h_sections[i].startRow, h_sections[i].endRow,
+           -h_sections[i].colOffset, h_sections[i].colOffset);
   }
   printf("-----\n");
   for (int i = -(int)radiusPixels; i < (int)radiusPixels + 1; ++i) {
     auto section =
         sats::getDiskSectionForRow(h_sections.data(), numSections, i);
-    printf("Row %d -> col %d : %d\n", i, section.startCol, section.endCol);
+    printf("Row %d -> col %d : %d\n", i, -section.colOffset, section.colOffset);
   }
   printf("-----\n");
 
@@ -417,8 +419,8 @@ int main(int argc, char **argv) {
 
   // === 3. Perform convolution calculations via lookups
   {
-    constexpr int factor = 1;
-    constexpr dim3 tpb(32, 4);
+    constexpr int factor = 1; // changing to 2 didn't make noticeable difference
+    constexpr dim3 tpb(32, 16); // 32x8 or 32x16 seems better than 32x4
     dim3 blks((width + tpb.x - 1) / tpb.x,
               (height + tpb.y - 1) / tpb.y / factor);
     convolve_via_SAT_and_rowSums_naive_kernel<Tin, Tout, Tout, Tout,
@@ -490,7 +492,7 @@ int main(int argc, char **argv) {
         int y = r + i;
         if (y < 0 || y >= height)
           continue;
-        for (int x = section.startCol + j; x <= section.endCol + j; ++x) {
+        for (int x = -section.colOffset + j; x <= section.colOffset + j; ++x) {
           if (x < 0 || x >= width)
             continue;
           // printf("Accessing (%d, %d) for (%d, %d)\n", y, x, i, j);

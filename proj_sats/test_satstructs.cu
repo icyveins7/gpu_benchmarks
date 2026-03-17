@@ -40,18 +40,15 @@ TEST(SectionConstruction_PrefixRowsWithSAT, 3) {
 
   EXPECT_EQ(h_sections[0].startRow, 0);
   EXPECT_EQ(h_sections[0].endRow, 0);
-  EXPECT_EQ(h_sections[0].startCol, 0);
-  EXPECT_EQ(h_sections[0].endCol, 0);
+  EXPECT_EQ(h_sections[0].colOffset, 0);
 
   EXPECT_EQ(h_sections[1].startRow, 1);
   EXPECT_EQ(h_sections[1].endRow, 2);
-  EXPECT_EQ(h_sections[1].startCol, -2);
-  EXPECT_EQ(h_sections[1].endCol, 2);
+  EXPECT_EQ(h_sections[1].colOffset, 2);
 
   EXPECT_EQ(h_sections[2].startRow, 3);
   EXPECT_EQ(h_sections[2].endRow, 3);
-  EXPECT_EQ(h_sections[2].startCol, -3);
-  EXPECT_EQ(h_sections[2].endCol, 3);
+  EXPECT_EQ(h_sections[2].colOffset, 3);
 
   EXPECT_EQ(numSections, 3);
 }
@@ -78,23 +75,19 @@ TEST(SectionConstruction_PrefixRowsWithSAT, 4) {
 
   EXPECT_EQ(h_sections[0].startRow, 0);
   EXPECT_EQ(h_sections[0].endRow, 0);
-  EXPECT_EQ(h_sections[0].startCol, 0);
-  EXPECT_EQ(h_sections[0].endCol, 0);
+  EXPECT_EQ(h_sections[0].colOffset, 0);
 
   EXPECT_EQ(h_sections[1].startRow, 1);
   EXPECT_EQ(h_sections[1].endRow, 1);
-  EXPECT_EQ(h_sections[1].startCol, -2);
-  EXPECT_EQ(h_sections[1].endCol, 2);
+  EXPECT_EQ(h_sections[1].colOffset, 2);
 
   EXPECT_EQ(h_sections[2].startRow, 2);
   EXPECT_EQ(h_sections[2].endRow, 3);
-  EXPECT_EQ(h_sections[2].startCol, -3);
-  EXPECT_EQ(h_sections[2].endCol, 3);
+  EXPECT_EQ(h_sections[2].colOffset, 3);
 
   EXPECT_EQ(h_sections[3].startRow, 4);
   EXPECT_EQ(h_sections[3].endRow, 4);
-  EXPECT_EQ(h_sections[3].startCol, -4);
-  EXPECT_EQ(h_sections[3].endCol, 4);
+  EXPECT_EQ(h_sections[3].colOffset, 4);
 
   EXPECT_EQ(numSections, 4);
 }
