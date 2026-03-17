@@ -17,62 +17,64 @@ struct IndexToRowFunctor {
   __host__ __device__ int operator()(int i) { return i / width; }
 };
 
-template <typename Tdata, typename Tidx, int BLOCK_THREADS>
-__device__ void computeRowPrefixSums_BlockPerRow(
-    containers::Image<Tdata, Tidx> image,
-    containers::Image<Tdata, Tidx> rowSums,
-    typename cub::BlockScan<Tdata, BLOCK_THREADS>::TempStorage &temp_storage) {
-  using BlockScan = cub::BlockScan<Tdata, BLOCK_THREADS>;
-
-  // Each block does one row
-  for (int i = blockIdx.x; i < image.height; i += gridDim.x) {
-    // Define a carryover for this row
-    Tdata carryover = 0;
-
-    // Read elements in the row
-    for (int j = 0; j < image.width; j += blockDim.x) {
-      Tdata tElem = 0;           // default value
-      Tidx jt = j + threadIdx.x; // column for this thread
-      if (image.colIsValid(jt)) {
-        tElem = image.at(i, jt);
-      }
-      // CUB is great, no need to syncthreads since it performs internal warp
-      // syncs
-      Tdata newCarryover;
-      BlockScan(temp_storage)
-          .InclusiveSum(tElem, tElem, newCarryover); // in-place write
-
-      // Add carryover
-      tElem += carryover;
-
-      // Also add the new carryover
-      carryover += newCarryover;
-
-      // Write back
-      if (image.colIsValid(jt)) {
-        rowSums.at(i, jt) = tElem;
-      }
-
-      // In order to reuse everything, we need to sync
-      __syncthreads();
-    }
-  }
-}
-
-template <typename Tdata, typename Tidx, int BLOCK_THREADS>
-__global__ void computeSATkernel(containers::Image<Tdata, Tidx> image,
-                                 containers::Image<Tdata, Tidx> rowSums,
-                                 containers::Image<Tdata, Tidx> sat) {
-  using BlockScan = cub::BlockScan<Tdata, BLOCK_THREADS>;
-  using TempStorage = typename BlockScan::TempStorage;
-
-  __shared__ TempStorage temp_storage;
-
-  computeRowPrefixSums_BlockPerRow<Tdata, Tidx, BLOCK_THREADS>(image, rowSums,
-                                                               temp_storage);
-
-  // TODO: do the columns
-}
+// template <typename Tdata, typename Tidx, int BLOCK_THREADS>
+// __device__ void computeRowPrefixSums_BlockPerRow(
+//     containers::Image<Tdata, Tidx> image,
+//     containers::Image<Tdata, Tidx> rowSums,
+//     typename cub::BlockScan<Tdata, BLOCK_THREADS>::TempStorage &temp_storage)
+//     {
+//   using BlockScan = cub::BlockScan<Tdata, BLOCK_THREADS>;
+//
+//   // Each block does one row
+//   for (int i = blockIdx.x; i < image.height; i += gridDim.x) {
+//     // Define a carryover for this row
+//     Tdata carryover = 0;
+//
+//     // Read elements in the row
+//     for (int j = 0; j < image.width; j += blockDim.x) {
+//       Tdata tElem = 0;           // default value
+//       Tidx jt = j + threadIdx.x; // column for this thread
+//       if (image.colIsValid(jt)) {
+//         tElem = image.at(i, jt);
+//       }
+//       // CUB is great, no need to syncthreads since it performs internal warp
+//       // syncs
+//       Tdata newCarryover;
+//       BlockScan(temp_storage)
+//           .InclusiveSum(tElem, tElem, newCarryover); // in-place write
+//
+//       // Add carryover
+//       tElem += carryover;
+//
+//       // Also add the new carryover
+//       carryover += newCarryover;
+//
+//       // Write back
+//       if (image.colIsValid(jt)) {
+//         rowSums.at(i, jt) = tElem;
+//       }
+//
+//       // In order to reuse everything, we need to sync
+//       __syncthreads();
+//     }
+//   }
+// }
+//
+// template <typename Tdata, typename Tidx, int BLOCK_THREADS>
+// __global__ void computeSATkernel(containers::Image<Tdata, Tidx> image,
+//                                  containers::Image<Tdata, Tidx> rowSums,
+//                                  containers::Image<Tdata, Tidx> sat) {
+//   using BlockScan = cub::BlockScan<Tdata, BLOCK_THREADS>;
+//   using TempStorage = typename BlockScan::TempStorage;
+//
+//   __shared__ TempStorage temp_storage;
+//
+//   computeRowPrefixSums_BlockPerRow<Tdata, Tidx, BLOCK_THREADS>(image,
+//   rowSums,
+//                                                                temp_storage);
+//
+//   // TODO: do the columns
+// }
 
 template <typename Tdata, typename Tidx>
 __device__ Tdata getSATelement(const containers::Image<Tdata, Tidx> sat, int y,
@@ -113,8 +115,8 @@ __device__ Tdata getSATelement(const containers::Image<Tdata, Tidx> sat, int y,
       y, x, &sat.at(min(sat.height - 1, y), min(sat.width - 1, x)));
 }
 
-template <typename Tin, typename Trowsum, typename Tsat, typename Tidx,
-          typename Tsection = int16_t, typename Tscale = double>
+template <typename Tin, typename Trowsum, typename Tsat, typename Tout,
+          typename Tidx, typename Tsection = int16_t, typename Tscale = double>
 __device__ Tscale sumOverDisk_SAT_and_rowSums_threadwork(
     const sats::DiskRowSAT<Tsection, Tscale> disk,
     const containers::Image<Tin, Tidx> orig,
@@ -122,7 +124,7 @@ __device__ Tscale sumOverDisk_SAT_and_rowSums_threadwork(
     const containers::Image<Tsat, Tidx> sat, const int x, const int y) {
   // Each thread's output value, and then loop over the sections to
   // accumulate
-  Tin val = 0;
+  Tout val = 0;
   for (int i = 0; i < disk.numSectionsToIterate(); ++i) {
     uint8_t sectionType = disk.getSectionType(i);
     sats::DiskSection<Tsection> section = disk.getSection(i);
@@ -143,7 +145,7 @@ __device__ Tscale sumOverDisk_SAT_and_rowSums_threadwork(
       // }
     } else if (sectionType == sats::SectionType::LOOKUP_TYPE_ROW) {
       // Look up the row, and then the columns
-      int row = y + section.startRow;
+      int row = y + section.startRow;      // same as end row by definition
       int left = x + section.startCol - 1; // exclude starting col
       int right = x + section.endCol;
 
@@ -151,9 +153,20 @@ __device__ Tscale sumOverDisk_SAT_and_rowSums_threadwork(
         // A valid row should treat the negative indices as 0 for prefix
         // sums and it should treat the out of range on the right as the
         // final col value
-        Trowsum a = rowSums.atWithDefault(row, left, 0);
-        Trowsum b =
-            rowSums.atWithDefaultPointer(row, right, &rowSums.rowEnd(row));
+        // Trowsum a = rowSums.atWithDefault(row, left, 0);
+        // Trowsum b =
+        //     rowSums.atWithDefaultPointer(row, right, &rowSums.rowEnd(row));
+
+        // This profiles slightly faster, probably because less redundant checks
+        Trowsum a = 0; // default
+        if (rowSums.colIsValid(left))
+          a = rowSums.at(row, left);
+        Trowsum b;
+        if (rowSums.colIsValid(right))
+          b = rowSums.at(row, right);
+        else
+          b = rowSums.rowEnd(row);
+
         val += b - a;
         // // DEBUG
         // if (x == 1 && y == 0) {
@@ -203,7 +216,7 @@ __global__ void convolve_via_SAT_and_rowSums_naive_kernel(
          x += blockDim.x * gridDim.x) {
 
       Tscale val =
-          sumOverDisk_SAT_and_rowSums_threadwork<Tin, Trowsum, Tsat, Tidx,
+          sumOverDisk_SAT_and_rowSums_threadwork<Tin, Trowsum, Tsat, Tout, Tidx,
                                                  Tsection, Tscale>(
               disk, orig, rowSums, sat, x, y);
 

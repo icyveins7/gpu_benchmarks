@@ -17,6 +17,12 @@ target_sources(
   sats PRIVATE
   ${PROJECT_SOURCE_DIR}/sats.cu
 )
+target_compile_options(
+  sats
+  PRIVATE
+  -lineinfo
+  -g
+)
 
 # --------------------
 
