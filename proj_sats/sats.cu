@@ -204,7 +204,8 @@ __device__ Tscale sumOverDisk_SAT_and_rowSums_threadwork(
 }
 
 template <typename Tin, typename Trowsum, typename Tsat, typename Tout,
-          typename Tidx, typename Tsection = int16_t, typename Tscale = double>
+          typename Tidx, typename Tsection = int16_t, typename Tscale = double,
+          bool incrementInsteadOfSet = false>
 __global__ void convolve_via_SAT_and_rowSums_naive_kernel(
     const sats::DiskRowSAT<Tsection, Tscale> disk,
     const containers::Image<Tin, Tidx> orig,
@@ -223,7 +224,10 @@ __global__ void convolve_via_SAT_and_rowSums_naive_kernel(
               disk, orig, rowSums, sat, x, y);
 
       // Value is ready here, write it back
-      out.at(y, x) = static_cast<Tout>(val * disk.scale);
+      if constexpr (incrementInsteadOfSet)
+        out.at(y, x) += static_cast<Tout>(val * disk.scale);
+      else
+        out.at(y, x) = static_cast<Tout>(val * disk.scale);
     }
   }
 }
