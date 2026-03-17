@@ -281,7 +281,7 @@ int main(int argc, char **argv) {
 
   double radiusPixels = 1.1;
   if (argc >= 4)
-    radiusPixels = atoi(argv[3]);
+    radiusPixels = atof(argv[3]);
   printf(" Radius in pixels: %f\n", radiusPixels);
 
   using Tin = int32_t;  // input is small

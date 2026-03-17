@@ -256,6 +256,9 @@ int constructSectionsForDisk_prefixRows_SAT(const double radiusPixels,
   // Amend the section row values to be actual offsets
   section.startRow -= pixelCentre;
   section.endRow -= pixelCentre;
+  // For the last section, it may be a SectionType RECT i.e. hasn't ended yet
+  // Hence we must extend the rectangle to cover beyond the centre row
+  section.endRow = -section.startRow; // no diff it's a SectionType ROW
   // Push last section
   sections[numSections] = section;
   sectionTypes[numSections] = section.type();
