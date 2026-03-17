@@ -176,6 +176,9 @@ template <typename T, typename Tscale = double> struct DiskRowSAT {
       auto endRow = -section.startRow;
       section.startRow = startRow;
       section.endRow = endRow;
+      // NOTE: this will correctly *not* trigger
+      // when the final section is a RECT that extends past the centre;
+      // only triggers for the sections after that centre section
     }
     return section;
   }
