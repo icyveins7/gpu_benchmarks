@@ -101,38 +101,51 @@ int main(int argc, char **argv) {
   containers::DeviceImageStorage<Tout> d_out(width, height);
 
   // Pre-compute disk
-  int maxSections =
-      sats::getMaximumSectionsForDisk_prefixRows_SAT(radiusPixels);
-  thrust::host_vector<sats::DiskSection<int16_t>> h_sections(maxSections);
-  thrust::host_vector<uint8_t> h_sectionTypes(maxSections);
-  int numSections = sats::constructSectionsForDisk_prefixRows_SAT(
-      radiusPixels, h_sections.data(), h_sectionTypes.data());
-  // Copy disk sections and types to device
-  thrust::device_vector<sats::DiskSection<int16_t>> d_sections(numSections);
-  thrust::device_vector<uint8_t> d_sectionTypes(numSections);
-  thrust::copy(h_sections.begin(), h_sections.begin() + numSections,
-               d_sections.begin());
-  thrust::copy(h_sectionTypes.begin(), h_sectionTypes.begin() + numSections,
-               d_sectionTypes.begin());
-  // Make container
-  sats::DiskRowSAT<int16_t> d_disk{1.0, (int)radiusPixels, numSections,
-                                   d_sections.data().get(),
-                                   d_sectionTypes.data().get()};
-  printf("Disk length %d, with %d sections, scale %f\n", d_disk.lengthPixels(),
-         d_disk.numSections, d_disk.scale);
-  for (int i = 0; i < numSections; ++i) {
-    printf("Section %d: type %s row %d:%d col %d:%d\n", i,
-           sats::sectionTypeString(h_sectionTypes[i]).c_str(),
-           h_sections[i].startRow, h_sections[i].endRow,
-           -h_sections[i].colOffset, h_sections[i].colOffset);
+  // int maxSections =
+  //     sats::getMaximumSectionsForDisk_prefixRows_SAT(radiusPixels);
+  // thrust::host_vector<sats::DiskSection<int16_t>> h_sections(maxSections);
+  // thrust::host_vector<uint8_t> h_sectionTypes(maxSections);
+  // int numSections = sats::constructSectionsForDisk_prefixRows_SAT(
+  //     radiusPixels, h_sections.data(), h_sectionTypes.data());
+  // // Copy disk sections and types to device
+  // thrust::device_vector<sats::DiskSection<int16_t>> d_sections(numSections);
+  // thrust::device_vector<uint8_t> d_sectionTypes(numSections);
+  // thrust::copy(h_sections.begin(), h_sections.begin() + numSections,
+  //              d_sections.begin());
+  // thrust::copy(h_sectionTypes.begin(), h_sectionTypes.begin() + numSections,
+  //              d_sectionTypes.begin());
+  // // Make container
+  // sats::DiskRowSAT<int16_t> d_disk{1.0, (int)radiusPixels, numSections,
+  //                                  d_sections.data().get(),
+  //                                  d_sectionTypes.data().get()};
+
+  double scaleList[1] = {1.0};
+  double radiusPixelList[1] = {radiusPixels};
+  sats::FilterOfDisksRowSATCreator<1, int16_t> filter(scaleList,
+                                                      radiusPixelList);
+
+  // Print lots of things to check?
+  for (int d = 0; d < filter.getNumDisks(); ++d) {
+    auto d_disk = filter.d_disks[d];
+
+    printf("Disk length %d, with %d sections, scale %f\n",
+           d_disk.lengthPixels(), d_disk.numSections, d_disk.scale);
+    for (int i = 0; i < d_disk.numSections; ++i) {
+      printf("Section %d: type %s row %d:%d col %d:%d\n", i,
+             sats::sectionTypeString(filter.h_sectionTypes[i]).c_str(),
+             filter.h_sections[i].startRow, filter.h_sections[i].endRow,
+             -filter.h_sections[i].colOffset, filter.h_sections[i].colOffset);
+    }
+    printf("-----\n");
+    for (int i = -(int)radiusPixels; i < (int)radiusPixels + 1; ++i) {
+      auto section = sats::getDiskSectionForRow(filter.h_sections.data().get(),
+                                                d_disk.numSections, i);
+      printf("Row %d -> col %d : %d\n", i, -section.colOffset,
+             section.colOffset);
+    }
+    printf("-----\n");
   }
-  printf("-----\n");
-  for (int i = -(int)radiusPixels; i < (int)radiusPixels + 1; ++i) {
-    auto section =
-        sats::getDiskSectionForRow(h_sections.data(), numSections, i);
-    printf("Row %d -> col %d : %d\n", i, -section.colOffset, section.colOffset);
-  }
-  printf("-----\n");
+  // End of debug printing
 
   // // Pre-compute multiple disks into a container
   // thrust::host_vector<sats::DiskSection<int16_t>> h_multidiskSections;
@@ -188,11 +201,11 @@ int main(int argc, char **argv) {
     constexpr dim3 tpb(32, 16); // 32x8 or 32x16 seems better than 32x4
     dim3 blks((width + tpb.x - 1) / tpb.x,
               (height + tpb.y - 1) / tpb.y / factor);
-    sats::convolve_via_SAT_and_rowSums_naive_kernel<Tin, Tout, Tout, Tout,
+    sats::convolve_via_SAT_and_rowSums_naive_kernel<1, Tin, Tout, Tout, Tout,
                                                     unsigned int, int16_t>
-        <<<blks, tpb>>>(d_disk, d_data.cimage(),        //
-                        convolver.d_rowSums().cimage(), //
-                        convolver.d_sat().cimage(),     //
+        <<<blks, tpb>>>(filter.toDevice(), d_data.cimage(), //
+                        convolver.d_rowSums().cimage(),     //
+                        convolver.d_sat().cimage(),         //
                         d_out.image());
   }
 
@@ -237,8 +250,8 @@ int main(int argc, char **argv) {
       Tout val = 0;
       for (int r = -(int)radiusPixels; r <= (int)radiusPixels; ++r) {
         // get the section for this offset
-        auto section =
-            sats::getDiskSectionForRow(h_sections.data(), numSections, r);
+        auto section = sats::getDiskSectionForRow(
+            filter.h_sections.data().get(), filter.d_disks[0].numSections, r);
         int y = r + i;
         if (y < 0 || y >= height)
           continue;
