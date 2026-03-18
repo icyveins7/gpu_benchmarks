@@ -115,16 +115,29 @@ __device__ Tdata getSATelement(const containers::Image<Tdata, Tidx> sat, int y,
       y, x, &sat.at(min(sat.height - 1, y), min(sat.width - 1, x)));
 }
 
-template <typename Tin, typename Trowsum, typename Tsat, typename Tout,
-          typename Tidx, typename Tsection = int16_t, typename Tscale = double>
-__device__ Tscale sumOverDisk_SAT_and_rowSums_threadwork(
+template <typename Tin, typename Trowsum, typename Tsat, typename Tidx,
+          typename Tsection = int16_t, typename Tscale = double>
+__device__ void sumOverDisk_SAT_and_rowSums_threadwork(
     const sats::DiskRowSAT<Tsection, Tscale> disk,
     const containers::Image<Tin, Tidx> orig,
     const containers::Image<Trowsum, Tidx> rowSums,
-    const containers::Image<Tsat, Tidx> sat, const int x, const int y) {
+    const containers::Image<Tsat, Tidx> sat, const int x, const int y,
+    Tsat &val) {
+
+  // NOTE: internally we use Tsat to accumulate the value first.
+  // this is because Tscale is floating point (and potentially a double),
+  // which is expensive to keep accumulating into.
+  // It is expected that Tin, Trowsum and Tsat should be either equal
+  // word-lengths or increasing word-lengths, but *they may be integers*. This
+  // would entail no loss in precision when using Tsat to accumulate, but would
+  // reduce the potential double-precision arithmetic at every step, which is
+  // very costly. Early profiling shows that it be around 20% slower when using
+  // Tscale = double to accumulate directly.
+  // Example is Tin = int32, Trowsum and Tsat = int64 (to avoid overflow).
+  // Then it is safe to use Tsat = int64 to accumulate the value.
+
   // Each thread's output value, and then loop over the sections to
   // accumulate
-  Tout val = 0;
   for (int i = 0; i < disk.numSectionsToIterate(); ++i) {
     uint8_t sectionType = disk.getSectionType(i);
     sats::DiskSection<Tsection> section = disk.getSection(i);
@@ -199,8 +212,6 @@ __device__ Tscale sumOverDisk_SAT_and_rowSums_threadwork(
       val += a + d - b - c;
     }
   } // end loop over disk sections
-
-  return val;
 }
 
 template <typename Tin, typename Trowsum, typename Tsat, typename Tout,
@@ -218,10 +229,10 @@ __global__ void convolve_via_SAT_and_rowSums_naive_kernel(
     for (int x = blockIdx.x * blockDim.x + threadIdx.x; x < (int)orig.width;
          x += blockDim.x * gridDim.x) {
 
-      Tscale val =
-          sumOverDisk_SAT_and_rowSums_threadwork<Tin, Trowsum, Tsat, Tout, Tidx,
-                                                 Tsection, Tscale>(
-              disk, orig, rowSums, sat, x, y);
+      Tsat val = 0;
+      sumOverDisk_SAT_and_rowSums_threadwork<Tin, Trowsum, Tsat, Tidx, Tsection,
+                                             Tscale>(disk, orig, rowSums, sat,
+                                                     x, y, val);
 
       // Value is ready here, write it back
       if constexpr (incrementInsteadOfSet)
