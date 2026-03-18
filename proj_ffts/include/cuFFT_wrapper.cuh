@@ -203,6 +203,21 @@ inline void cuFFTWrapper_2D<CUFFT_C2C>::exec(
       CUFFT_FORWARD));
 }
 
+// Z2Z
+template <>
+template <>
+inline void cuFFTWrapper_2D<CUFFT_Z2Z>::exec(
+    const thrust::device_vector<std::complex<double>> &input,
+    thrust::device_vector<std::complex<double>> &output) {
+  CUFFT_NO_ERROR(cufftExecZ2Z(
+      plan,
+      const_cast<cufftDoubleComplex *>(
+          thrust::reinterpret_pointer_cast<const cufftDoubleComplex *>(
+              input.data())),
+      thrust::reinterpret_pointer_cast<cufftDoubleComplex *>(output.data()),
+      CUFFT_FORWARD));
+}
+
 // Same C2C for thrust::complex
 template <>
 template <>
@@ -214,6 +229,21 @@ inline void cuFFTWrapper_2D<CUFFT_C2C>::exec(
       const_cast<cufftComplex *>(
           thrust::reinterpret_pointer_cast<const cufftComplex *>(input.data())),
       thrust::reinterpret_pointer_cast<cufftComplex *>(output.data()),
+      CUFFT_FORWARD));
+}
+
+// Same Z2Z for thrust::complex
+template <>
+template <>
+inline void cuFFTWrapper_2D<CUFFT_Z2Z>::exec(
+    const thrust::device_vector<thrust::complex<double>> &input,
+    thrust::device_vector<thrust::complex<double>> &output) {
+  CUFFT_NO_ERROR(cufftExecZ2Z(
+      plan,
+      const_cast<cufftDoubleComplex *>(
+          thrust::reinterpret_pointer_cast<const cufftDoubleComplex *>(
+              input.data())),
+      thrust::reinterpret_pointer_cast<cufftDoubleComplex *>(output.data()),
       CUFFT_FORWARD));
 }
 

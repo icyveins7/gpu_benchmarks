@@ -132,6 +132,20 @@ target_sources(c2c_2d
 
 target_link_libraries(c2c_2d PRIVATE CUDA::cufft CUDA::cudart)
 # --------------------
+add_executable(z2z_2d)
+
+target_include_directories(z2z_2d
+                           PRIVATE 
+                           ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
+                           include/
+                         )
+
+target_sources(z2z_2d
+               PRIVATE ${PROJECT_SOURCE_DIR}/src/c2c_2d.cpp) # same file
+
+target_link_libraries(z2z_2d PRIVATE CUDA::cufft CUDA::cudart)
+target_compile_definitions(z2z_2d PRIVATE Z2Z)
+# --------------------
 set_source_files_properties(src/manual_2d_as_1ds.cpp PROPERTIES LANGUAGE CUDA)
 add_executable(manual_2d_as_1ds)
 

@@ -39,8 +39,16 @@ int main(int argc, char *argv[]){
       fft_size[0], fft_size[1], batch_size
       );
 
+#if defined (Z2Z)
+  constexpr cufftType FFT_TYPE = CUFFT_Z2Z;
+  using BaseType = double;
+#else
+  constexpr cufftType FFT_TYPE = CUFFT_C2C;
+  using BaseType = float;
+#endif
+
   size_t element_count = fft_size[0] * fft_size[1] * batch_size;
-  thrust::host_vector<std::complex<float>> x(element_count);
+  thrust::host_vector<std::complex<BaseType>> x(element_count);
 
   // Fill easily from 0 to N-1
   // sequence doesn't work on complex?
@@ -84,11 +92,11 @@ int main(int argc, char *argv[]){
   printf("===============\n");
 
   // Copy to device
-  thrust::device_vector<std::complex<float>> d_x = x;
+  thrust::device_vector<std::complex<BaseType>> d_x = x;
   // Make output
   size_t outputPerRow = fft_size[1]; // for C2C the output is the same length as the row
   size_t perImage = fft_size[0] * outputPerRow;
-  thrust::device_vector<std::complex<float>> d_y(perImage * batch_size);
+  thrust::device_vector<std::complex<BaseType>> d_y(perImage * batch_size);
 
   // // Create and run cuFFT 2D
   // cufftHandle planr2c;
@@ -114,13 +122,13 @@ int main(int argc, char *argv[]){
   //
 
   // Memory managed wrapper version
-  cuFFTWrapper_2D<CUFFT_C2C> fft(fft_size, batch_size);
+  cuFFTWrapper_2D<FFT_TYPE> fft(fft_size, batch_size);
   fft.exec(d_x, d_y);
   fft.exec(d_x, d_y);
 
 
   // Read output and print
-  thrust::host_vector<std::complex<float>> h_y = d_y;
+  thrust::host_vector<std::complex<BaseType>> h_y = d_y;
 
   if (x.size() <= 100)
   {
