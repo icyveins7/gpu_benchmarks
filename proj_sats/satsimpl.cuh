@@ -85,6 +85,7 @@ template <typename T = int16_t> struct DiskSection {
 
 /**
  * @brief Disk that can be operated using prefix sums and SAT alone.
+ * This is a non-owning container.
  *
  * @detail The sections are ordered in an incrementing row-order. The only types
  * that should be present are PIXEL, ROW and RECT. Sections are only specified
@@ -112,6 +113,45 @@ template <typename T, typename Tscale = double> struct DiskRowSAT {
   const DiskSection<T>
       *sections; // there should be at most (radiusPixels + 1) sections
   const uint8_t *sectionTypes; // matched with sections
+
+  __host__ __device__ DiskRowSAT(Tscale scale, int radiusPixels,
+                                 int numSections, DiskSection<T> *sections,
+                                 uint8_t *sectionTypes) {
+    this->scale = scale;
+    this->radiusPixels = radiusPixels;
+    this->numSections = numSections;
+    this->sections = sections;
+    this->sectionTypes = sectionTypes;
+  }
+
+  __host__ DiskRowSAT(Tscale scale, int radiusPixels, int numSections,
+                      thrust::host_vector<DiskSection<T>> &sections,
+                      thrust::host_vector<uint8_t> &sectionTypes) {
+    this->scale = scale;
+    this->radiusPixels = radiusPixels;
+    this->numSections = numSections;
+    this->sections = sections.data();
+    this->sectionTypes = sectionTypes.data();
+  }
+
+  __host__ DiskRowSAT(Tscale scale, int radiusPixels, int numSections,
+                      thrust::device_vector<DiskSection<T>> &sections,
+                      thrust::device_vector<uint8_t> &sectionTypes) {
+    this->scale = scale;
+    this->radiusPixels = radiusPixels;
+    this->numSections = numSections;
+    this->sections = sections.data().get();
+    this->sectionTypes = sectionTypes.data().get();
+  }
+
+  __host__ __device__ unsigned int numActivePixels() const {
+    unsigned int numActive = 0;
+    for (int i = 0; i < numSectionsToIterate(); i++) {
+      auto &section = getSection(i);
+      numActive += section.heightPixels() * section.widthPixels();
+    }
+    return numActive;
+  }
 
   __host__ __device__ int lengthPixels() const { return radiusPixels * 2 + 1; }
   __host__ __device__ static int lengthPixels(int radiusPixels) {

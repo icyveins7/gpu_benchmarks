@@ -41,14 +41,20 @@ TEST(SectionConstruction_PrefixRowsWithSAT, 3) {
   EXPECT_EQ(h_sections[0].startRow, -3);
   EXPECT_EQ(h_sections[0].endRow, -3);
   EXPECT_EQ(h_sections[0].colOffset, 0);
+  EXPECT_EQ(h_sections[0].heightPixels(), 1);
+  EXPECT_EQ(h_sections[0].widthPixels(), 1);
 
   EXPECT_EQ(h_sections[1].startRow, -2);
   EXPECT_EQ(h_sections[1].endRow, -1);
   EXPECT_EQ(h_sections[1].colOffset, 2);
+  EXPECT_EQ(h_sections[1].heightPixels(), 2);
+  EXPECT_EQ(h_sections[1].widthPixels(), 5);
 
   EXPECT_EQ(h_sections[2].startRow, 0);
   EXPECT_EQ(h_sections[2].endRow, 0);
   EXPECT_EQ(h_sections[2].colOffset, 3);
+  EXPECT_EQ(h_sections[2].heightPixels(), 1);
+  EXPECT_EQ(h_sections[2].widthPixels(), 7);
 
   EXPECT_EQ(numSections, 3);
 }
@@ -76,18 +82,26 @@ TEST(SectionConstruction_PrefixRowsWithSAT, 4) {
   EXPECT_EQ(h_sections[0].startRow, -4);
   EXPECT_EQ(h_sections[0].endRow, -4);
   EXPECT_EQ(h_sections[0].colOffset, 0);
+  EXPECT_EQ(h_sections[0].heightPixels(), 1);
+  EXPECT_EQ(h_sections[0].widthPixels(), 1);
 
   EXPECT_EQ(h_sections[1].startRow, -3);
   EXPECT_EQ(h_sections[1].endRow, -3);
   EXPECT_EQ(h_sections[1].colOffset, 2);
+  EXPECT_EQ(h_sections[1].heightPixels(), 1);
+  EXPECT_EQ(h_sections[1].widthPixels(), 5);
 
   EXPECT_EQ(h_sections[2].startRow, -2);
   EXPECT_EQ(h_sections[2].endRow, -1);
   EXPECT_EQ(h_sections[2].colOffset, 3);
+  EXPECT_EQ(h_sections[2].heightPixels(), 2);
+  EXPECT_EQ(h_sections[2].widthPixels(), 7);
 
   EXPECT_EQ(h_sections[3].startRow, 0);
   EXPECT_EQ(h_sections[3].endRow, 0);
   EXPECT_EQ(h_sections[3].colOffset, 4);
+  EXPECT_EQ(h_sections[3].heightPixels(), 1);
+  EXPECT_EQ(h_sections[3].widthPixels(), 9);
 
   EXPECT_EQ(numSections, 4);
 }
@@ -117,18 +131,26 @@ TEST(SectionConstruction_PrefixRowsWithSAT, 6point9) {
   EXPECT_EQ(h_sections[0].startRow, -6);
   EXPECT_EQ(h_sections[0].endRow, -6);
   EXPECT_EQ(h_sections[0].colOffset, 3);
+  EXPECT_EQ(h_sections[0].heightPixels(), 1);
+  EXPECT_EQ(h_sections[0].widthPixels(), 7);
 
   EXPECT_EQ(h_sections[1].startRow, -5);
   EXPECT_EQ(h_sections[1].endRow, -5);
   EXPECT_EQ(h_sections[1].colOffset, 4);
+  EXPECT_EQ(h_sections[1].heightPixels(), 1);
+  EXPECT_EQ(h_sections[1].widthPixels(), 9);
 
   EXPECT_EQ(h_sections[2].startRow, -4);
   EXPECT_EQ(h_sections[2].endRow, -4);
   EXPECT_EQ(h_sections[2].colOffset, 5);
+  EXPECT_EQ(h_sections[2].heightPixels(), 1);
+  EXPECT_EQ(h_sections[2].widthPixels(), 11);
 
   EXPECT_EQ(h_sections[3].startRow, -3);
   EXPECT_EQ(h_sections[3].endRow, 3);
   EXPECT_EQ(h_sections[3].colOffset, 6);
+  EXPECT_EQ(h_sections[3].heightPixels(), 7);
+  EXPECT_EQ(h_sections[3].widthPixels(), 13);
 
   EXPECT_EQ(numSections, 4);
 }
