@@ -81,6 +81,11 @@ template <typename T = int16_t> struct DiskSection {
       }
     }
   }
+
+  __host__ __device__ bool operator==(const DiskSection &other) const {
+    return startRow == other.startRow && endRow == other.endRow &&
+           colOffset == other.colOffset;
+  }
 };
 
 /**
@@ -110,9 +115,9 @@ template <typename T, typename Tscale = double> struct DiskRowSAT {
   Tscale scale = 1.0;
   int radiusPixels; // TODO: maybe i don't need this?
   int numSections;
-  const DiskSection<T>
-      *sections; // there should be at most (radiusPixels + 1) sections
-  const uint8_t *sectionTypes; // matched with sections
+  DiskSection<T>
+      *sections;         // there should be at most (radiusPixels + 1) sections
+  uint8_t *sectionTypes; // matched with sections
 
   __host__ __device__ DiskRowSAT(Tscale scale, int radiusPixels,
                                  int numSections, DiskSection<T> *sections,
@@ -147,7 +152,7 @@ template <typename T, typename Tscale = double> struct DiskRowSAT {
   __host__ __device__ unsigned int numActivePixels() const {
     unsigned int numActive = 0;
     for (int i = 0; i < numSectionsToIterate(); i++) {
-      auto &section = getSection(i);
+      auto section = getSection(i);
       numActive += section.heightPixels() * section.widthPixels();
     }
     return numActive;
@@ -201,11 +206,13 @@ template <typename T, typename Tscale = double> struct DiskRowSAT {
    * @brief Retrieves section assuming a mirror around the final specified
    * section.
    * @detail Assumes input index has been validated (see validSectionIndex()).
+   * Note that we return a section itself, since we may have to mutate it for
+   * the mirrored side.
    *
    * @param i Input index, 0 to numSectionsToIterate()
    * @return Appropriate section
    */
-  __host__ __device__ const DiskSection<T> &getSection(int i) const {
+  __host__ __device__ const DiskSection<T> getSection(int i) const {
     bool isMirrored = i >= numSections;
     i = accessIndex(i);
     auto section = sections[i];
