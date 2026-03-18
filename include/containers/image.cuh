@@ -45,8 +45,7 @@ template <typename Tdata, typename Tidx = unsigned int> struct Image {
    * @brief Returns a pointer to the specified row.
    */
   __host__ __device__ Tdata *row(Tidx y) const {
-    return reinterpret_cast<Tdata *>(reinterpret_cast<uint8_t *>(data) +
-                                     y * bytesPerRow);
+    return (Tdata *)((uint8_t *)(data) + y * bytesPerRow);
   }
 
   /**
@@ -160,8 +159,8 @@ struct DeviceImageStorage {
    *
    * @return Const Image struct
    */
-  const Image<Tdata, Tidx> cimage() const {
-    return Image<Tdata, Tidx>(vec.data().get(), width, height);
+  Image<const Tdata, Tidx> cimage() const {
+    return Image<const Tdata, Tidx>(vec.data().get(), width, height);
   }
 };
 
