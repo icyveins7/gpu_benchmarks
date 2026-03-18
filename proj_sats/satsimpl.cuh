@@ -441,174 +441,211 @@ struct IndexToRowFunctor {
   __host__ __device__ int operator()(int i) { return i / width; }
 };
 
-// template <typename Tdata, typename Tidx>
-// __device__ Tdata getSATelement(const containers::Image<Tdata, Tidx> sat, int
-// y,
-//                                int x) {
-//   /*
-//   NOTE: Although the SAT is defined for a given M x N dimensions,
-//   access outside the bounds should be well-handled, similar to the
-//   row-prefixes.
-//
-//   1) Anything with a negative index should be considered to be 0.
-//     This applies to a, b or c.
-//
-//   2) For either row/col indices indexing past the ends, the
-//   end row/col value will be used. This is similar to the prefix sum.
-//
-//   3) For cases where the row AND col are both out of bounds, the result
-//   will be the bottom-right value. 'SAT of the whole image + border = SAT
-//   of the whole image'
-//
-//   IMPORTANT: you cannot assume that the points a, b, c and d always
-//   follow some rules because of their direction. This is because the
-//   rectangle sections themselves are OFFSET from the thread's target
-//   position. For example, the thread handling the bottom-right most point
-//   of the image will likely have a rectangle that fully exists below the
-//   image, with all points a-d being out of bounds to the
-//   bottom/right/bottomright.
-//
-//   However, the check is actually pretty simple; regardless of what is out of
-//   bounds, we need only clip both dimensions to their row/col max index
-//   values.
-//   */
-//
-//   if (y < 0 || x < 0) {
-//     return 0;
-//   }
-//
-//   // Clip to row and/or col ending values
-//   return sat.atWithDefaultPointer(
-//       y, x, &sat.at(min(sat.height - 1, y), min(sat.width - 1, x)));
-// }
-//
-// template <typename Tdata, typename Tidx, typename Tsection = int16_t,
-//           typename Tscale = double>
-// __device__ Tscale sumOverDisk_SAT_and_rowSums_threadwork(
-//     const sats::DiskRowSAT<Tsection, Tscale> disk,
-//     const containers::Image<Tdata, Tidx> orig,
-//     const containers::Image<Tdata, Tidx> rowSums,
-//     const containers::Image<Tdata, Tidx> sat, const int x, const int y) {
-//   // Each thread's output value, and then loop over the sections to
-//   // accumulate
-//   Tdata val = 0;
-//   for (int i = 0; i < disk.numSectionsToIterate(); ++i) {
-//     uint8_t sectionType = disk.getSectionType(i);
-//     sats::DiskSection<Tsection> section = disk.getSection(i);
-//
-//     // There is no warp divergence here!
-//     // All threads in a warp will be tackling the same type
-//     if (sectionType == LOOKUP_TYPE_PIXEL) {
-//       // Simply look up the pixel from the original image
-//       val += orig.atWithDefault(y + section.startRow, x + section.startCol,
-//                                 0); // pixels outside the image treated as 0
-//     } else if (sectionType == LOOKUP_TYPE_ROW) {
-//       // Look up the row, and then the columns
-//       int row = y + section.startRow;
-//       int left = x + section.startCol - 1; // exclude starting col
-//       int right = x + section.endCol;
-//
-//       if (rowSums.rowIsValid(row)) {
-//         // A valid row should treat the negative indices as 0 for prefix
-//         // sums and it should treat the out of range on the right as the
-//         // final col value
-//         Tdata a = rowSums.atWithDefault(row, left, 0);
-//         Tdata b =
-//             rowSums.atWithDefaultPointer(row, right, &rowSums.rowEnd(row));
-//         val += b - a;
-//       }
-//
-//     } else if (sectionType == LOOKUP_TYPE_RECT) {
-//       // Look up the SAT, assuming a y descending format:
-//       //       a -------- b
-//       //       |          |
-//       //       |          |
-//       //       c -------- d
-//       int2 topLeft =
-//           make_int2(x + section.startCol - 1, y + section.startRow - 1);
-//       Tdata a = getSATelement(sat, topLeft.y, topLeft.x);
-//
-//       int2 topRight = make_int2(x + section.endCol, y + section.startRow -
-//       1); Tdata b = getSATelement(sat, topRight.y, topRight.x);
-//
-//       int2 bottomLeft = make_int2(x + section.startCol - 1, y +
-//       section.endRow); Tdata c = getSATelement(sat, bottomLeft.y,
-//       bottomLeft.x);
-//
-//       int2 bottomRight = make_int2(x + section.endCol, y + section.endRow);
-//       Tdata d = getSATelement(sat, bottomRight.y, bottomRight.x);
-//
-//       val += a + d - b - c;
-//     }
-//   } // end loop over disk sections
-//
-//   return val;
-// }
-//
-// template <typename Tdata, typename Tidx, typename Tsection = int16_t,
-//           typename Tscale = double>
-// __global__ void convolve_via_SAT_and_rowSums_naive_kernel(
-//     const sats::DiskRowSAT<Tsection, Tscale> disk,
-//     const containers::Image<Tdata, Tidx> orig,
-//     const containers::Image<Tdata, Tidx> rowSums,
-//     const containers::Image<Tdata, Tidx> sat,
-//     containers::Image<Tdata, Tidx> out) {
-//
-//   for (int y = blockIdx.y * blockDim.y + threadIdx.y; y < (int)orig.height;
-//        y += blockDim.y * gridDim.y) {
-//     for (int x = blockIdx.x * blockDim.x + threadIdx.x; x < (int)orig.width;
-//          x += blockDim.x * gridDim.x) {
-//
-//       Tscale val =
-//           sumOverDisk_SAT_and_rowSums_threadwork<Tdata, Tidx, Tsection,
-//           Tscale>(
-//               disk, orig, rowSums, sat, x, y);
-//
-//       // Value is ready here, write it back
-//       out.at(y, x) = static_cast<Tdata>(val * disk.scale);
-//     }
-//   }
-// }
-//
-// template <typename Tdata, typename Tidx, typename Tsection = int16_t,
-//           typename Tscale = double, typename Trule>
-// __global__ void convolve_via_SAT_and_rowSums_dynamicDisks_kernel(
-//     const sats::DiskRowSAT<Tsection, Tscale> *disks, const Trule rule,
-//     const containers::Image<Tdata, Tidx> orig,
-//     const containers::Image<Tdata, Tidx> rowSums,
-//     const containers::Image<Tdata, Tidx> sat,
-//     containers::Image<Tdata, Tidx> out) {
-//
-//   for (int y = blockIdx.y * blockDim.y + threadIdx.y; y < orig.height;
-//        y += blockDim.y * gridDim.y) {
-//     for (int x = blockIdx.x * blockDim.x + threadIdx.x; x < orig.width;
-//          x += blockDim.x * gridDim.x) {
-//
-//       // Determine the disk required
-//       // Example here is to use radius-based linear steps starting from the
-//       // centre to determine the disk index. Any other rule should work
-//       unsigned int diskIndex = rule.getDiskIndex(y, x);
-//       const sats::DiskRowSAT<Tsection, Tscale> &disk = disks[diskIndex];
-//
-//       // Every thread (potentially) uses its own disk
-//       Tscale val =
-//           sumOverDisk_SAT_and_rowSums_threadwork<Tdata, Tidx, Tsection,
-//           Tscale>(
-//               disk, orig, rowSums, sat, x, y);
-//
-//       // if (threadIdx.x == 0 && threadIdx.y == 0) {
-//       //   printf(" Disk index for (row %d, col %d) is %d -> %d sections\n",
-//       y,
-//       //   x,
-//       //          diskIndex, disk.numSections);
-//       // }
-//
-//       // Value is ready here, write it back
-//       out.at(y, x) = static_cast<Tdata>(val * disk.scale);
-//     }
-//   }
-// }
+template <typename Tdata, typename Tidx>
+__device__ Tdata getSATelement(const containers::Image<Tdata, Tidx> sat, int y,
+                               int x) {
+  /*
+  NOTE: Although the SAT is defined for a given M x N dimensions,
+  access outside the bounds should be well-handled, similar to the
+  row-prefixes.
 
+  1) Anything with a negative index should be considered to be 0.
+    This applies to a, b or c.
+
+  2) For either row/col indices indexing past the ends, the
+  end row/col value will be used. This is similar to the prefix sum.
+
+  3) For cases where the row AND col are both out of bounds, the result
+  will be the bottom-right value. 'SAT of the whole image + border = SAT
+  of the whole image'
+
+  IMPORTANT: you cannot assume that the points a, b, c and d always
+  follow some rules because of their direction. This is because the
+  rectangle sections themselves are OFFSET from the thread's target
+  position. For example, the thread handling the bottom-right most point
+  of the image will likely have a rectangle that fully exists below the
+  image, with all points a-d being out of bounds to the
+  bottom/right/bottomright.
+
+  However, the check is actually pretty simple; regardless of what is out of
+  bounds, we need only clip both dimensions to their row/col max index values.
+  */
+
+  if (y < 0 || x < 0) {
+    return 0;
+  }
+
+  // Clip to row and/or col ending values
+  return sat.atWithDefaultPointer(
+      y, x, &sat.at(min(sat.height - 1, y), min(sat.width - 1, x)));
+}
+
+template <typename Tin, typename Trowsum, typename Tsat, typename Tidx,
+          typename Tsection = int16_t, typename Tscale = double>
+__device__ void sumOverDisk_SAT_and_rowSums_threadwork(
+    const sats::DiskRowSAT<Tsection, Tscale> disk,
+    const containers::Image<Tin, Tidx> orig,
+    const containers::Image<Trowsum, Tidx> rowSums,
+    const containers::Image<Tsat, Tidx> sat, const int x, const int y,
+    Tsat &val) {
+
+  // NOTE: internally we use Tsat to accumulate the value first.
+  // this is because Tscale is floating point (and potentially a double),
+  // which is expensive to keep accumulating into.
+  // It is expected that Tin, Trowsum and Tsat should be either equal
+  // word-lengths or increasing word-lengths, but *they may be integers*. This
+  // would entail no loss in precision when using Tsat to accumulate, but would
+  // reduce the potential double-precision arithmetic at every step, which is
+  // very costly. Early profiling shows that it be around 20% slower when using
+  // Tscale = double to accumulate directly.
+  // Example is Tin = int32, Trowsum and Tsat = int64 (to avoid overflow).
+  // Then it is safe to use Tsat = int64 to accumulate the value.
+
+  // Each thread's output value, and then loop over the sections to
+  // accumulate
+  for (int i = 0; i < disk.numSectionsToIterate(); ++i) {
+    uint8_t sectionType = disk.getSectionType(i);
+    sats::DiskSection<Tsection> section = disk.getSection(i);
+
+    // There is no warp divergence here!
+    // All threads in a warp will be tackling the same type
+    if (sectionType == sats::SectionType::LOOKUP_TYPE_PIXEL) {
+      // Simply look up the pixel from the original image
+      Tin pixel = orig.atWithDefault(
+          y + section.startRow, x, // colOffset should be 0 already
+          0);                      // pixels outside the image treated as 0
+      val += pixel;
+
+      // // DEBUG
+      // if (x == 1 && y == 0) {
+      //   printf("%d, %d -> pixel, val + %ld to %ld\n", y + section.startRow,
+      //          x + section.startCol, pixel, val);
+      // }
+    } else if (sectionType == sats::SectionType::LOOKUP_TYPE_ROW) {
+      // Look up the row, and then the columns
+      int row = y + section.startRow;       // same as end row by definition
+      int left = x - section.colOffset - 1; // exclude starting col
+      int right = x + section.colOffset;
+
+      if (rowSums.rowIsValid(row)) {
+        // A valid row should treat the negative indices as 0 for prefix
+        // sums and it should treat the out of range on the right as the
+        // final col value
+        // Trowsum a = rowSums.atWithDefault(row, left, 0);
+        // Trowsum b =
+        //     rowSums.atWithDefaultPointer(row, right, &rowSums.rowEnd(row));
+
+        // This profiles slightly faster, probably because less redundant checks
+        Trowsum a = 0; // default
+        if (rowSums.colIsValid(left))
+          a = rowSums.at(row, left);
+        Trowsum b;
+        if (rowSums.colIsValid(right))
+          b = rowSums.at(row, right);
+        else
+          b = rowSums.rowEnd(row);
+
+        val += b - a;
+        // // DEBUG
+        // if (x == 1 && y == 0) {
+        //   printf("row %d, col %d : %d -> row, val + %ld to %ld\n", row, left,
+        //          right, b - a, val);
+        // }
+      }
+
+    } else if (sectionType == sats::SectionType::LOOKUP_TYPE_RECT) {
+      // Look up the SAT, assuming a y descending format:
+      //       a -------- b
+      //       |          |
+      //       |          |
+      //       c -------- d
+      int2 topLeft =
+          make_int2(x - section.colOffset - 1, y + section.startRow - 1);
+      Tsat a = getSATelement(sat, topLeft.y, topLeft.x);
+
+      int2 topRight =
+          make_int2(x + section.colOffset, y + section.startRow - 1);
+      Tsat b = getSATelement(sat, topRight.y, topRight.x);
+
+      int2 bottomLeft =
+          make_int2(x - section.colOffset - 1, y + section.endRow);
+      Tsat c = getSATelement(sat, bottomLeft.y, bottomLeft.x);
+
+      int2 bottomRight = make_int2(x + section.colOffset, y + section.endRow);
+      Tsat d = getSATelement(sat, bottomRight.y, bottomRight.x);
+
+      val += a + d - b - c;
+    }
+  } // end loop over disk sections
+}
+
+template <typename Tin, typename Trowsum, typename Tsat, typename Tout,
+          typename Tidx, typename Tsection = int16_t, typename Tscale = double,
+          bool incrementInsteadOfSet = false>
+__global__ void convolve_via_SAT_and_rowSums_naive_kernel(
+    const sats::DiskRowSAT<Tsection, Tscale> disk,
+    const containers::Image<Tin, Tidx> orig,
+    const containers::Image<Trowsum, Tidx> rowSums,
+    const containers::Image<Tsat, Tidx> sat,
+    containers::Image<Tout, Tidx> out) {
+
+  for (int y = blockIdx.y * blockDim.y + threadIdx.y; y < (int)orig.height;
+       y += blockDim.y * gridDim.y) {
+    for (int x = blockIdx.x * blockDim.x + threadIdx.x; x < (int)orig.width;
+         x += blockDim.x * gridDim.x) {
+
+      Tsat val = 0;
+      sumOverDisk_SAT_and_rowSums_threadwork<Tin, Trowsum, Tsat, Tidx, Tsection,
+                                             Tscale>(disk, orig, rowSums, sat,
+                                                     x, y, val);
+
+      // Value is ready here, write it back
+      if constexpr (incrementInsteadOfSet)
+        out.at(y, x) += static_cast<Tout>(val * disk.scale);
+      else
+        out.at(y, x) = static_cast<Tout>(val * disk.scale);
+    }
+  }
+}
+
+template <typename Tdata, typename Tidx, typename Tsection = int16_t,
+          typename Tscale = double, typename Trule>
+__global__ void convolve_via_SAT_and_rowSums_dynamicDisks_kernel(
+    const sats::DiskRowSAT<Tsection, Tscale> *disks, const Trule rule,
+    const containers::Image<Tdata, Tidx> orig,
+    const containers::Image<Tdata, Tidx> rowSums,
+    const containers::Image<Tdata, Tidx> sat,
+    containers::Image<Tdata, Tidx> out) {
+
+  for (int y = blockIdx.y * blockDim.y + threadIdx.y; y < orig.height;
+       y += blockDim.y * gridDim.y) {
+    for (int x = blockIdx.x * blockDim.x + threadIdx.x; x < orig.width;
+         x += blockDim.x * gridDim.x) {
+
+      // Determine the disk required
+      // Example here is to use radius-based linear steps starting from the
+      // centre to determine the disk index. Any other rule should work
+      unsigned int diskIndex = rule.getDiskIndex(y, x);
+      const sats::DiskRowSAT<Tsection, Tscale> &disk = disks[diskIndex];
+
+      // Every thread (potentially) uses its own disk
+      Tscale val =
+          sumOverDisk_SAT_and_rowSums_threadwork<Tdata, Tidx, Tsection, Tscale>(
+              disk, orig, rowSums, sat, x, y);
+
+      // if (threadIdx.x == 0 && threadIdx.y == 0) {
+      //   printf(" Disk index for (row %d, col %d) is %d -> %d sections\n", y,
+      //   x,
+      //          diskIndex, disk.numSections);
+      // }
+
+      // Value is ready here, write it back
+      out.at(y, x) = static_cast<Tdata>(val * disk.scale);
+    }
+  }
+}
+
+// TODO: finish this?
 template <typename Tdata, typename Tsection = int16_t> class DiskConvolver {
 private:
   DiskConvolver(int height, int width) : m_height(height), m_width(width) {}
