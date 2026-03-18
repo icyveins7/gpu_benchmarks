@@ -4,16 +4,19 @@
  * @brief Copied/adapted from Harris's example on
  * https://developer.nvidia.com/blog/efficient-matrix-transpose-cuda-cc/
  *
- * @tparam T Type of data
+ * @tparam Tout Type of output data
+ * @tparam Tin Type of input data
  * @param odata Output matrix, should not overlap the input
  * @param idata Input matrix
  * @param rows Number of rows of either matrix
  * @param cols Number of cols of either matrix
  */
-template <typename T, int TILE_DIM = 32>
-__global__ void transposeKernel(T *odata, const T *idata, const int rows,
+template <typename Tout, typename Tin, int TILE_DIM = 32>
+__global__ void transposeKernel(Tout *odata, const Tin *idata, const int rows,
                                 const int cols) {
-  __shared__ T tile[TILE_DIM][TILE_DIM + 1];
+  // Shouldn't matter too much if we use Tout or Tin
+  // since the data isn't mutating
+  __shared__ Tout tile[TILE_DIM][TILE_DIM + 1];
 
   int x = blockIdx.x * TILE_DIM + threadIdx.x;
   int y = blockIdx.y * TILE_DIM + threadIdx.y;
@@ -37,8 +40,8 @@ __global__ void transposeKernel(T *odata, const T *idata, const int rows,
       odata[(y + j) * cols + x] = tile[threadIdx.x][threadIdx.y + j];
 }
 
-template <typename T, int TILE_DIM = 32>
-void transpose(T *odata, const T *idata, const int rows, const int cols,
+template <typename Tin, typename Tout, int TILE_DIM = 32>
+void transpose(Tout *odata, const Tin *idata, const int rows, const int cols,
                cudaStream_t stream = 0) {
   constexpr dim3 tpb(32, 4);
   dim3 grid((cols + TILE_DIM - 1) / TILE_DIM, (rows + TILE_DIM - 1) / TILE_DIM);
