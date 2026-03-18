@@ -7,7 +7,7 @@
 
 template <typename T>
 int test_sectionConstruction_prefixRowsWithSAT(
-    int radiusPixels, thrust::host_vector<sats::DiskSection<T>> &h_sections,
+    double radiusPixels, thrust::host_vector<sats::DiskSection<T>> &h_sections,
     thrust::host_vector<uint8_t> &h_sectionTypes) {
   int maxSections =
       sats::getMaximumSectionsForDisk_prefixRows_SAT(radiusPixels);
@@ -88,6 +88,47 @@ TEST(SectionConstruction_PrefixRowsWithSAT, 4) {
   EXPECT_EQ(h_sections[3].startRow, 0);
   EXPECT_EQ(h_sections[3].endRow, 0);
   EXPECT_EQ(h_sections[3].colOffset, 4);
+
+  EXPECT_EQ(numSections, 4);
+}
+
+TEST(SectionConstruction_PrefixRowsWithSAT, 6point9) {
+  thrust::host_vector<sats::DiskSection<int16_t>> h_sections;
+  thrust::host_vector<uint8_t> h_sectionTypes;
+  int numSections = test_sectionConstruction_prefixRowsWithSAT<int16_t>(
+      6.9, h_sections, h_sectionTypes);
+
+  /*
+  - - - 1 1 1 1 1 1 1 - - -
+  - - 2 2 2 2 2 2 2 2 2 - -
+  - 3 3 3 3 3 3 3 3 3 3 3 -
+  4 4 4 4 4 4 4 4 4 4 4 4 4
+  4 4 4 4 4 4 4 4 4 4 4 4 4
+  4 4 4 4 4 4 4 4 4 4 4 4 4
+  4 4 4 4 4 4 4 4 4 4 4 4 4
+  4 4 4 4 4 4 4 4 4 4 4 4 4
+  4 4 4 4 4 4 4 4 4 4 4 4 4
+  4 4 4 4 4 4 4 4 4 4 4 4 4
+  - 5 5 5 5 5 5 5 5 5 5 5 -
+  - - 6 6 6 6 6 6 6 6 6 - -
+  - - - 7 7 7 7 7 7 7 - - -
+  */
+
+  EXPECT_EQ(h_sections[0].startRow, -6);
+  EXPECT_EQ(h_sections[0].endRow, -6);
+  EXPECT_EQ(h_sections[0].colOffset, 3);
+
+  EXPECT_EQ(h_sections[1].startRow, -5);
+  EXPECT_EQ(h_sections[1].endRow, -5);
+  EXPECT_EQ(h_sections[1].colOffset, 4);
+
+  EXPECT_EQ(h_sections[2].startRow, -4);
+  EXPECT_EQ(h_sections[2].endRow, -4);
+  EXPECT_EQ(h_sections[2].colOffset, 5);
+
+  EXPECT_EQ(h_sections[3].startRow, -3);
+  EXPECT_EQ(h_sections[3].endRow, 3);
+  EXPECT_EQ(h_sections[3].colOffset, 6);
 
   EXPECT_EQ(numSections, 4);
 }
