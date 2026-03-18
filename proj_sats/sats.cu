@@ -93,31 +93,12 @@ int main(int argc, char **argv) {
   for (int i = 0; i < height * width; i++) {
     h_data[i] = std::rand() % 10 - 5;
   }
-  thrust::host_vector<Tout> h_rowSums(height * width);
-  thrust::host_vector<Tout> h_sat(height * width);
-  thrust::host_vector<Tout> h_out(height * width);
 
   // thrust::device_vector<Tdata> d_data(h_data);
   containers::DeviceImageStorage<Tin> d_data(width, height);
   thrust::copy(h_data.begin(), h_data.end(), d_data.vec.begin());
 
-  containers::DeviceImageStorage<Tout> d_rowSums(width, height);
-  containers::DeviceImageStorage<Tout> d_transpose(width, height);
-  containers::DeviceImageStorage<Tout> d_transpose2(width, height);
-  containers::DeviceImageStorage<Tout> d_sat(width, height);
   containers::DeviceImageStorage<Tout> d_out(width, height);
-
-  // CUB related prep
-  auto rowKeyIterator = thrust::make_transform_iterator(
-      thrust::make_counting_iterator(0), sats::IndexToRowFunctor{width});
-  cubw::DeviceScan::InclusiveSumByKey<decltype(rowKeyIterator), Tin *, Tout *>
-      cubwRowScan(width * height);
-
-  auto colTransposeKeyIterator = thrust::make_transform_iterator(
-      thrust::make_counting_iterator(0), sats::IndexToRowFunctor{height});
-  cubw::DeviceScan::InclusiveSumByKey<decltype(colTransposeKeyIterator), Tout *,
-                                      Tout *>
-      cubwColScanTranspose(height * width);
 
   // Pre-compute disk
   int maxSections =
@@ -197,31 +178,9 @@ int main(int argc, char **argv) {
   // thrust::device_vector<sats::DiskRowSAT<int16_t>> d_multidisks =
   // h_multidisks;
   //
-  // === 1. Perform prefix sums across rows
 
-  // Custom kernel method (not enough occupancy to do this, must optimize
-  // beyond 1 block per row)
-  // {
-  //   constexpr int tpb = 256;
-  //   int blks = (height + tpb - 1) / tpb;
-  //   computeSATkernel<int, int, tpb><<<blks, tpb>>>(image, rowSums, sat);
-  // }
-
-  // Generic CUB routine
-  cubwRowScan.exec(rowKeyIterator, d_data.vec.data().get(),
-                   d_rowSums.vec.data().get(), width * height);
-
-  // === 2a. Perform prefix sums across columns (via explicitly transposed
-  // matrix) Transpose into the SAT matrix
-  transpose<Tout>(d_transpose.vec.data().get(), d_rowSums.vec.data().get(),
-                  (int)height, (int)width);
-  // In-place row-sums on the transpose (width is now the original height)
-  cubwColScanTranspose.exec(colTransposeKeyIterator,
-                            d_transpose.vec.data().get(),
-                            d_transpose2.vec.data().get(), width * height);
-  // Transposing back
-  transpose<Tout>(d_sat.vec.data().get(), d_transpose2.vec.data().get(), width,
-                  height);
+  sats::DiskConvolver_PrefixRowsSAT<Tin, Tout, Tout> convolver(height, width);
+  convolver.preprocess(d_data.vec.data().get());
 
   // === 3. Perform convolution calculations via lookups
   {
@@ -231,15 +190,15 @@ int main(int argc, char **argv) {
               (height + tpb.y - 1) / tpb.y / factor);
     sats::convolve_via_SAT_and_rowSums_naive_kernel<Tin, Tout, Tout, Tout,
                                                     unsigned int, int16_t>
-        <<<blks, tpb>>>(d_disk, d_data.image(), d_rowSums.image(),
-                        d_sat.image(), d_out.image());
+        <<<blks, tpb>>>(d_disk, d_data.cimage(),        //
+                        convolver.d_rowSums().cimage(), //
+                        convolver.d_sat().cimage(),     //
+                        d_out.image());
   }
 
-  thrust::host_vector<int> h_transpose = d_transpose.vec;
-  thrust::host_vector<int> h_transpose2 = d_transpose2.vec;
-  h_rowSums = d_rowSums.vec;
-  h_sat = d_sat.vec;
-  h_out = d_out.vec;
+  thrust::host_vector<Tout> h_rowSums = convolver.d_rowSums().vec;
+  thrust::host_vector<Tout> h_sat = convolver.d_sat().vec;
+  thrust::host_vector<Tout> h_out = d_out.vec;
 
   // ======================= Check row sums (GOOD)
   printf("====\n");
@@ -251,21 +210,6 @@ int main(int argc, char **argv) {
       if (sum != h_rowSums[i * width + j]) {
         printf("RowSums Mismatch at (%d, %d): expected %d vs %d\n", i, j, sum,
                h_rowSums[i * width + j]);
-        break;
-      }
-    }
-  }
-
-  // ======================= Check row sums across transposed matrix (GOOD)
-  printf("Checking row sums across initial row sums transposed...\n");
-  for (int i = 0; i < width; ++i) { // there are 'width' rows now
-    int sum = 0;
-    for (int j = 0; j < height; ++j) { // and 'height' columns
-      sum += h_transpose[i * height + j];
-      if (sum != h_transpose2[i * height + j]) {
-        printf("RowSums On TransposedRowSums Mismatch at (%d, %d): expected %d "
-               "vs %d\n",
-               i, j, sum, h_transpose2[i * height + j]);
         break;
       }
     }

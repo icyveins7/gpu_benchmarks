@@ -531,9 +531,9 @@ template <typename Tin, typename Trowsum, typename Tsat, typename Tidx,
           typename Tsection = int16_t, typename Tscale = double>
 __device__ void sumOverDisk_SAT_and_rowSums_threadwork(
     const sats::DiskRowSAT<Tsection, Tscale> disk,
-    const containers::Image<Tin, Tidx> orig,
-    const containers::Image<Trowsum, Tidx> rowSums,
-    const containers::Image<Tsat, Tidx> sat, const int x, const int y,
+    const containers::Image<const Tin, Tidx> orig,
+    const containers::Image<const Trowsum, Tidx> rowSums,
+    const containers::Image<const Tsat, Tidx> sat, const int x, const int y,
     Tsat &val) {
 
   // NOTE: internally we use Tsat to accumulate the value first.
@@ -631,9 +631,9 @@ template <typename Tin, typename Trowsum, typename Tsat, typename Tout,
           bool incrementInsteadOfSet = false>
 __global__ void convolve_via_SAT_and_rowSums_naive_kernel(
     const sats::DiskRowSAT<Tsection, Tscale> disk,
-    const containers::Image<Tin, Tidx> orig,
-    const containers::Image<Trowsum, Tidx> rowSums,
-    const containers::Image<Tsat, Tidx> sat,
+    const containers::Image<const Tin, Tidx> orig,
+    const containers::Image<const Trowsum, Tidx> rowSums,
+    const containers::Image<const Tsat, Tidx> sat,
     containers::Image<Tout, Tidx> out) {
 
   for (int y = blockIdx.y * blockDim.y + threadIdx.y; y < (int)orig.height;
@@ -694,9 +694,6 @@ __global__ void convolve_via_SAT_and_rowSums_dynamicDisks_kernel(
 
 // TODO: finish this?
 template <typename Tdata, typename Tsection = int16_t> class DiskConvolver {
-private:
-  DiskConvolver(int height, int width) : m_height(height), m_width(width) {}
-
 public:
   void resizeSections(size_t numSections) {
     m_h_sections.resize(numSections);
@@ -709,6 +706,8 @@ protected:
   int m_height;
   int m_width;
 
+  DiskConvolver(int height, int width) : m_height(height), m_width(width) {}
+
   thrust::pinned_host_vector<DiskSection<Tsection>> m_h_sections;
   thrust::pinned_host_vector<uint8_t> m_h_sectionTypes;
 
@@ -716,63 +715,16 @@ protected:
   thrust::device_vector<uint8_t> m_d_sectionTypes;
 };
 
-template <typename Tdata, typename Tsection = int16_t>
-class DiskConvolver_PrefixRowsSAT : public DiskConvolver<Tdata, Tsection> {
+template <typename Tin, typename Trowsum, typename Tsat,
+          typename Tsection = int16_t>
+class DiskConvolver_PrefixRowsSAT : public DiskConvolver<Tin, Tsection> {
 public:
   DiskConvolver_PrefixRowsSAT(int height, int width)
-      : DiskConvolver<Tdata, Tsection>(height, width),
-        m_d_rowSums(width * height), m_d_transpose(width * height),
-        m_d_sat(width * height), m_cubwRowScan(width * height),
-        m_cubwColScanTranspose(width * height) {}
+      : DiskConvolver<Tin, Tsection>(height, width), m_d_rowSums(width, height),
+        m_d_transpose(width, height), m_d_sat(width, height),
+        m_cubwRowScan(width * height), m_cubwColScanTranspose(width * height) {}
 
-  void exec(const Tdata *d_img, const sats::DiskRowSAT<Tsection> d_disk,
-            Tdata *d_out, const dim3 tpb = dim3(32, 4),
-            cudaStream_t stream = 0) {
-    // Run pre-process to fill row sums and SAT
-    preprocess(d_img, stream);
-
-    // Wrap device arrays in containers
-    containers::Image<int, unsigned int> image(d_img, this->m_width,
-                                               this->m_height);
-    containers::Image<int, unsigned int> rowSums(this->m_d_rowSums.data().get(),
-                                                 this->m_width, this->m_height);
-    containers::Image<int, unsigned int> sat(this->m_d_sat.data().get(),
-                                             this->m_width, this->m_height);
-    containers::Image<int, unsigned int> out(d_out, this->m_width,
-                                             this->m_height);
-
-    // Perform convolutions via lookups
-    constexpr int factor = 1;
-    dim3 blks((this->width + tpb.x - 1) / tpb.x,
-              (this->height + tpb.y - 1) / tpb.y / factor);
-    // convolve_via_SAT_and_rowSums_naive_kernel<Tdata, unsigned int, Tsection>
-    //     <<<blks, tpb, 0, stream>>>(d_disk, image, rowSums, sat, out);
-  }
-
-  const thrust::device_vector<Tdata> &d_rowSums() const { return m_d_rowSums; }
-  const thrust::device_vector<Tdata> &d_transpose() const {
-    return m_d_transpose;
-  }
-  const thrust::device_vector<Tdata> &d_sat() const { return m_d_sat; }
-
-private:
-  thrust::device_vector<Tdata> m_d_rowSums;
-  thrust::device_vector<Tdata> m_d_transpose;
-  thrust::device_vector<Tdata> m_d_sat;
-
-  cubw::DeviceScan::InclusiveSumByKey<
-      thrust::transform_iterator<IndexToRowFunctor,
-                                 thrust::counting_iterator<int>>,
-      int *, int *>
-      m_cubwRowScan;
-
-  cubw::DeviceScan::InclusiveSumByKey<
-      thrust::transform_iterator<IndexToRowFunctor,
-                                 thrust::counting_iterator<int>>,
-      int *, int *>
-      m_cubwColScanTranspose;
-
-  void preprocess(const Tdata *d_data, cudaStream_t stream = 0) {
+  void preprocess(const Tin *d_data, cudaStream_t stream = 0) {
     // CUB related prep
     auto rowKeyIterator = thrust::make_transform_iterator(
         thrust::make_counting_iterator(0), IndexToRowFunctor{this->m_width});
@@ -781,25 +733,82 @@ private:
 
     // 1. Inclusive prefix sums across rows
     this->m_cubwRowScan.exec(
-        rowKeyIterator, d_data, this->m_d_rowSums.data().get(),
+        rowKeyIterator, d_data, this->m_d_rowSums.vec.data().get(),
         this->m_width * this->m_height, ::cuda::std::equal_to<>(), stream);
 
     // 2. Inclusive prefix sums across columns
     // 2a. Transpose row sums
-    transpose<int>(this->m_d_transpose.data().get(),
-                   this->m_d_rowSums.data().get(), (int)this->m_height,
-                   (int)this->m_width, stream);
+    // Since we are using in-place for the column sum, we must transpose
+    // into a type Tsat array
+    transpose<Trowsum, Tsat>(this->m_d_transpose.vec.data().get(),
+                             this->m_d_rowSums.vec.data().get(),
+                             (int)this->m_height, (int)this->m_width, stream);
 
     // 2b. Sum across rows of transpose (column sums)
     this->m_cubwColScanTranspose.exec(
-        colTransposeKeyIterator, this->m_d_transpose.data().get(),
-        this->m_d_transpose.data().get(), this->m_width * this->m_height,
+        colTransposeKeyIterator, this->m_d_transpose.vec.data().get(),
+        this->m_d_transpose.vec.data().get(), this->m_width * this->m_height,
         ::cuda::std::equal_to<>(), stream);
 
     // 2c. Transpose back into SAT
-    transpose<int>(this->m_d_sat.data().get(), this->m_d_transpose.data().get(),
-                   (int)this->m_width, (int)this->m_height, stream);
+    transpose<Tsat, Tsat>(this->m_d_sat.vec.data().get(),
+                          this->m_d_transpose.vec.data().get(),
+                          (int)this->m_width, (int)this->m_height, stream);
   }
+
+  // void exec(const Tin *d_img, const sats::DiskRowSAT<Tsection> d_disk,
+  //           Tin *d_out, const dim3 tpb = dim3(32, 4), cudaStream_t stream =
+  //           0) {
+  //   // Run pre-process to fill row sums and SAT
+  //   preprocess(d_img, stream);
+  //
+  //   // Wrap device arrays in containers
+  //   containers::Image<int, unsigned int> image(d_img, this->m_width,
+  //                                              this->m_height);
+  //   containers::Image<int, unsigned int>
+  //   rowSums(this->m_d_rowSums.data().get(),
+  //                                                this->m_width,
+  //                                                this->m_height);
+  //   containers::Image<int, unsigned int> sat(this->m_d_sat.data().get(),
+  //                                            this->m_width, this->m_height);
+  //   containers::Image<int, unsigned int> out(d_out, this->m_width,
+  //                                            this->m_height);
+  //
+  //   // Perform convolutions via lookups
+  //   constexpr int factor = 1;
+  //   dim3 blks((this->width + tpb.x - 1) / tpb.x,
+  //             (this->height + tpb.y - 1) / tpb.y / factor);
+  //   // convolve_via_SAT_and_rowSums_naive_kernel<Tdata, unsigned int,
+  //   Tsection>
+  //   //     <<<blks, tpb, 0, stream>>>(d_disk, image, rowSums, sat, out);
+  // }
+
+  const containers::DeviceImageStorage<Trowsum> &d_rowSums() const {
+    return m_d_rowSums;
+  }
+  const containers::DeviceImageStorage<Tsat> &d_transpose() const {
+    return m_d_transpose;
+  }
+  const containers::DeviceImageStorage<Tsat> &d_sat() const { return m_d_sat; }
+
+private:
+  containers::DeviceImageStorage<Trowsum> m_d_rowSums;
+  containers::DeviceImageStorage<Tsat> m_d_transpose;
+  containers::DeviceImageStorage<Tsat> m_d_sat;
+
+  // input->rowsums, out-of-place prefix sum
+  cubw::DeviceScan::InclusiveSumByKey<
+      thrust::transform_iterator<IndexToRowFunctor,
+                                 thrust::counting_iterator<int>>,
+      const Tin *, Trowsum *>
+      m_cubwRowScan;
+
+  // transpose->transpose, in-place prefix sum
+  cubw::DeviceScan::InclusiveSumByKey<
+      thrust::transform_iterator<IndexToRowFunctor,
+                                 thrust::counting_iterator<int>>,
+      const Tsat *, Tsat *>
+      m_cubwColScanTranspose;
 };
 
 } // namespace sats
