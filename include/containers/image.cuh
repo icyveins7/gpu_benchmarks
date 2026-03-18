@@ -153,6 +153,16 @@ struct DeviceImageStorage {
   Image<Tdata, Tidx> image() {
     return Image<Tdata, Tidx>(vec.data().get(), width, height);
   }
+
+  /**
+   * @brief Primary useful method. Returns a new const Image struct that
+   * encloses the pointer alone, allowing it to be passed to a kernel by value.
+   *
+   * @return Const Image struct
+   */
+  const Image<Tdata, Tidx> cimage() const {
+    return Image<Tdata, Tidx>(vec.data().get(), width, height);
+  }
 };
 
 } // namespace containers
