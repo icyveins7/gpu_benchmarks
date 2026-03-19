@@ -923,7 +923,8 @@ __global__ void convolve_via_SAT_and_rowSums_dynamicFilters_kernel(
   }
 }
 
-template <typename Tin, typename Trowsum, typename Tsat> struct PrefixRowsSAT {
+template <typename Tin, typename Trowsum, typename Tsat> class PrefixRowsSAT {
+public:
   PrefixRowsSAT(int height, int width)
       : m_height(height), m_width(width), m_d_rowSums(width, height),
         m_d_transpose(width, height), m_d_sat(width, height),
