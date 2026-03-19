@@ -203,7 +203,7 @@ int main(int argc, char **argv) {
     for (int j = 0; j < width; ++j) {
       sum += h_data[i * width + j];
       if (sum != h_rowSums[i * width + j]) {
-        printf("RowSums Mismatch at (%d, %d): expected %d vs %d\n", i, j, sum,
+        printf("RowSums Mismatch at (%d, %d): expected %d vs %ld\n", i, j, sum,
                h_rowSums[i * width + j]);
         break;
       }
@@ -217,7 +217,7 @@ int main(int argc, char **argv) {
     for (int i = 0; i < height; ++i) {
       sum += h_rowSums[i * width + j];
       if (sum != h_sat[i * width + j]) {
-        printf("SATS Mismatch at (%d, %d): expected %d vs %d\n", i, j, sum,
+        printf("SATS Mismatch at (%d, %d): expected %d vs %ld\n", i, j, sum,
                h_sat[i * width + j]);
         break;
       }
@@ -230,9 +230,9 @@ int main(int argc, char **argv) {
     std::vector<double> checkOut = convExplicitly<Tin, double, double>(
         mat, filter.maxDiskLength(), h_data.data(), height, width);
 
-    for (int i = 0; i < checkOut.size(); ++i) {
+    for (int i = 0; i < (int)checkOut.size(); ++i) {
       if (checkOut[i] != h_out[i]) {
-        printf("**** ERROR: Output Mismatch at (%d, %d): expected %f vs %f\n",
+        printf("**** ERROR: Output Mismatch at (%d, %d): expected %f vs %ld\n",
                i / width, i % width, checkOut[i], h_out[i]);
         break;
       }
@@ -287,7 +287,7 @@ int main(int argc, char **argv) {
     printf("-------- Row sums:\n");
     for (int i = 0; i < height; ++i) {
       for (int j = 0; j < width; ++j) {
-        printf("%4d ", h_rowSums[i * width + j]);
+        printf("%4ld ", h_rowSums[i * width + j]);
       }
       printf("\n");
     }
@@ -295,7 +295,7 @@ int main(int argc, char **argv) {
     printf("-------- SAT:\n");
     for (int i = 0; i < height; ++i) {
       for (int j = 0; j < width; ++j) {
-        printf("%4d ", h_sat[i * width + j]);
+        printf("%4ld ", h_sat[i * width + j]);
       }
       printf("\n");
     }
@@ -303,7 +303,7 @@ int main(int argc, char **argv) {
     printf("-------- Output:\n");
     for (int i = 0; i < height; ++i) {
       for (int j = 0; j < width; ++j) {
-        printf("%4d ", h_out[i * width + j]);
+        printf("%4ld ", h_out[i * width + j]);
       }
       printf("\n");
     }

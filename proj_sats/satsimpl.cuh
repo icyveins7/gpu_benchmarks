@@ -354,7 +354,7 @@ DiskSection<T> getDiskSectionForRow(const DiskSection<T> *sections,
 template <typename Tsection, typename Tscale = double>
 struct FilterOfDisksRowSAT {
   DiskRowSAT<Tsection, Tscale> *d_disks;
-  int numDisks;
+  unsigned int numDisks;
 };
 
 // This is used to construct and hold the underlying RAII containers
@@ -371,8 +371,8 @@ struct FilterOfDisksRowSATCreator {
   int numDisks() const { return h_disks.size(); }
 
   FilterOfDisksRowSAT<Tsection, Tscale> toDevice() {
-    FilterOfDisksRowSAT<Tsection, Tscale> container{d_disks.data().get(),
-                                                    d_disks.size()};
+    FilterOfDisksRowSAT<Tsection, Tscale> container{
+        d_disks.data().get(), (unsigned int)d_disks.size()};
     return container;
   }
 
@@ -407,8 +407,8 @@ struct FilterOfDisksRowSATCreator {
     // Copy to device
     d_sections.resize(totalActualSections);
     d_sectionTypes.resize(totalActualSections);
-    printf("d_sections size: %d\n", d_sections.size());
-    printf("d_sectionTypes size: %d\n", d_sectionTypes.size());
+    printf("d_sections size: %zu\n", d_sections.size());
+    printf("d_sectionTypes size: %zu\n", d_sectionTypes.size());
     // Don't really need streams here, should be a one time thing during prep
     thrust::copy(h_sections.begin(), h_sections.begin() + totalActualSections,
                  d_sections.begin());
@@ -491,7 +491,7 @@ struct FilterOfDisksRowSATCreator {
     // methods, we need to construct new ones here, since the
     // pinned_host_vector holds device pointers internally
     int offsetToDiskSections = 0;
-    for (int i = 0; i < h_disks.size(); ++i) {
+    for (size_t i = 0; i < h_disks.size(); ++i) {
       auto disk = DiskRowSAT<Tsection, Tscale>(
           h_disks[i].scale, h_disks[i].radiusPixels, h_disks[i].numSections,
           h_sections.data().get() + offsetToDiskSections,
