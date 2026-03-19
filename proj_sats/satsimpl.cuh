@@ -513,6 +513,40 @@ struct FilterOfDisksRowSATCreator {
     }
     return mat;
   }
+}; // end struct FilterOfDisksRowSATCreator
+
+template <typename Tsection, typename Tscale = double>
+struct MultiFilterOfDisksRowSATCreator {
+  // The host is the creator object
+  std::vector<FilterOfDisksRowSATCreator<Tsection, Tscale>> h_filtercreators;
+  // but the device has the actual filter objects
+  thrust::pinned_host_vector<FilterOfDisksRowSAT<Tsection, Tscale>>
+      h_filters_vec;
+  thrust::device_vector<FilterOfDisksRowSAT<Tsection, Tscale>> d_filters_vec;
+
+  MultiFilterOfDisksRowSATCreator() {}
+
+  size_t size() const { return h_filtercreators.size(); }
+
+  void addFilter(const Tscale *scale, const double *radiusPixels,
+                 const int NumDisks) {
+    h_filtercreators.push_back(FilterOfDisksRowSATCreator<Tsection, Tscale>(
+        scale, radiusPixels, NumDisks));
+  }
+
+  void h2d() {
+    h_filters_vec.resize(h_filtercreators.size());
+    d_filters_vec.resize(h_filtercreators.size());
+    for (size_t i = 0; i < h_filtercreators.size(); ++i) {
+      h_filters_vec.at(i) = h_filtercreators.toDevice();
+    }
+    // Copy up all the filters
+    d_filters_vec = h_filters_vec;
+  }
+
+  FilterOfDisksRowSAT<Tsection, Tscale> *d_filters() {
+    return d_filters_vec.data().get();
+  }
 };
 
 // ==================================================================
@@ -520,6 +554,12 @@ struct FilterOfDisksRowSATCreator {
 // ==================================================================
 // ==================================================================
 // ==================================================================
+
+struct SimpleRule {
+  __host__ __device__ unsigned int getFilterIndex(int y, int x) const {
+    return x % 2;
+  }
+};
 
 // NOTE: this is just an example of a Trule to be used in dynamic filter kernel
 template <typename Tidx> struct FilterSelectionRule {
@@ -883,9 +923,9 @@ template <typename Tin, typename Trowsum, typename Tsat, typename Tout,
           typename Tscale = double>
 __global__ void convolve_via_SAT_and_rowSums_dynamicFilters_kernel(
     const sats::FilterOfDisksRowSAT<Tsection, Tscale> *filters,
-    const Trule rule, const containers::Image<Tin, Tidx> orig,
-    const containers::Image<Trowsum, Tidx> rowSums,
-    const containers::Image<Tsat, Tidx> sat,
+    const Trule rule, const containers::Image<const Tin, Tidx> orig,
+    const containers::Image<const Trowsum, Tidx> rowSums,
+    const containers::Image<const Tsat, Tidx> sat,
     containers::Image<Tout, Tidx> out) {
 
   for (int y = blockIdx.y * blockDim.y + threadIdx.y; y < orig.height;

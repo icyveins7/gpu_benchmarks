@@ -128,53 +128,9 @@ int main(int argc, char **argv) {
   }
   // End of debug printing
 
-  // // Pre-compute multiple disks into a container
-  // thrust::host_vector<sats::DiskSection<int16_t>> h_multidiskSections;
-  // thrust::host_vector<uint8_t> h_multidiskSectionTypes;
-  // thrust::host_vector<int> h_multidiskRadii;
-  // int numDisks = 60;
-  // // sats::DiskSelectionRule<int16_t> diskRule{0.5f * width,
-  // //                                           (int16_t)(0.5f * width),
-  // //                                           (int16_t)(0.5f * height),
-  // //                                           numDisks};
-  // sats::RadialThresholdLinearGradientRule<int16_t> diskRule(
-  //     0.5f * width / 150.0f / 3.0f, (int16_t)(0.5f * width),
-  //     (int16_t)(0.5f * height), 0.5f * width * 130.0 / 150.0, 0.5f * width);
-  // thrust::host_vector<int> h_multidiskNumSections =
-  //     sats::constructMultipleDisksViaRule(radiusPixels, h_multidiskSections,
-  //                                         h_multidiskSectionTypes,
-  //                                         h_multidiskRadii, diskRule);
-  //
-  // int totalUsedSections = std::accumulate(h_multidiskNumSections.begin(),
-  //                                         h_multidiskNumSections.end(), 0);
-  // printf("Multidisk sections size used %d / %zu\n", totalUsedSections,
-  //        h_multidiskSections.size());
-  // printf("Multidisk section types size used %d / %zu\n", totalUsedSections,
-  //        h_multidiskSectionTypes.size());
-  // // Copy the sections and section types like before
-  // thrust::device_vector<sats::DiskSection<int16_t>> d_multidiskSections(
-  //     totalUsedSections);
-  // thrust::device_vector<uint8_t> d_multidiskSectionTypes(totalUsedSections);
-  // thrust::copy(h_multidiskSections.begin(),
-  //              h_multidiskSections.begin() + totalUsedSections,
-  //              d_multidiskSections.begin());
-  // thrust::copy(h_multidiskSectionTypes.begin(),
-  //              h_multidiskSectionTypes.begin() + totalUsedSections,
-  //              d_multidiskSectionTypes.begin());
-  // // Make container
-  // thrust::host_vector<sats::DiskRowSAT<int16_t>> h_multidisks(numDisks);
-  // std::vector<double> h_diskScales = {1.0, 1.0};
-  // sats::createContainer_DiskRowSAT<int16_t>(
-  //     h_multidisks.data(), h_diskScales.data(), h_multidiskRadii.data(),
-  //     h_multidiskNumSections, d_multidiskSections.data().get(),
-  //     d_multidiskSectionTypes.data().get());
-  //
-  // thrust::device_vector<sats::DiskRowSAT<int16_t>> d_multidisks =
-  // h_multidisks;
-  //
-
-  sats::PrefixRowsSAT<Tin, Tout, Tout> convolver(height, width);
-  convolver.preprocess(d_data.vec.data().get());
+  // Construct the object to handle preprocessing
+  sats::PrefixRowsSAT<Tin, Tout, Tout> preprocessor(height, width);
+  preprocessor.preprocess(d_data.vec.data().get());
 
   // === 3. Perform convolution calculations via lookups
   // NOTE: this is for a single filter
@@ -186,13 +142,13 @@ int main(int argc, char **argv) {
     sats::convolve_via_SAT_and_rowSums_naive_kernel<Tin, Tout, Tout, Tout,
                                                     unsigned int, int16_t>
         <<<blks, tpb>>>(filter.toDevice(), d_data.cimage(), //
-                        convolver.d_rowSums().cimage(),     //
-                        convolver.d_sat().cimage(),         //
+                        preprocessor.d_rowSums().cimage(),  //
+                        preprocessor.d_sat().cimage(),      //
                         d_out.image());
   }
 
-  thrust::host_vector<Tout> h_rowSums = convolver.d_rowSums().vec;
-  thrust::host_vector<Tout> h_sat = convolver.d_sat().vec;
+  thrust::host_vector<Tout> h_rowSums = preprocessor.d_rowSums().vec;
+  thrust::host_vector<Tout> h_sat = preprocessor.d_sat().vec;
   thrust::host_vector<Tout> h_out = d_out.vec;
 
   // ======================= Check row sums (GOOD)
@@ -238,42 +194,6 @@ int main(int argc, char **argv) {
       }
     }
   }
-  //
-  // for (int i = 0; i < height; ++i) {
-  //   for (int j = 0; j < width; ++j) {
-  //     Tout val = 0;
-  //     for (int r = -(int)radiusPixels[0]; r <= (int)radiusPixels[0]; ++r) {
-  //       // get the section for this offset
-  //       auto section = sats::getDiskSectionForRow(
-  //           filter.h_sections.data().get(), filter.h_disks[0].numSections,
-  //           r);
-  //       int y = r + i;
-  //       if (y < 0 || y >= height)
-  //         continue;
-  //       for (int x = -section.colOffset + j; x <= section.colOffset + j; ++x)
-  //       {
-  //         if (x < 0 || x >= width)
-  //           continue;
-  //         // printf("Accessing (%d, %d) for (%d, %d)\n", y, x, i, j);
-  //         val += h_data[y * width + x];
-  //       }
-  //     }
-  //     // assumes scale 1.0
-  //     if (val != h_out[i * width + j]) {
-  //       printf("Output Mismatch at (%d, %d): expected %d vs %d\n", i, j, val,
-  //              h_out[i * width + j]);
-  //       break;
-  //     }
-  //     --maxChecks;
-  //     if (maxChecks == 0) {
-  //       printf("Not checking any more..\n");
-  //       break;
-  //     }
-  //   }
-  //   if (maxChecks == 0) {
-  //     break;
-  //   }
-  // }
 
   if (height <= 32 && width <= 32) {
     printf("-------- Original:\n");
@@ -316,18 +236,31 @@ int main(int argc, char **argv) {
   // ============================================================
   // ============================================================
 
-  // // === 4. Perform convolution calculations via lookups
-  // {
-  //   diskRule.print();
-  //   constexpr int factor = 1;
-  //   constexpr dim3 tpb(32, 4);
-  //   dim3 blks((width + tpb.x - 1) / tpb.x,
-  //             (height + tpb.y - 1) / tpb.y / factor);
-  //   convolve_via_SAT_and_rowSums_dynamicDisks_kernel<Tdata, unsigned int,
-  //                                                    int16_t, double>
-  //       <<<blks, tpb>>>(d_multidisks.data().get(), diskRule, image, rowSums,
-  //                       sat, out);
-  // }
+  // Arbitrary testing for multiple filters
+  sats::MultiFilterOfDisksRowSATCreator<int16_t, double> multifilter;
+  int numFilters = 2;
+  for (int i = 0; i < numFilters; ++i) {
+    double mScaleList[4] = {scaleList[0] + i, scaleList[1] + i,
+                            scaleList[2] + i, scaleList[3] + i};
+    double mRadiusPixels[4] = {radiusPixels[0] + i, radiusPixels[1] + i,
+                               radiusPixels[2] + i, radiusPixels[3] + i};
+    multifilter.addFilter(mScaleList, mRadiusPixels, numDisks);
+    printf("Added filter %d\n", i);
+  }
+
+  {
+    sats::SimpleRule rule;
+    constexpr int factor = 1;
+    constexpr dim3 tpb(32, 4);
+    dim3 blks((width + tpb.x - 1) / tpb.x,
+              (height + tpb.y - 1) / tpb.y / factor);
+    sats::convolve_via_SAT_and_rowSums_dynamicFilters_kernel<
+        Tin, Tout, Tout, Tout, unsigned int, sats::SimpleRule>
+        <<<blks, tpb>>>(multifilter.d_filters(), rule, d_data.cimage(), //
+                        preprocessor.d_rowSums().cimage(),              //
+                        preprocessor.d_sat().cimage(),                  //
+                        d_out.image());
+  }
 
   return 0;
 }
