@@ -9,6 +9,7 @@
 
 #include "containers/cubwrappers.cuh"
 #include "containers/image.cuh"
+#include "manualConv.h"
 #include "satsimpl.cuh"
 #include "transpose.cuh"
 
@@ -81,10 +82,20 @@ int main(int argc, char **argv) {
   }
   printf(" Image size (rows x columns): %d x %d\n", height, width);
 
-  double radiusPixels = 1.1;
-  if (argc >= 4)
-    radiusPixels = atof(argv[3]);
-  printf(" Radius in pixels: %f\n", radiusPixels);
+  double radiusPixels[4] = {1.1, 0, 0, 0};
+  double scaleList[4] = {1.0, 0, 0, 0};
+  int numDisks = 1;
+  if (argc >= 4) {
+    for (int i = 0; i < std::min(4, argc - 3); i++) {
+      radiusPixels[i] = atof(argv[3 + i]);
+      scaleList[i] = i + 1;
+      if (i >= 1) {
+        numDisks++;
+      }
+    }
+  }
+  for (int i = 0; i < numDisks; ++i)
+    printf(" Radius in pixels: %f\n", radiusPixels[i]);
 
   using Tin = int32_t;  // input is small
   using Tout = int64_t; // use 64-bit for everything else
@@ -119,32 +130,22 @@ int main(int argc, char **argv) {
   //                                  d_sections.data().get(),
   //                                  d_sectionTypes.data().get()};
 
-  double scaleList[1] = {1.0};
-  double radiusPixelList[1] = {radiusPixels};
-  sats::FilterOfDisksRowSATCreator<1, int16_t> filter(scaleList,
-                                                      radiusPixelList);
+  sats::FilterOfDisksRowSATCreator<int16_t> filter(scaleList, radiusPixels,
+                                                   numDisks);
 
   // Print lots of things to check?
-  for (int d = 0; d < filter.getNumDisks(); ++d) {
-    auto d_disk = filter.d_disks[d];
+  filter.print();
+  std::vector<double> mat = filter.makeMat<double>();
 
-    printf("Disk length %d, with %d sections, scale %f\n",
-           d_disk.lengthPixels(), d_disk.numSections, d_disk.scale);
-    for (int i = 0; i < d_disk.numSections; ++i) {
-      printf("Section %d: type %s row %d:%d col %d:%d\n", i,
-             sats::sectionTypeString(filter.h_sectionTypes[i]).c_str(),
-             filter.h_sections[i].startRow, filter.h_sections[i].endRow,
-             -filter.h_sections[i].colOffset, filter.h_sections[i].colOffset);
+  if (filter.maxDiskLength() < 100) {
+    for (int i = 0; i < filter.maxDiskLength(); ++i) {
+      for (int j = 0; j < filter.maxDiskLength(); ++j) {
+        printf("%.1f ", mat[i * filter.maxDiskLength() + j]);
+      }
+      printf("\n");
     }
-    printf("-----\n");
-    for (int i = -(int)radiusPixels; i < (int)radiusPixels + 1; ++i) {
-      auto section = sats::getDiskSectionForRow(filter.h_sections.data().get(),
-                                                d_disk.numSections, i);
-      printf("Row %d -> col %d : %d\n", i, -section.colOffset,
-             section.colOffset);
-    }
-    printf("-----\n");
   }
+
   // End of debug printing
 
   // // Pre-compute multiple disks into a container
@@ -201,7 +202,7 @@ int main(int argc, char **argv) {
     constexpr dim3 tpb(32, 16); // 32x8 or 32x16 seems better than 32x4
     dim3 blks((width + tpb.x - 1) / tpb.x,
               (height + tpb.y - 1) / tpb.y / factor);
-    sats::convolve_via_SAT_and_rowSums_naive_kernel<1, Tin, Tout, Tout, Tout,
+    sats::convolve_via_SAT_and_rowSums_naive_kernel<Tin, Tout, Tout, Tout,
                                                     unsigned int, int16_t>
         <<<blks, tpb>>>(filter.toDevice(), d_data.cimage(), //
                         convolver.d_rowSums().cimage(),     //
@@ -243,41 +244,55 @@ int main(int argc, char **argv) {
   }
 
   // ======================= Check outputs
-  printf("Checking outputs...\n");
-  size_t maxChecks = 10000;
-  for (int i = 0; i < height; ++i) {
-    for (int j = 0; j < width; ++j) {
-      Tout val = 0;
-      for (int r = -(int)radiusPixels; r <= (int)radiusPixels; ++r) {
-        // get the section for this offset
-        auto section = sats::getDiskSectionForRow(
-            filter.h_sections.data().get(), filter.d_disks[0].numSections, r);
-        int y = r + i;
-        if (y < 0 || y >= height)
-          continue;
-        for (int x = -section.colOffset + j; x <= section.colOffset + j; ++x) {
-          if (x < 0 || x >= width)
-            continue;
-          // printf("Accessing (%d, %d) for (%d, %d)\n", y, x, i, j);
-          val += h_data[y * width + x];
-        }
-      }
-      // assumes scale 1.0
-      if (val != h_out[i * width + j]) {
-        printf("Output Mismatch at (%d, %d): expected %d vs %d\n", i, j, val,
-               h_out[i * width + j]);
+  if (height < 100 && width < 100) {
+    printf("Checking outputs (expects all integers)...\n");
+    std::vector<double> checkOut = convExplicitly<Tin, double, double>(
+        mat, filter.maxDiskLength(), h_data.data(), height, width);
+
+    for (int i = 0; i < checkOut.size(); ++i) {
+      if (checkOut[i] != h_out[i]) {
+        printf("**** ERROR: Output Mismatch at (%d, %d): expected %f vs %f\n",
+               i / width, i % width, checkOut[i], h_out[i]);
         break;
       }
-      --maxChecks;
-      if (maxChecks == 0) {
-        printf("Not checking any more..\n");
-        break;
-      }
-    }
-    if (maxChecks == 0) {
-      break;
     }
   }
+  //
+  // for (int i = 0; i < height; ++i) {
+  //   for (int j = 0; j < width; ++j) {
+  //     Tout val = 0;
+  //     for (int r = -(int)radiusPixels[0]; r <= (int)radiusPixels[0]; ++r) {
+  //       // get the section for this offset
+  //       auto section = sats::getDiskSectionForRow(
+  //           filter.h_sections.data().get(), filter.h_disks[0].numSections,
+  //           r);
+  //       int y = r + i;
+  //       if (y < 0 || y >= height)
+  //         continue;
+  //       for (int x = -section.colOffset + j; x <= section.colOffset + j; ++x)
+  //       {
+  //         if (x < 0 || x >= width)
+  //           continue;
+  //         // printf("Accessing (%d, %d) for (%d, %d)\n", y, x, i, j);
+  //         val += h_data[y * width + x];
+  //       }
+  //     }
+  //     // assumes scale 1.0
+  //     if (val != h_out[i * width + j]) {
+  //       printf("Output Mismatch at (%d, %d): expected %d vs %d\n", i, j, val,
+  //              h_out[i * width + j]);
+  //       break;
+  //     }
+  //     --maxChecks;
+  //     if (maxChecks == 0) {
+  //       printf("Not checking any more..\n");
+  //       break;
+  //     }
+  //   }
+  //   if (maxChecks == 0) {
+  //     break;
+  //   }
+  // }
 
   if (height <= 32 && width <= 32) {
     printf("-------- Original:\n");

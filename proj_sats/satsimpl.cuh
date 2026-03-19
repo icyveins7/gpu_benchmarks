@@ -112,24 +112,23 @@ template <typename T = int16_t> struct DiskSection {
  * @tparam T Internal type for DiskSections
  */
 template <typename T, typename Tscale = double> struct DiskRowSAT {
-  DiskSection<T>
-      *sections;         // there should be at most (radiusPixels + 1) sections
-  uint8_t *sectionTypes; // matched with sections
+  const DiskSection<T>
+      *sections; // there should be at most (radiusPixels + 1) sections
+  const uint8_t *sectionTypes; // matched with sections
   Tscale scale = 1.0;
   int radiusPixels;
   int numSections; // this is the number of *actual* sections in storage
 
   __host__ __device__ DiskRowSAT() {}
-  __host__ __device__ DiskRowSAT(Tscale scale, int radiusPixels,
-                                 int numSections, DiskSection<T> *sections,
-                                 uint8_t *sectionTypes) {
+  __host__ __device__ DiskRowSAT(const Tscale scale, const int radiusPixels,
+                                 const int numSections,
+                                 const DiskSection<T> *sections,
+                                 const uint8_t *sectionTypes) {
     this->sections = sections;
     this->sectionTypes = sectionTypes;
     this->scale = scale;
     this->radiusPixels = radiusPixels;
     this->numSections = numSections;
-
-    printf("Scale: %f\n", scale);
   }
 
   // Convenience from host_vector
@@ -352,53 +351,48 @@ DiskSection<T> getDiskSectionForRow(const DiskSection<T> *sections,
 }
 
 // This is passed to the kernel.
-// You can't just pass the d_disks pointer since it would be treated
-// as a device pointer
-template <int NumDisks, typename Tsection, typename Tscale = double>
+template <typename Tsection, typename Tscale = double>
 struct FilterOfDisksRowSAT {
-  DiskRowSAT<Tsection, Tscale> d_disks[NumDisks];
+  DiskRowSAT<Tsection, Tscale> *d_disks;
+  int numDisks;
 };
 
 // This is used to construct and hold the underlying RAII containers
 // for all the disks and associated sections.
-// You CANNOT pass the d_disks directly since this would be treated as a device
-// pointer, which is NOT what we want.
-template <int NumDisks, typename Tsection, typename Tscale = double>
+template <typename Tsection, typename Tscale = double>
 struct FilterOfDisksRowSATCreator {
-  DiskRowSAT<Tsection, Tscale> d_disks[NumDisks];
+  thrust::pinned_host_vector<DiskRowSAT<Tsection, Tscale>> h_disks;
+  thrust::device_vector<DiskRowSAT<Tsection, Tscale>> d_disks;
   thrust::device_vector<DiskSection<Tsection>> d_sections;
   thrust::device_vector<uint8_t> d_sectionTypes;
   thrust::pinned_host_vector<DiskSection<Tsection>> h_sections;
   thrust::pinned_host_vector<uint8_t> h_sectionTypes;
-  int offsetsToDiskSections[NumDisks];
 
-  constexpr int getNumDisks() const { return NumDisks; }
+  int numDisks() const { return h_disks.size(); }
 
-  FilterOfDisksRowSAT<NumDisks, Tsection, Tscale> toDevice() {
-    FilterOfDisksRowSAT<NumDisks, Tsection, Tscale> container;
-    for (int i = 0; i < NumDisks; ++i) {
-      container.d_disks[i] = this->d_disks[i];
-    }
+  FilterOfDisksRowSAT<Tsection, Tscale> toDevice() {
+    FilterOfDisksRowSAT<Tsection, Tscale> container{d_disks.data().get(),
+                                                    d_disks.size()};
     return container;
   }
 
-  FilterOfDisksRowSATCreator(const Tscale scale[NumDisks],
-                             const double radiusPixels[NumDisks],
-                             const bool furtherScaleByNumActivePixels = true) {
+  FilterOfDisksRowSATCreator(const Tscale *scale, const double *radiusPixels,
+                             const int NumDisks) {
+
     // Count how much we would need
     int maxSections = 0;
     for (int i = 0; i < NumDisks; ++i) {
       int numSections =
           getMaximumSectionsForDisk_prefixRows_SAT(radiusPixels[i]);
-      printf("Num sections for disk %d: %d\n", i, numSections);
+      printf("Max sections for disk %d: %d\n", i, numSections);
       maxSections += numSections;
     }
     printf("Total max sections: %d\n", maxSections);
     h_sections.resize(maxSections);
     h_sectionTypes.resize(maxSections);
     // Make the disks
-    int numActualSectionsPerDisk[NumDisks];
-    int maxActualSections = 0;
+    std::vector<int> numActualSectionsPerDisk(NumDisks);
+    int totalActualSections = 0;
     DiskSection<Tsection> *h_section_ptr = h_sections.data().get();
     uint8_t *h_sectionType_ptr = h_sectionTypes.data().get();
     for (int i = 0; i < NumDisks; ++i) {
@@ -407,38 +401,117 @@ struct FilterOfDisksRowSATCreator {
       h_section_ptr += numActualSections;
       h_sectionType_ptr += numActualSections;
       printf("Num actual sections for disk %d: %d\n", i, numActualSections);
-      maxActualSections += numActualSections;
+      totalActualSections += numActualSections;
       numActualSectionsPerDisk[i] = numActualSections; // cache this for later
     }
     // Copy to device
-    d_sections.resize(maxActualSections);
-    d_sectionTypes.resize(maxActualSections);
+    d_sections.resize(totalActualSections);
+    d_sectionTypes.resize(totalActualSections);
     printf("d_sections size: %d\n", d_sections.size());
     printf("d_sectionTypes size: %d\n", d_sectionTypes.size());
     // Don't really need streams here, should be a one time thing during prep
-    thrust::copy(h_sections.begin(), h_sections.end(), d_sections.begin());
-    thrust::copy(h_sectionTypes.begin(), h_sectionTypes.end(),
+    thrust::copy(h_sections.begin(), h_sections.begin() + totalActualSections,
+                 d_sections.begin());
+    thrust::copy(h_sectionTypes.begin(),
+                 h_sectionTypes.begin() + totalActualSections,
                  d_sectionTypes.begin());
-    // DEBUG Copy back
-    thrust::copy(d_sections.begin(), d_sections.end(), h_sections.begin());
-    thrust::copy(d_sectionTypes.begin(), d_sectionTypes.end(),
-                 h_sectionTypes.begin());
 
     // Construct the wrapper containers
-    offsetsToDiskSections[0] = 0;
+    int offsetToDiskSections = 0;
+    h_disks.resize(NumDisks);
+    d_disks.resize(NumDisks);
     for (int i = 0; i < NumDisks; ++i) {
-      printf("Creating DiskRowSAT %d with sections offset %d\n", i,
-             offsetsToDiskSections[i]);
+      printf("Creating DiskRowSAT %d with sections offset %d, scale %f\n", i,
+             offsetToDiskSections, scale[i]);
 
-      d_disks[i] = DiskRowSAT<Tsection, Tscale>(
+      // Remember, these are intended to be containers for the kernels,
+      // so they house the device pointers
+      h_disks[i] = DiskRowSAT<Tsection, Tscale>(
           scale[i], radiusPixels[i], numActualSectionsPerDisk[i],
-          d_sections.data().get() + offsetsToDiskSections[i],
-          d_sectionTypes.data().get() + offsetsToDiskSections[i]);
+          d_sections.data().get() + offsetToDiskSections,
+          d_sectionTypes.data().get() + offsetToDiskSections);
 
       if (i < NumDisks - 1)
-        offsetsToDiskSections[i + 1] =
-            offsetsToDiskSections[i] + numActualSectionsPerDisk[i];
+        offsetToDiskSections += numActualSectionsPerDisk[i];
     }
+    // Copy disk containers to device vector
+    thrust::copy(h_disks.begin(), h_disks.end(), d_disks.begin());
+  }
+
+  // For debugging, very helpful
+  __host__ void print() {
+    // NOTE: we need to create iterators here to read since
+    // the disks actually contain device pointers, so we can't just access
+    // them from the pinned_host_vector
+    auto sectionTypePtr = h_sectionTypes.data().get();
+    auto sectionPtr = h_sections.data().get();
+    for (int d = 0; d < numDisks(); ++d) {
+      // we read from the pinned host vector
+      auto disk = h_disks[d];
+
+      printf("Disk length %d, with %d sections, scale %f\n",
+             disk.lengthPixels(), disk.numSections, disk.scale);
+      for (int i = 0; i < disk.numSections; ++i) {
+        printf("Section %d: type %s row %d:%d col %d:%d\n", i,
+               sats::sectionTypeString(sectionTypePtr[i]).c_str(),
+               sectionPtr[i].startRow, sectionPtr[i].endRow,
+               -sectionPtr[i].colOffset, sectionPtr[i].colOffset);
+      }
+
+      printf("-----\n");
+      for (int i = -disk.radiusPixels; i < disk.radiusPixels + 1; ++i) {
+        auto section =
+            sats::getDiskSectionForRow(sectionPtr, disk.numSections, i);
+        printf("Row %d -> col %d : %d\n", i, -section.colOffset,
+               section.colOffset);
+      }
+      printf("-----\n");
+
+      // Move to offset to next disk
+      sectionTypePtr += disk.numSections;
+      sectionPtr += disk.numSections;
+    }
+  }
+
+  int maxDiskLength() const {
+    int maxLength = 0;
+    for (int i = 0; i < numDisks(); ++i) {
+      maxLength = std::max(maxLength, h_disks[i].lengthPixels());
+    }
+    return maxLength;
+  }
+
+  template <typename Tmat> __host__ std::vector<Tmat> makeMat() const {
+    // check max matrix required size
+    std::vector<Tmat> mat;
+    int maxLength = maxDiskLength();
+    mat.resize(maxLength * maxLength);
+    std::memset(mat.data(), 0, maxLength * maxLength * sizeof(Tmat));
+    // NOTE: in order to get the convenience of the DiskRowSAT struct
+    // methods, we need to construct new ones here, since the
+    // pinned_host_vector holds device pointers internally
+    int offsetToDiskSections = 0;
+    for (int i = 0; i < h_disks.size(); ++i) {
+      auto disk = DiskRowSAT<Tsection, Tscale>(
+          h_disks[i].scale, h_disks[i].radiusPixels, h_disks[i].numSections,
+          h_sections.data().get() + offsetToDiskSections,
+          h_sectionTypes.data().get() + offsetToDiskSections);
+      offsetToDiskSections += disk.numSections;
+
+      // use the newly created disk which points to host memory
+      // to set matrix values
+      for (int s = 0; s < disk.numSectionsToIterate(); ++s) {
+        auto section = disk.getSection(s);
+        for (int r = section.startRow; r <= section.endRow; ++r) {
+          for (int c = -section.colOffset; c <= section.colOffset; ++c) {
+            int y = r + maxLength / 2;
+            int x = c + maxLength / 2;
+            mat[y * maxLength + x] += disk.scale;
+          }
+        }
+      }
+    }
+    return mat;
   }
 };
 
@@ -655,6 +728,9 @@ __device__ void sumOverDisk_SAT_and_rowSums_threadwork(
   for (int i = 0; i < disk.numSectionsToIterate(); ++i) {
     uint8_t sectionType = disk.getSectionType(i);
     sats::DiskSection<Tsection> section = disk.getSection(i);
+    // if (x == 1 && y == 0) {
+    //   printf("On section %d, type %u, val is %d\n", i, sectionType, val);
+    // }
 
     // There is no warp divergence here!
     // All threads in a warp will be tackling the same type
@@ -723,16 +799,33 @@ __device__ void sumOverDisk_SAT_and_rowSums_threadwork(
       int2 bottomRight = make_int2(x + section.colOffset, y + section.endRow);
       Tsat d = getSATelement(sat, bottomRight.y, bottomRight.x);
 
-      val += a + d - b - c;
+      Tsat satVal = a + d - b - c;
+      // // DEBUG
+      // if (x == 1 && y == 0) {
+      //   printf("row %d, col %d, sectRow %d:%d, sectCol %d\n", y, x,
+      //          section.startRow, section.endRow, section.colOffset);
+      //   printf("x + colOffset = %d\n", x + section.colOffset);
+      //   printf("topRight %d, %d\n", topRight.x, topRight.y);
+      //   printf("%d,%d[%ld] / %d,%d[%ld] / %d,%d[%ld] / %d,%d[%ld]\n", //
+      //          topLeft.y, topLeft.x, a,                               //
+      //          topRight.y, topRight.x, b,                             //
+      //          bottomLeft.y, bottomLeft.x, c,                         //
+      //          bottomRight.y, bottomRight.x, d);                      //
+      //   printf("satVal = %ld \n", satVal);
+      // }
+      val += satVal;
+      // if (x == 1 && y == 0) {
+      //   printf("val = %ld\n", val);
+      // }
     }
   } // end loop over disk sections
 }
 
-template <int NumDisks, typename Tin, typename Trowsum, typename Tsat,
-          typename Tout, typename Tidx, typename Tsection = int16_t,
-          typename Tscale = double, bool incrementInsteadOfSet = false>
+template <typename Tin, typename Trowsum, typename Tsat, typename Tout,
+          typename Tidx, typename Tsection = int16_t, typename Tscale = double,
+          bool incrementInsteadOfSet = false>
 __global__ void convolve_via_SAT_and_rowSums_naive_kernel(
-    const FilterOfDisksRowSAT<NumDisks, Tsection, Tscale> filter,
+    const FilterOfDisksRowSAT<Tsection, Tscale> filter,
     const containers::Image<const Tin, Tidx> orig,
     const containers::Image<const Trowsum, Tidx> rowSums,
     const containers::Image<const Tsat, Tidx> sat,
@@ -746,11 +839,11 @@ __global__ void convolve_via_SAT_and_rowSums_naive_kernel(
       Tscale totalVal = 0;
 
       // Iterate over the disks in the filter
-      for (int d = 0; d < NumDisks; ++d) {
+      for (int d = 0; d < filter.numDisks; ++d) {
         sats::DiskRowSAT<Tsection, Tscale> disk = filter.d_disks[d];
-        if (x == 0 && y == 0) {
-          printf("On disk %d, has numSections %d\n", d, disk.numSections);
-        }
+        // if (x == 0 && y == 0) {
+        //   printf("On disk %d, has numSections %d\n", d, disk.numSections);
+        // }
         Tsat val = 0;
         sumOverDisk_SAT_and_rowSums_threadwork<Tin, Trowsum, Tsat, Tidx,
                                                Tsection, Tscale>(
