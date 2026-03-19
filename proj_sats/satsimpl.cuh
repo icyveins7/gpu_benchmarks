@@ -923,40 +923,11 @@ __global__ void convolve_via_SAT_and_rowSums_dynamicFilters_kernel(
   }
 }
 
-// TODO: finish this?
-template <typename Tdata, typename Tsection = int16_t>
-class DiskSectionContainer {
-public:
-  void resizeSections(size_t numSections) {
-    m_h_sections.resize(numSections);
-    m_h_sectionTypes.resize(numSections);
-    m_d_sections.resize(numSections);
-    m_d_sectionTypes.resize(numSections);
-  }
-
-protected:
-  int m_height;
-  int m_width;
-
-  DiskSectionContainer(int height, int width)
-      : m_height(height), m_width(width) {}
-
-  thrust::pinned_host_vector<DiskSection<Tsection>> m_h_sections;
-  thrust::pinned_host_vector<uint8_t> m_h_sectionTypes;
-
-  thrust::device_vector<DiskSection<Tsection>> m_d_sections;
-  thrust::device_vector<uint8_t> m_d_sectionTypes;
-};
-
-template <typename Tin, typename Trowsum, typename Tsat,
-          typename Tsection = int16_t>
-class PrefixRowsSAT : public DiskSectionContainer<Tin, Tsection> {
-public:
+template <typename Tin, typename Trowsum, typename Tsat> struct PrefixRowsSAT {
   PrefixRowsSAT(int height, int width)
-      : DiskSectionContainer<Tin, Tsection>(height, width),
-        m_d_rowSums(width, height), m_d_transpose(width, height),
-        m_d_sat(width, height), m_cubwRowScan(width * height),
-        m_cubwColScanTranspose(width * height) {}
+      : m_height(height), m_width(width), m_d_rowSums(width, height),
+        m_d_transpose(width, height), m_d_sat(width, height),
+        m_cubwRowScan(width * height), m_cubwColScanTranspose(width * height) {}
 
   void preprocess(const Tin *d_data, cudaStream_t stream = 0) {
     // CUB related prep
@@ -999,6 +970,8 @@ public:
   const containers::DeviceImageStorage<Tsat> &d_sat() const { return m_d_sat; }
 
 private:
+  int m_width;
+  int m_height;
   containers::DeviceImageStorage<Trowsum> m_d_rowSums;
   containers::DeviceImageStorage<Tsat> m_d_transpose;
   containers::DeviceImageStorage<Tsat> m_d_sat;
