@@ -35,4 +35,8 @@ if (GTEST_FOUND)
   add_executable(test_satstructs test_satstructs.cu)
   target_link_libraries(test_satstructs GTest::gtest_main)
   gtest_discover_tests(test_satstructs)
+  # --------------------
+  add_executable(test_satconvolve test_satconvolve.cu)
+  target_link_libraries(test_satconvolve GTest::gtest_main)
+  gtest_discover_tests(test_satconvolve)
 endif()

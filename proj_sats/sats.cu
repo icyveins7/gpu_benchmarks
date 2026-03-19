@@ -105,31 +105,12 @@ int main(int argc, char **argv) {
     h_data[i] = std::rand() % 10 - 5;
   }
 
-  // thrust::device_vector<Tdata> d_data(h_data);
   containers::DeviceImageStorage<Tin> d_data(width, height);
   thrust::copy(h_data.begin(), h_data.end(), d_data.vec.begin());
 
   containers::DeviceImageStorage<Tout> d_out(width, height);
 
-  // Pre-compute disk
-  // int maxSections =
-  //     sats::getMaximumSectionsForDisk_prefixRows_SAT(radiusPixels);
-  // thrust::host_vector<sats::DiskSection<int16_t>> h_sections(maxSections);
-  // thrust::host_vector<uint8_t> h_sectionTypes(maxSections);
-  // int numSections = sats::constructSectionsForDisk_prefixRows_SAT(
-  //     radiusPixels, h_sections.data(), h_sectionTypes.data());
-  // // Copy disk sections and types to device
-  // thrust::device_vector<sats::DiskSection<int16_t>> d_sections(numSections);
-  // thrust::device_vector<uint8_t> d_sectionTypes(numSections);
-  // thrust::copy(h_sections.begin(), h_sections.begin() + numSections,
-  //              d_sections.begin());
-  // thrust::copy(h_sectionTypes.begin(), h_sectionTypes.begin() + numSections,
-  //              d_sectionTypes.begin());
-  // // Make container
-  // sats::DiskRowSAT<int16_t> d_disk{1.0, (int)radiusPixels, numSections,
-  //                                  d_sections.data().get(),
-  //                                  d_sectionTypes.data().get()};
-
+  // Construct disks and containers for them
   sats::FilterOfDisksRowSATCreator<int16_t> filter(scaleList, radiusPixels,
                                                    numDisks);
 
@@ -145,7 +126,6 @@ int main(int argc, char **argv) {
       printf("\n");
     }
   }
-
   // End of debug printing
 
   // // Pre-compute multiple disks into a container
@@ -197,6 +177,7 @@ int main(int argc, char **argv) {
   convolver.preprocess(d_data.vec.data().get());
 
   // === 3. Perform convolution calculations via lookups
+  // NOTE: this is for a single filter
   {
     constexpr int factor = 1; // changing to 2 didn't make noticeable difference
     constexpr dim3 tpb(32, 16); // 32x8 or 32x16 seems better than 32x4
