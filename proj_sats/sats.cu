@@ -173,7 +173,7 @@ int main(int argc, char **argv) {
   // h_multidisks;
   //
 
-  sats::DiskConvolver_PrefixRowsSAT<Tin, Tout, Tout> convolver(height, width);
+  sats::PrefixRowsSAT<Tin, Tout, Tout> convolver(height, width);
   convolver.preprocess(d_data.vec.data().get());
 
   // === 3. Perform convolution calculations via lookups

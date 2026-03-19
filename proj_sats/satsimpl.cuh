@@ -521,14 +521,15 @@ struct FilterOfDisksRowSATCreator {
 // ==================================================================
 // ==================================================================
 
-template <typename Tidx> struct DiskSelectionRule {
+// NOTE: this is just an example of a Trule to be used in dynamic filter kernel
+template <typename Tidx> struct FilterSelectionRule {
   float stepSize;
   Tidx centreX;
   Tidx centreY;
   unsigned int maxDisks;
 
-  DiskSelectionRule(float _stepSize, Tidx _centreX, Tidx _centreY,
-                    int _maxDisks) {
+  FilterSelectionRule(float _stepSize, Tidx _centreX, Tidx _centreY,
+                      int _maxDisks) {
     stepSize = _stepSize;
     centreX = _centreX;
     centreY = _centreY;
@@ -558,14 +559,14 @@ template <typename Tidx> struct DiskSelectionRule {
 };
 
 template <typename Tidx>
-struct RadialThresholdLinearGradientRule : public DiskSelectionRule<Tidx> {
+struct RadialThresholdLinearGradientRule : public FilterSelectionRule<Tidx> {
   float minRadius; // disk index is 0 until this radius
   float maxRadius; // last disk index is hit at this radius
 
   RadialThresholdLinearGradientRule(float _stepSize, Tidx _centreX,
                                     Tidx _centreY, float _minRadius,
                                     float _maxRadius)
-      : DiskSelectionRule<Tidx>(
+      : FilterSelectionRule<Tidx>(
             _stepSize, _centreX, _centreY,
             (unsigned int)((_maxRadius - _minRadius) / (_stepSize) + 1)) {
     minRadius = _minRadius;
@@ -596,7 +597,7 @@ template <typename T>
 thrust::host_vector<int> constructMultipleDisksViaRule(
     const int radiusPixels, thrust::host_vector<DiskSection<T>> &h_sections,
     thrust::host_vector<uint8_t> &h_sectionTypes,
-    thrust::host_vector<int> &h_diskRadii, const DiskSelectionRule<T> rule) {
+    thrust::host_vector<int> &h_diskRadii, const FilterSelectionRule<T> rule) {
 
   std::vector<int> maxNumSections(rule.maxDisks);
   h_diskRadii.resize(rule.maxDisks);
@@ -821,6 +822,22 @@ __device__ void sumOverDisk_SAT_and_rowSums_threadwork(
   } // end loop over disk sections
 }
 
+/**
+ * @brief Convolves entire input with a single filter (of possibly multiple
+ * disks).
+ *
+ * @tparam Tin Input type
+ * @tparam Trowsum Row sum type
+ * @tparam Tsat SAT type
+ * @tparam Tout Output type
+ * @tparam Tidx Index type
+ * @param filter Filter pointing to multiple disks, see
+ * FilterOfDisksRowSATCreator
+ * @param orig Input
+ * @param rowSums Row sums, computed via DiskConvolver_PrefixRowsSAT
+ * @param sat SAT, computed via DiskConvolver_PrefixRowsSAT
+ * @param out Output
+ */
 template <typename Tin, typename Trowsum, typename Tsat, typename Tout,
           typename Tidx, typename Tsection = int16_t, typename Tscale = double,
           bool incrementInsteadOfSet = false>
@@ -861,45 +878,54 @@ __global__ void convolve_via_SAT_and_rowSums_naive_kernel(
   }
 }
 
-template <typename Tdata, typename Tidx, typename Tsection = int16_t,
-          typename Tscale = double, typename Trule>
-__global__ void convolve_via_SAT_and_rowSums_dynamicDisks_kernel(
-    const sats::DiskRowSAT<Tsection, Tscale> *disks, const Trule rule,
-    const containers::Image<Tdata, Tidx> orig,
-    const containers::Image<Tdata, Tidx> rowSums,
-    const containers::Image<Tdata, Tidx> sat,
-    containers::Image<Tdata, Tidx> out) {
+template <typename Tin, typename Trowsum, typename Tsat, typename Tout,
+          typename Tidx, typename Trule, typename Tsection = int16_t,
+          typename Tscale = double>
+__global__ void convolve_via_SAT_and_rowSums_dynamicFilters_kernel(
+    const sats::FilterOfDisksRowSAT<Tsection, Tscale> *filters,
+    const Trule rule, const containers::Image<Tin, Tidx> orig,
+    const containers::Image<Trowsum, Tidx> rowSums,
+    const containers::Image<Tsat, Tidx> sat,
+    containers::Image<Tout, Tidx> out) {
 
   for (int y = blockIdx.y * blockDim.y + threadIdx.y; y < orig.height;
        y += blockDim.y * gridDim.y) {
     for (int x = blockIdx.x * blockDim.x + threadIdx.x; x < orig.width;
          x += blockDim.x * gridDim.x) {
 
-      // Determine the disk required
-      // Example here is to use radius-based linear steps starting from the
-      // centre to determine the disk index. Any other rule should work
-      unsigned int diskIndex = rule.getDiskIndex(y, x);
-      const sats::DiskRowSAT<Tsection, Tscale> &disk = disks[diskIndex];
+      // Determine the filter required
+      // This is a templated functor effectively
+      unsigned int filterIndex = rule.getFilterIndex(y, x);
+      const sats::FilterOfDisksRowSAT<Tsection, Tscale> filter =
+          filters[filterIndex];
 
-      // Every thread (potentially) uses its own disk
-      Tscale val =
-          sumOverDisk_SAT_and_rowSums_threadwork<Tdata, Tidx, Tsection, Tscale>(
-              disk, orig, rowSums, sat, x, y);
+      // Once the filter is retrieved, everything is identical to the single
+      // filter version
+      Tscale totalVal = 0;
 
-      // if (threadIdx.x == 0 && threadIdx.y == 0) {
-      //   printf(" Disk index for (row %d, col %d) is %d -> %d sections\n", y,
-      //   x,
-      //          diskIndex, disk.numSections);
-      // }
+      // Iterate over the disks in the filter
+      for (int d = 0; d < filter.numDisks; ++d) {
+        sats::DiskRowSAT<Tsection, Tscale> disk = filter.d_disks[d];
+        // if (x == 0 && y == 0) {
+        //   printf("On disk %d, has numSections %d\n", d, disk.numSections);
+        // }
+        Tsat val = 0;
+        sumOverDisk_SAT_and_rowSums_threadwork<Tin, Trowsum, Tsat, Tidx,
+                                               Tsection, Tscale>(
+            disk, orig, rowSums, sat, x, y, val);
+
+        totalVal += val * disk.scale;
+      }
 
       // Value is ready here, write it back
-      out.at(y, x) = static_cast<Tdata>(val * disk.scale);
+      out.at(y, x) = static_cast<Tout>(totalVal);
     }
   }
 }
 
 // TODO: finish this?
-template <typename Tdata, typename Tsection = int16_t> class DiskConvolver {
+template <typename Tdata, typename Tsection = int16_t>
+class DiskSectionContainer {
 public:
   void resizeSections(size_t numSections) {
     m_h_sections.resize(numSections);
@@ -912,7 +938,8 @@ protected:
   int m_height;
   int m_width;
 
-  DiskConvolver(int height, int width) : m_height(height), m_width(width) {}
+  DiskSectionContainer(int height, int width)
+      : m_height(height), m_width(width) {}
 
   thrust::pinned_host_vector<DiskSection<Tsection>> m_h_sections;
   thrust::pinned_host_vector<uint8_t> m_h_sectionTypes;
@@ -923,12 +950,13 @@ protected:
 
 template <typename Tin, typename Trowsum, typename Tsat,
           typename Tsection = int16_t>
-class DiskConvolver_PrefixRowsSAT : public DiskConvolver<Tin, Tsection> {
+class PrefixRowsSAT : public DiskSectionContainer<Tin, Tsection> {
 public:
-  DiskConvolver_PrefixRowsSAT(int height, int width)
-      : DiskConvolver<Tin, Tsection>(height, width), m_d_rowSums(width, height),
-        m_d_transpose(width, height), m_d_sat(width, height),
-        m_cubwRowScan(width * height), m_cubwColScanTranspose(width * height) {}
+  PrefixRowsSAT(int height, int width)
+      : DiskSectionContainer<Tin, Tsection>(height, width),
+        m_d_rowSums(width, height), m_d_transpose(width, height),
+        m_d_sat(width, height), m_cubwRowScan(width * height),
+        m_cubwColScanTranspose(width * height) {}
 
   void preprocess(const Tin *d_data, cudaStream_t stream = 0) {
     // CUB related prep
@@ -961,33 +989,6 @@ public:
                           this->m_d_transpose.vec.data().get(),
                           (int)this->m_width, (int)this->m_height, stream);
   }
-
-  // void exec(const Tin *d_img, const sats::DiskRowSAT<Tsection> d_disk,
-  //           Tin *d_out, const dim3 tpb = dim3(32, 4), cudaStream_t stream =
-  //           0) {
-  //   // Run pre-process to fill row sums and SAT
-  //   preprocess(d_img, stream);
-  //
-  //   // Wrap device arrays in containers
-  //   containers::Image<int, unsigned int> image(d_img, this->m_width,
-  //                                              this->m_height);
-  //   containers::Image<int, unsigned int>
-  //   rowSums(this->m_d_rowSums.data().get(),
-  //                                                this->m_width,
-  //                                                this->m_height);
-  //   containers::Image<int, unsigned int> sat(this->m_d_sat.data().get(),
-  //                                            this->m_width, this->m_height);
-  //   containers::Image<int, unsigned int> out(d_out, this->m_width,
-  //                                            this->m_height);
-  //
-  //   // Perform convolutions via lookups
-  //   constexpr int factor = 1;
-  //   dim3 blks((this->width + tpb.x - 1) / tpb.x,
-  //             (this->height + tpb.y - 1) / tpb.y / factor);
-  //   // convolve_via_SAT_and_rowSums_naive_kernel<Tdata, unsigned int,
-  //   Tsection>
-  //   //     <<<blks, tpb, 0, stream>>>(d_disk, image, rowSums, sat, out);
-  // }
 
   const containers::DeviceImageStorage<Trowsum> &d_rowSums() const {
     return m_d_rowSums;

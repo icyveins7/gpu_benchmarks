@@ -48,7 +48,7 @@ void test_convolve_singlefilter(const Tscale *scales,
   thrust::copy(h_data.begin(), h_data.end(), d_data.vec.begin());
 
   // Construct convolver
-  sats::DiskConvolver_PrefixRowsSAT<Tin, Tout, Tout> convolver(height, width);
+  sats::PrefixRowsSAT<Tin, Tout, Tout> convolver(height, width);
   convolver.preprocess(d_data.vec.data().get());
   // Check preprocessing
   thrust::host_vector<Trowsum> h_rowSums = convolver.d_rowSums().vec;
