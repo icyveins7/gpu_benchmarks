@@ -609,9 +609,9 @@ struct MultiFilterOfDisksRowSATCreator {
 // ==================================================================
 // ==================================================================
 
-struct SimpleRule {
+template <int M = 2> struct SimpleRule {
   __host__ __device__ unsigned int getFilterIndex(int y, int x) const {
-    return x % 2;
+    return x % M;
   }
 };
 

@@ -237,7 +237,7 @@ int main(int argc, char **argv) {
   // ============================================================
 
   // Arbitrary testing for multiple filters
-  int numFilters = 2;
+  const int numFilters = 2;
   sats::MultiFilterOfDisksRowSATCreator<int16_t, double> multifilter;
   for (int i = 0; i < numFilters; ++i) {
     double mScaleList[4] = {scaleList[0] + i, scaleList[1] + i,
@@ -257,13 +257,13 @@ int main(int argc, char **argv) {
   }
 
   {
-    sats::SimpleRule rule;
+    sats::SimpleRule<numFilters> rule;
     constexpr int factor = 1;
     constexpr dim3 tpb(32, 4);
     dim3 blks((width + tpb.x - 1) / tpb.x,
               (height + tpb.y - 1) / tpb.y / factor);
     sats::convolve_via_SAT_and_rowSums_dynamicFilters_kernel<
-        Tin, Tout, Tout, Tout, unsigned int, sats::SimpleRule>
+        Tin, Tout, Tout, Tout, unsigned int, sats::SimpleRule<numFilters>>
         <<<blks, tpb>>>(multifilter.d_filters(), rule, d_data.cimage(), //
                         preprocessor.d_rowSums().cimage(),              //
                         preprocessor.d_sat().cimage(),                  //

@@ -48,7 +48,7 @@ void test_convolve_singlefilter(const Tscale *scales,
   thrust::copy(h_data.begin(), h_data.end(), d_data.vec.begin());
 
   // Construct convolver
-  sats::PrefixRowsSAT<Tin, Tout, Tout> convolver(height, width);
+  sats::PrefixRowsSAT<Tin, Trowsum, Tsat> convolver(height, width);
   convolver.preprocess(d_data.vec.data().get());
   // Check preprocessing
   thrust::host_vector<Trowsum> h_rowSums = convolver.d_rowSums().vec;
@@ -79,6 +79,74 @@ void test_convolve_singlefilter(const Tscale *scales,
 
   for (size_t i = 0; i < checkOut.size(); ++i) {
     ASSERT_EQ(checkOut[i], h_out[i]);
+  }
+}
+
+// Expects each filter has same number of disks
+template <int NumFilters, typename Tin, typename Trowsum, typename Tsat,
+          typename Tout, typename Tscale>
+void test_convolve_multifilter(const Tscale *scales, const double *radiusPixels,
+                               const int numDisks, const int width,
+                               const int height) {
+
+  // Construct multi filter
+  sats::MultiFilterOfDisksRowSATCreator<int16_t, double> multifilter;
+  for (int f = 0; f < NumFilters; ++f) {
+    multifilter.addFilter(&scales[f * numDisks], &radiusPixels[f * numDisks],
+                          numDisks);
+  }
+  multifilter.h2d();
+  ASSERT_EQ(multifilter.numFilters(), NumFilters);
+
+  // Construct disks and containers for them
+  sats::SimpleRule<NumFilters> rule;
+
+  // Construct sample input
+  containers::DeviceImageStorage<Tin> d_data(width, height);
+  thrust::host_vector<Tin> h_data(height * width);
+  for (int i = 0; i < height * width; i++) {
+    h_data[i] = std::rand() % 10 - 5;
+  }
+  thrust::copy(h_data.begin(), h_data.end(), d_data.vec.begin());
+
+  // Construct convolver
+  sats::PrefixRowsSAT<Tin, Trowsum, Tsat> convolver(height, width);
+  convolver.preprocess(d_data.vec.data().get());
+  // Check preprocessing
+  thrust::host_vector<Trowsum> h_rowSums = convolver.d_rowSums().vec;
+  thrust::host_vector<Tsat> h_sat = convolver.d_sat().vec;
+  validate_preprocessing(h_data, h_rowSums, h_sat, width, height);
+
+  // Run kernel for convolution
+  containers::DeviceImageStorage<Tout> d_out(width, height);
+  {
+    constexpr int factor = 1; // changing to 2 didn't make noticeable difference
+    constexpr dim3 tpb(32, 16); // 32x8 or 32x16 seems better than 32x4
+    dim3 blks((width + tpb.x - 1) / tpb.x,
+              (height + tpb.y - 1) / tpb.y / factor);
+    sats::convolve_via_SAT_and_rowSums_dynamicFilters_kernel<
+        Tin, Trowsum, Tsat, Tout, unsigned int, sats::SimpleRule<NumFilters>,
+        int16_t><<<blks, tpb>>>(multifilter.d_filters(), rule,
+                                d_data.cimage(),                //
+                                convolver.d_rowSums().cimage(), //
+                                convolver.d_sat().cimage(),     //
+                                d_out.image());
+  }
+
+  thrust::host_vector<Tout> h_out = d_out.vec;
+
+  // Check final output
+  std::vector<std::vector<double>> mats(NumFilters);
+  std::vector<int> matLengths(NumFilters);
+  for (int f = 0; f < (int)multifilter.numFilters(); ++f) {
+    mats.at(f) = multifilter.h_filtercreators[f].makeMat<double>();
+    matLengths.at(f) = multifilter.h_filtercreators[f].maxDiskLength();
+  }
+  std::vector<double> checkOut = convExplicitlyWithRule<Tin, double, double>(
+      mats, matLengths, h_data.data(), height, width, rule);
+
+  for (size_t i = 0; i < checkOut.size(); ++i) {
+    ASSERT_FLOAT_EQ(checkOut[i], h_out[i]);
   }
 }
 
@@ -115,5 +183,47 @@ TEST(ConvolverSAT_prefixRows_singleFilter_4disk, size100x100) {
   double radiusPixels[numDisks] = {5.0, 4.0, 3.0, 2.0};
 
   test_convolve_singlefilter<Tin, Trowsum, Tsat, Tout, Tscale>(
+      scales, radiusPixels, numDisks, width, height);
+}
+
+TEST(ConvolverSAT_prefixRows_multiFilter_1disk, size100x100) {
+  int width = 100;
+  int height = 100;
+
+  using Tscale = double;
+  using Tin = int32_t;
+  using Trowsum = int64_t;
+  using Tsat = int64_t;
+  using Tout = int64_t;
+
+  const int numFilters = 2;
+  const int numDisks = 1;
+  Tscale scales[numFilters * numDisks] = {1.0, //
+                                          2.0};
+  double radiusPixels[numFilters * numDisks] = {1.0, //
+                                                2.0};
+
+  test_convolve_multifilter<numFilters, Tin, Trowsum, Tsat, Tout, Tscale>(
+      scales, radiusPixels, numDisks, width, height);
+}
+
+TEST(ConvolverSAT_prefixRows_multiFilter_4disk, size100x100) {
+  int width = 100;
+  int height = 100;
+
+  using Tscale = double;
+  using Tin = int32_t;
+  using Trowsum = int64_t;
+  using Tsat = int64_t;
+  using Tout = double;
+
+  const int numFilters = 2;
+  const int numDisks = 4;
+  Tscale scales[numFilters * numDisks] = {1.0, 2.0, 3.0, 4.0, //
+                                          2.0, 3.0, 4.0, 5.0};
+  double radiusPixels[numFilters * numDisks] = {1.0, 2.0, 3.0, 4.0, //
+                                                2.0, 3.0, 4.0, 5.0};
+
+  test_convolve_multifilter<numFilters, Tin, Trowsum, Tsat, Tout, Tscale>(
       scales, radiusPixels, numDisks, width, height);
 }
