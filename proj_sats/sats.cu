@@ -244,7 +244,7 @@ int main(int argc, char **argv) {
                             scaleList[2] + i, scaleList[3] + i};
     double mRadiusPixels[4] = {radiusPixels[0] + i, radiusPixels[1] + i,
                                radiusPixels[2] + i, radiusPixels[3] + i};
-    multifilter.addFilter(mScaleList, mRadiusPixels, numDisks, i);
+    multifilter.addFilter(mScaleList, mRadiusPixels, numDisks);
   }
   // Remember to push all the filters up!
   multifilter.h2d();
