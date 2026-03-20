@@ -571,7 +571,7 @@ struct MultiFilterOfDisksRowSATCreator {
   size_t numFilters() const { return h_filtercreators.size(); }
 
   void addFilter(const Tscale *scale, const double *radiusPixels,
-                 const int NumDisks, const size_t filterIdx) {
+                 const int NumDisks) {
     for (int i = 0; i < NumDisks; ++i) {
       printf("Adding to multifilter index %zu, disk with scale %f, radius %f\n",
              h_filtercreators.size(), scale[i], radiusPixels[i]);
