@@ -237,15 +237,23 @@ int main(int argc, char **argv) {
   // ============================================================
 
   // Arbitrary testing for multiple filters
-  sats::MultiFilterOfDisksRowSATCreator<int16_t, double> multifilter;
   int numFilters = 2;
+  sats::MultiFilterOfDisksRowSATCreator<int16_t, double> multifilter;
   for (int i = 0; i < numFilters; ++i) {
     double mScaleList[4] = {scaleList[0] + i, scaleList[1] + i,
                             scaleList[2] + i, scaleList[3] + i};
     double mRadiusPixels[4] = {radiusPixels[0] + i, radiusPixels[1] + i,
                                radiusPixels[2] + i, radiusPixels[3] + i};
-    multifilter.addFilter(mScaleList, mRadiusPixels, numDisks);
-    printf("Added filter %d\n", i);
+    multifilter.addFilter(mScaleList, mRadiusPixels, numDisks, i);
+  }
+  // Remember to push all the filters up!
+  multifilter.h2d();
+
+  // debug prints
+  for (size_t i = 0; i < multifilter.numFilters(); ++i) {
+    auto &filter = multifilter.h_filters_vec[i];
+    printf("Filter %zu has %u disks, at %p\n", i, filter.numDisks,
+           filter.d_disks);
   }
 
   {
@@ -260,6 +268,43 @@ int main(int argc, char **argv) {
                         preprocessor.d_rowSums().cimage(),              //
                         preprocessor.d_sat().cimage(),                  //
                         d_out.image());
+  }
+
+  h_out = d_out.vec;
+
+  if (height <= 32 && width <= 32) {
+    // print the two filters again
+    for (size_t i = 0; i < multifilter.numFilters(); ++i) {
+      auto &filter = multifilter.h_filtercreators[i];
+      std::vector<double> mat =
+          multifilter.h_filtercreators[i].makeMat<double>();
+
+      printf("-------- Filter %zu:\n", i);
+      for (int i = 0; i < filter.maxDiskLength(); ++i) {
+        for (int j = 0; j < filter.maxDiskLength(); ++j) {
+          printf("%.1f ", mat[i * filter.maxDiskLength() + j]);
+        }
+        printf("\n");
+      }
+    }
+
+    // Print input again
+    printf("-------- Original:\n");
+    for (int i = 0; i < height; ++i) {
+      for (int j = 0; j < width; ++j) {
+        printf("%4d ", h_data[i * width + j]);
+      }
+      printf("\n");
+    }
+
+    // Check final output
+    printf("-------- Output:\n");
+    for (int i = 0; i < height; ++i) {
+      for (int j = 0; j < width; ++j) {
+        printf("%4ld ", h_out[i * width + j]);
+      }
+      printf("\n");
+    }
   }
 
   return 0;

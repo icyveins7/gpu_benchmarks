@@ -376,6 +376,7 @@ struct FilterOfDisksRowSATCreator {
     return container;
   }
 
+  // Primary constructor
   FilterOfDisksRowSATCreator(const Tscale *scale, const double *radiusPixels,
                              const int NumDisks) {
 
@@ -436,6 +437,44 @@ struct FilterOfDisksRowSATCreator {
     }
     // Copy disk containers to device vector
     thrust::copy(h_disks.begin(), h_disks.end(), d_disks.begin());
+  }
+
+  // Delete copy constructor and assignment
+  /* NOTE: important that we do not enable copy constructor/assignment,
+   *  because if the device vectors are copied, the pointers need to be changed.
+   *  1. Original d_sections would be copied to another device address (valid)
+   *  2. h_disks/d_disks would be copied, but point to the old device address
+   *  (invalid)
+   * We could fix this by getting the copy semantics to properly re-set and/or
+   * re-memcpy H2D the new device pointers, but this seems unnecessary for what
+   * we want so i'm just going to delete them. I also don't really want to
+   * reallocate it everytime i trigger a move anyway.
+   */
+  FilterOfDisksRowSATCreator(const FilterOfDisksRowSATCreator &) = delete;
+  FilterOfDisksRowSATCreator &
+  operator=(const FilterOfDisksRowSATCreator &) = delete;
+
+  // Custom move constructor and assignment
+  __host__ FilterOfDisksRowSATCreator(FilterOfDisksRowSATCreator &&other) {
+    printf("FilterOfDisksRowSATCreator move constructor\n");
+    h_disks = std::move(other.h_disks);
+    d_disks = std::move(other.d_disks);
+    h_sections = std::move(other.h_sections);
+    d_sections = std::move(other.d_sections);
+    h_sectionTypes = std::move(other.h_sectionTypes);
+    d_sectionTypes = std::move(other.d_sectionTypes);
+  }
+
+  __host__ FilterOfDisksRowSATCreator &
+  operator=(FilterOfDisksRowSATCreator &&other) {
+    printf("FilterOfDisksRowSATCreator move assignment\n");
+    h_disks = std::move(other.h_disks);
+    d_disks = std::move(other.d_disks);
+    h_sections = std::move(other.h_sections);
+    d_sections = std::move(other.d_sections);
+    h_sectionTypes = std::move(other.h_sectionTypes);
+    d_sectionTypes = std::move(other.d_sectionTypes);
+    return *this;
   }
 
   // For debugging, very helpful
@@ -525,20 +564,35 @@ struct MultiFilterOfDisksRowSATCreator {
   thrust::device_vector<FilterOfDisksRowSAT<Tsection, Tscale>> d_filters_vec;
 
   MultiFilterOfDisksRowSATCreator() {}
+  MultiFilterOfDisksRowSATCreator(const size_t numFilters) {
+    h_filtercreators.reserve(numFilters);
+  }
 
-  size_t size() const { return h_filtercreators.size(); }
+  size_t numFilters() const { return h_filtercreators.size(); }
 
   void addFilter(const Tscale *scale, const double *radiusPixels,
-                 const int NumDisks) {
+                 const int NumDisks, const size_t filterIdx) {
+    for (int i = 0; i < NumDisks; ++i) {
+      printf("Adding to multifilter index %zu, disk with scale %f, radius %f\n",
+             h_filtercreators.size(), scale[i], radiusPixels[i]);
+    }
+    // NOTE: FilterOfDisksRowSATCreator must have proper copy/move semantics
+    // defined. i have disabled copy as it doesn't make sense i think. so this
+    // push_back triggers moves.
+    // with the proper move semantics defined it should actually be possible to
+    // push_back even if the numFilters was not reserved
     h_filtercreators.push_back(FilterOfDisksRowSATCreator<Tsection, Tscale>(
         scale, radiusPixels, NumDisks));
+    printf("---- Added filter %zu\n", h_filtercreators.size() - 1);
   }
 
   void h2d() {
     h_filters_vec.resize(h_filtercreators.size());
     d_filters_vec.resize(h_filtercreators.size());
     for (size_t i = 0; i < h_filtercreators.size(); ++i) {
-      h_filters_vec.at(i) = h_filtercreators.toDevice();
+      printf("Filter %zu disks at %p\n", i,
+             h_filtercreators[i].d_disks.data().get());
+      h_filters_vec[i] = h_filtercreators[i].toDevice();
     }
     // Copy up all the filters
     d_filters_vec = h_filters_vec;
@@ -936,8 +990,17 @@ __global__ void convolve_via_SAT_and_rowSums_dynamicFilters_kernel(
       // Determine the filter required
       // This is a templated functor effectively
       unsigned int filterIndex = rule.getFilterIndex(y, x);
+
+      // if (x < 2 && y == 0) {
+      //   printf("y %d, x %d -> filterIndex = %d\n", y, x, filterIndex);
+      // }
       const sats::FilterOfDisksRowSAT<Tsection, Tscale> filter =
           filters[filterIndex];
+      // if (x < 2 && y == 0) {
+      //   printf("y %d, x %d -> numDisks %u d_disks %p\n", y, x,
+      //   filter.numDisks,
+      //          filter.d_disks);
+      // }
 
       // Once the filter is retrieved, everything is identical to the single
       // filter version
@@ -946,8 +1009,16 @@ __global__ void convolve_via_SAT_and_rowSums_dynamicFilters_kernel(
       // Iterate over the disks in the filter
       for (int d = 0; d < filter.numDisks; ++d) {
         sats::DiskRowSAT<Tsection, Tscale> disk = filter.d_disks[d];
-        // if (x == 0 && y == 0) {
-        //   printf("On disk %d, has numSections %d\n", d, disk.numSections);
+        // if (x < 2 && y == 0) {
+        //   for (int i = 0; i < disk.numSectionsToIterate(); ++i) {
+        //     auto section = disk.getSection(i);
+        //     auto sectionType = disk.getSectionType(i);
+        //     printf(
+        //         "x %d, y %d, Disk %d Section %d: type %u row %d:%d col
+        //         %d:%d\n", x, y, d, i, (unsigned)sectionType,
+        //         section.startRow, section.endRow, -section.colOffset,
+        //         section.colOffset);
+        //   }
         // }
         Tsat val = 0;
         sumOverDisk_SAT_and_rowSums_threadwork<Tin, Trowsum, Tsat, Tidx,
