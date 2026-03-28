@@ -194,14 +194,27 @@ def direct_solve_from_pixels(xy: np.ndarray, window: np.ndarray):
 
     return labels
 
-def direct_pathcompress_labels(labels: np.ndarray):
-    for i, label in enumerate(labels):
-        # go to root
-        idx = i
-        while idx != label:
-            idx = label
-            label = labels[idx]
-        labels[i] = label
+def direct_pathcompress_labels(labels: np.ndarray, repeatUntilComplete: bool = True):
+    numChanges = 1 # dummy initial value
+    while numChanges > 0:
+        numChanges = 0 # reset
+        for i, label in enumerate(labels):
+            # go to root
+            idx = i
+            while idx != label:
+                idx = label
+                label = labels[idx]
+
+            if labels[i] != label:
+                numChanges += 1
+                labels[i] = label
+
+        print(numChanges)
+        print(labels)
+        if not repeatUntilComplete:
+            break
+
+
 
 
 def flat_labels_to_label_map(xy: np.ndarray, labels: np.ndarray, dims: tuple):
