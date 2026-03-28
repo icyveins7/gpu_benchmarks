@@ -165,3 +165,49 @@ def connect(idx_map: np.ndarray, hdist: int, vdist: int, reach: int = -1, maxIte
 
     return idx_map, numChanges_list
 
+def xy_from_binary_map(binary: np.ndarray):
+    xy = np.array([idx for idx, val in np.ndenumerate(binary) if val == 1])
+    xy = xy[:, ::-1] # xy instead of yx
+    return xy
+
+def direct_solve_from_pixels(xy: np.ndarray, window: np.ndarray):
+    if window.size != 2:
+        raise ValueError("Window should just be an array with xDist, yDist")
+
+    if not np.issubdtype(xy.dtype, np.integer):
+        raise TypeError("xy should be integer type")
+
+    if not np.issubdtype(window.dtype, np.integer):
+        raise TypeError("window should be integer type")
+
+    if xy.ndim != 2 or xy.shape[1] != 2:
+        raise ValueError("xy should be Nx2 array")
+
+    labels = np.zeros(xy.shape[0], xy.dtype)
+    for i in range(1, len(xy)):
+        print('-----')
+        dists = np.abs(xy[i] - xy[:i])
+        distWithinRange = np.all(dists <= window, axis=1)
+        validIndices = np.argwhere(distWithinRange).ravel()
+        print(validIndices)
+        labels[i] = validIndices[0] if validIndices.size > 0 else i
+
+    return labels
+
+def direct_pathcompress_labels(labels: np.ndarray):
+    for i, label in enumerate(labels):
+        # go to root
+        idx = i
+        while idx != label:
+            idx = label
+            label = labels[idx]
+        labels[i] = label
+
+
+def flat_labels_to_label_map(xy: np.ndarray, labels: np.ndarray, dims: tuple):
+    m = np.zeros(dims, np.int32) - 1
+    for pos, label in zip(xy, labels):
+        m[pos[1], pos[0]] = label
+    return m
+
+

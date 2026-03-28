@@ -1,4 +1,5 @@
 import wccl
+import numpy as np
 
 # # Test a random map
 # binary_map = rand_binary_map(2, 3)
@@ -57,20 +58,20 @@ binary_string = [
 #     "0100010100",
 #     "1000001000",
 # ]
-binary_string = [
-    "1000001",
-    "0100010",
-    "0010100",
-    "0001000",
-    "0010100",
-    "0100010",
-    "1000001",
-]
 # binary_string = [
-#     "1101",
-#     "1101",
-#     "1101",
+#     "1000001",
+#     "0100010",
+#     "0010100",
+#     "0001000",
+#     "0010100",
+#     "0100010",
+#     "1000001",
 # ]
+binary_string = [
+    "1101",
+    "1101",
+    "1101",
+]
 # binary_string = [
 #     "0001",
 #     "0010",
@@ -78,16 +79,31 @@ binary_string = [
 #     "1000",
 # ]
 
-for reach in range(-1, 0):
-    print(f"=============== Reach: {reach}")
-    binary_map = wccl.parse_string_to_binary_map(binary_string)
-    # print(binary_map)
-    idx_map = wccl.make_indices_map(binary_map)
-    # print(idx_map)
+# for reach in range(-1, 0):
+#     print(f"=============== Reach: {reach}")
+#     binary_map = wccl.parse_string_to_binary_map(binary_string)
+#     # print(binary_map)
+#     idx_map = wccl.make_indices_map(binary_map)
+#     # print(idx_map)
+#
+#     idx_map, numChanges = wccl.connect(idx_map, 1, 1,
+#                                        # reach=-1,
+#                                        verbose=True)
+#     print(numChanges)
+#
+#     wccl.pprint(idx_map)
 
-    idx_map, numChanges = wccl.connect(idx_map, 1, 1,
-                                       # reach=-1,
-                                       verbose=True)
-    print(numChanges)
 
-    wccl.pprint(idx_map)
+
+# ========== direct function tests
+binary_map = wccl.parse_string_to_binary_map(binary_string)
+xy = wccl.xy_from_binary_map(binary_map)
+print(xy)
+window = np.array([1, 1])
+labels = wccl.direct_solve_from_pixels(xy, window)
+print(labels)
+wccl.direct_pathcompress_labels(labels)
+print(labels)
+label_map = wccl.flat_labels_to_label_map(xy, labels, binary_map.shape)
+wccl.pprint(label_map)
+
