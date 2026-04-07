@@ -144,6 +144,20 @@ struct DeviceImageStorage {
       : vec(_width * _height), width(_width), height(_height) {}
 
   /**
+   * @brief Resizes the underlying device_vector to the specified dimensions
+   * and updates the internal width/height tracking;
+   * implicitly calls the .resize() so its effects are identical.
+   *
+   * @param _width New width
+   * @param _height New height
+   */
+  void resize(const Tidx _width, const Tidx _height) {
+    vec.resize(_width * _height);
+    width = _width;
+    height = _height;
+  }
+
+  /**
    * @brief Primary useful method. Returns a new Image struct that encloses the
    * pointer alone, allowing it to be passed to a kernel by value.
    *

@@ -66,4 +66,9 @@ if (GTEST_FOUND)
   add_executable(test_bitset test_bitset.cu)
   target_link_libraries(test_bitset GTest::gtest_main)
   gtest_discover_tests(test_bitset)
+
+  # --------------------
+  add_executable(test_image test_image.cu)
+  target_link_libraries(test_image GTest::gtest_main)
+  gtest_discover_tests(test_image)
 endif()

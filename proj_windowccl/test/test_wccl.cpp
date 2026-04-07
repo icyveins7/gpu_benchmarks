@@ -8,6 +8,7 @@
 #include <thrust/host_vector.h>
 
 #include <random>
+#include <algorithm>
 
 #define ERROR_EXPECTED_INACTIVE_GOT_ACTIVE 1
 #define ERROR_EXPECTED_ACTIVE_GOT_INACTIVE 2
