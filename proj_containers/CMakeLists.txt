@@ -57,6 +57,31 @@ target_sources(
   ${PROJECT_SOURCE_DIR}/deviceselect.cu
 )
 
+# --------------------
+set_source_files_properties(${PROJECT_SOURCE_DIR}/stream_ordered_alloc.cu PROPERTIES LANGUAGE CUDA)
+add_executable(stream_ordered_alloc)
+
+target_include_directories(stream_ordered_alloc
+                           PRIVATE ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
+                           )
+
+target_sources(
+  stream_ordered_alloc PRIVATE
+  ${PROJECT_SOURCE_DIR}/stream_ordered_alloc.cu
+  ${CMAKE_SOURCE_DIR}/src/containers/streams.cu
+)
+
+add_executable(stream_ordered_alloc_with_memcpy)
+target_include_directories(stream_ordered_alloc_with_memcpy
+                           PRIVATE ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
+                           )
+target_compile_definitions(stream_ordered_alloc_with_memcpy PRIVATE WITH_MEMCPY)
+target_sources(
+  stream_ordered_alloc_with_memcpy PRIVATE
+  ${PROJECT_SOURCE_DIR}/stream_ordered_alloc.cu
+  ${CMAKE_SOURCE_DIR}/src/containers/streams.cu
+)
+
 
 # -------------------- Tests
 if (GTEST_FOUND)
