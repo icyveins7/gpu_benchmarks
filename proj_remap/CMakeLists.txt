@@ -65,6 +65,19 @@ target_sources(
   ${PROJECT_SOURCE_DIR}/downsample.cu
 )
 
+# --------------------
+set_source_files_properties(oversample_remap.cu PROPERTIES LANGUAGE CUDA)
+add_executable(oversample_remap)
+
+target_include_directories(oversample_remap
+                           PRIVATE ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
+                           )
+
+target_sources(
+  oversample_remap PRIVATE
+  ${PROJECT_SOURCE_DIR}/oversample_remap.cu
+)
+
 # -------------------- Tests
 if (GTEST_FOUND)
   message("Enabling tests for proj_remap")

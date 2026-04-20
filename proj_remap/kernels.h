@@ -1,3 +1,5 @@
+#pragma once
+
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
 #include "cuda.h"
@@ -14,8 +16,8 @@
 template <typename T>
 void quickView(const thrust::host_vector<T> &v, const size_t width,
                const size_t height) {
-  for (int i = 0; i < height; ++i) {
-    for (int j = 0; j < width; ++j) {
+  for (size_t i = 0; i < height; ++i) {
+    for (size_t j = 0; j < width; ++j) {
       printf("%.2f ", (float)v[i * width + j]);
     }
     printf("\n");
