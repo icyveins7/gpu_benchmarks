@@ -20,6 +20,7 @@ int main(int argc, char *argv[]) {
     ("yoffset", "Output y offset", cxxopts::value<float>()->default_value("0"))
     ("xstep", "Output x step", cxxopts::value<float>()->default_value("0.8"))
     ("ystep", "Output y step", cxxopts::value<float>()->default_value("0.8"))
+    ("shm", "Use shared mem", cxxopts::value<bool>()->default_value("true"))
     ("h,help", "Print usage")
   ;
   // clang-format on
@@ -29,6 +30,8 @@ int main(int argc, char *argv[]) {
     std::cout << options.help() << std::endl;
     return 0;
   }
+  bool useSharedMem = result["shm"].as<bool>();
+  printf("Using shared mem? %s\n", useSharedMem ? "true" : "false");
 
   containers::DeviceImageStorage<int> d_in(result["inheight"].as<int>(),
                                            result["inwidth"].as<int>());
@@ -42,16 +45,15 @@ int main(int argc, char *argv[]) {
   float2 outOffset{result["xoffset"].as<float>(),
                    result["yoffset"].as<float>()};
   float2 outStep{result["xstep"].as<float>(), result["ystep"].as<float>()};
-  {
-    using Tcalc = float;
-    dim3 tpb(32, 4);
-    dim3 blks(justEnoughBlocks(tpb.x, d_out.width),
-              justEnoughBlocks(tpb.y, d_out.height));
-    size_t shmem =
-        tpb.x * tpb.y * oversampleFactor.x * oversampleFactor.y * sizeof(Tcalc);
-    oversampleBilerpAndCombineKernel<int, float, Tcalc, false>
-        <<<blks, tpb, shmem>>>(d_in.cimage(), d_out.image(), oversampleFactor,
-                               outOffset, outStep);
+  using Tcalc = float;
+  if (useSharedMem) {
+    oversampleBilerpAndCombine<int, float, Tcalc, true>(
+        d_in.cimage(), d_out.image(), oversampleFactor, outOffset, outStep,
+        dim3(32, 4));
+  } else {
+    oversampleBilerpAndCombine<int, float, Tcalc, false>(
+        d_in.cimage(), d_out.image(), oversampleFactor, outOffset, outStep,
+        dim3(32, 4));
   }
   thrust::pinned_host_vector<float> h_out = d_out.vec;
 

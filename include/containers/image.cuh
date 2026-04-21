@@ -39,6 +39,18 @@ template <typename Tdata, typename Tidx = unsigned int> struct Image {
       : data(_data), width(_width), height(_height),
         bytesPerRow(width * sizeof(Tdata)) {}
 
+  /**
+   * @brief Does the same thing as the constructor. Useful for delayed
+   * initialization, like in conditional blocks.
+   */
+  __host__ __device__ void initialize(Tdata *_data, const Tidx _width,
+                                      const Tidx _height) {
+    data = _data;
+    width = _width;
+    height = _height;
+    bytesPerRow = width * sizeof(Tdata);
+  }
+
   __host__ __device__ bool rowIsValid(Tidx y) const { return y < height; }
   __host__ __device__ bool colIsValid(Tidx x) const { return x < width; }
 
