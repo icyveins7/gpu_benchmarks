@@ -184,10 +184,36 @@ struct ImageTile : Image<Tdata, Tidx> {
   Tidx startRow;
   Tidx startCol;
 
-  ImageTile(Tdata *_data, const Tidx _width, const Tidx _height,
-            const Tidx _startRow, const Tidx _startCol)
+  __host__ __device__ ImageTile(Tdata *_data, const Tidx _width,
+                                const Tidx _height, const Tidx _startRow,
+                                const Tidx _startCol)
       : Image<Tdata, Tidx>(_data, _width, _height), startRow(_startRow),
         startCol(_startCol) {}
+
+  /**
+   * @brief Convenience method to fill a tile from an Image struct within a
+   * thread block.
+   * This method does not syncthreads() for you!
+   *
+   * @param img Input Image struct
+   */
+  __device__ void fillFromImage(const Image<const Tdata> &img,
+                                const Tdata init = 0) {
+    for (int ty = threadIdx.y; ty < this->height; ty += blockDim.y) {
+      int y = ty + startRow;
+      bool yValid = rowIsValid(y) && img.rowIsValid(y);
+      for (int tx = threadIdx.x; tx < this->width; tx += blockDim.x) {
+        int x = tx + startCol;
+        bool xValid = colIsValid(x) && img.colIsValid(x);
+        Tdata value = init;
+        // Sometimes we want to fill the rest of the tile with dummy values
+        if (yValid && xValid) {
+          value = img.at(y, x);
+        }
+        this->at(y, x) = value;
+      }
+    }
+  }
 
   __host__ __device__ bool rowIsValid(Tidx y) const {
     return y >= startRow && y < this->height + startRow;

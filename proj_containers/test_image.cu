@@ -1,4 +1,5 @@
 #include "containers/image.cuh"
+#include "thrust/sequence.h"
 #include "gtest/gtest.h"
 #include <numeric>
 
@@ -72,4 +73,53 @@ TEST(ContainersImageTile, BasicChecks) {
   EXPECT_EQ(tile.rowEnd(2), 11);
   EXPECT_EQ(tile.colEnd(1), 10);
   EXPECT_EQ(tile.colEnd(2), 11);
+}
+
+template <typename T, int TILE_DIM_X, int TILE_DIM_Y>
+__global__ void testImageTileShmemFill(const containers::Image<const T> in,
+                                       containers::Image<T> out,
+                                       const int2 tileOffset) {
+  if (blockIdx.x > 0 || blockIdx.y > 0)
+    return;
+
+  // just the first block
+  __shared__ T s_data[TILE_DIM_X * TILE_DIM_Y];
+  auto tile = containers::ImageTile<T>(
+      s_data, (unsigned int)TILE_DIM_X, (unsigned int)TILE_DIM_Y,
+      (unsigned int)tileOffset.y, (unsigned int)tileOffset.x);
+  tile.fillFromImage(in);
+  __syncthreads();
+
+  // write back to global
+  for (int ty = threadIdx.y; ty < TILE_DIM_Y; ty += blockDim.y) {
+    int y = ty + tileOffset.y;
+    for (int tx = threadIdx.x; tx < TILE_DIM_X; tx += blockDim.x) {
+      int x = tx + tileOffset.x;
+
+      T val = tile.at(y, x);
+      out.at(ty, tx) = val;
+    }
+  }
+}
+
+TEST(ContainersImageTile, InKernelShmemFill) {
+  containers::DeviceImageStorage<int> d_in(4, 4);
+  thrust::sequence(d_in.vec.begin(), d_in.vec.end());
+  thrust::host_vector<int> h_in = d_in.vec;
+  for (int i = 0; i < (int)h_in.size(); ++i) {
+    EXPECT_EQ(h_in[i], i);
+  }
+
+  containers::DeviceImageStorage<int> d_out(2, 2);
+
+  int2 tileOffset{1, 1};
+  dim3 tpb(32, 4);
+  testImageTileShmemFill<int, 2, 2>
+      <<<1, tpb>>>(d_in.cimage(), d_out.image(), tileOffset);
+
+  thrust::host_vector<int> h_out = d_out.vec;
+  EXPECT_EQ(h_out[0], 5);
+  EXPECT_EQ(h_out[1], 6);
+  EXPECT_EQ(h_out[2], 9);
+  EXPECT_EQ(h_out[3], 10);
 }
