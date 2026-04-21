@@ -63,7 +63,7 @@ void test_convolve_singlefilter(const Tscale *scales,
     dim3 blks((width + tpb.x - 1) / tpb.x,
               (height + tpb.y - 1) / tpb.y / factor);
     sats::convolve_via_SAT_and_rowSums_naive_kernel<Tin, Trowsum, Tsat, Tout,
-                                                    unsigned int, int16_t>
+                                                    int, int16_t>
         <<<blks, tpb>>>(filter.toDevice(), d_data.cimage(), //
                         convolver.d_rowSums().cimage(),     //
                         convolver.d_sat().cimage(),         //
@@ -125,12 +125,12 @@ void test_convolve_multifilter(const Tscale *scales, const double *radiusPixels,
     dim3 blks((width + tpb.x - 1) / tpb.x,
               (height + tpb.y - 1) / tpb.y / factor);
     sats::convolve_via_SAT_and_rowSums_dynamicFilters_kernel<
-        Tin, Trowsum, Tsat, Tout, unsigned int, sats::SimpleRule<NumFilters>,
-        int16_t><<<blks, tpb>>>(multifilter.d_filters(), rule,
-                                d_data.cimage(),                //
-                                convolver.d_rowSums().cimage(), //
-                                convolver.d_sat().cimage(),     //
-                                d_out.image());
+        Tin, Trowsum, Tsat, Tout, int, sats::SimpleRule<NumFilters>, int16_t>
+        <<<blks, tpb>>>(multifilter.d_filters(), rule,
+                        d_data.cimage(),                //
+                        convolver.d_rowSums().cimage(), //
+                        convolver.d_sat().cimage(),     //
+                        d_out.image());
   }
 
   thrust::host_vector<Tout> h_out = d_out.vec;

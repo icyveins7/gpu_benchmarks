@@ -22,9 +22,8 @@ namespace containers {
  * @param height Height of image in pixels
  * @param bytesPerRow Offset of each row in bytes
  */
-template <typename Tdata, typename Tidx = unsigned int> struct Image {
+template <typename Tdata, typename Tidx = int> struct Image {
   static_assert(std::is_integral_v<Tidx>, "Tidx must be an integer type");
-  static_assert(std::is_unsigned_v<Tidx>, "Tidx must be an unsigned type");
 
   Tdata *data;
   Tidx width;
@@ -51,8 +50,12 @@ template <typename Tdata, typename Tidx = unsigned int> struct Image {
     bytesPerRow = width * sizeof(Tdata);
   }
 
-  __host__ __device__ bool rowIsValid(Tidx y) const { return y < height; }
-  __host__ __device__ bool colIsValid(Tidx x) const { return x < width; }
+  __host__ __device__ bool rowIsValid(Tidx y) const {
+    return y >= 0 && y < height;
+  }
+  __host__ __device__ bool colIsValid(Tidx x) const {
+    return x >= 0 && x < width;
+  }
 
   /**
    * @brief Returns a pointer to the specified row.
@@ -178,7 +181,7 @@ template <typename Tdata, typename Tidx = unsigned int> struct Image {
  * @param startCol Starting col of the tile
  * @return
  */
-template <typename Tdata, typename Tidx = unsigned int>
+template <typename Tdata, typename Tidx = int>
 struct ImageTile : Image<Tdata, Tidx> {
   // Additional trackers
   Tidx startRow;
@@ -189,6 +192,14 @@ struct ImageTile : Image<Tdata, Tidx> {
                                 const Tidx _startCol)
       : Image<Tdata, Tidx>(_data, _width, _height), startRow(_startRow),
         startCol(_startCol) {}
+
+  __host__ __device__ void initialize(Tdata *_data, const Tidx _width,
+                                      const Tidx _height, const Tidx _startRow,
+                                      const Tidx _startCol) {
+    Image<Tdata>::initialize(_data, _width, _height);
+    this->startRow = _startRow;
+    this->startCol = _startCol;
+  }
 
   /**
    * @brief Convenience method to fill a tile from an Image struct within a
@@ -338,8 +349,7 @@ struct ImageTile : Image<Tdata, Tidx> {
  * @param width Image width in pixels
  * @param height Image height in pixels
  */
-template <typename Tdata, typename Tidx = unsigned int>
-struct DeviceImageStorage {
+template <typename Tdata, typename Tidx = int> struct DeviceImageStorage {
   thrust::device_vector<Tdata> vec;
   Tidx width;
   Tidx height;
@@ -475,7 +485,7 @@ protected:
   cudaStream_t m_stream;
 };
 
-template <typename Tdata, typename Tidx = unsigned int>
+template <typename Tdata, typename Tidx = int>
 class StreamOrderedDeviceImageStorage
     : public StreamOrderedDeviceStorage<Tdata> {
 public:

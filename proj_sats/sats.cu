@@ -139,8 +139,8 @@ int main(int argc, char **argv) {
     constexpr dim3 tpb(32, 16); // 32x8 or 32x16 seems better than 32x4
     dim3 blks((width + tpb.x - 1) / tpb.x,
               (height + tpb.y - 1) / tpb.y / factor);
-    sats::convolve_via_SAT_and_rowSums_naive_kernel<Tin, Tout, Tout, Tout,
-                                                    unsigned int, int16_t>
+    sats::convolve_via_SAT_and_rowSums_naive_kernel<Tin, Tout, Tout, Tout, int,
+                                                    int16_t>
         <<<blks, tpb>>>(filter.toDevice(), d_data.cimage(), //
                         preprocessor.d_rowSums().cimage(),  //
                         preprocessor.d_sat().cimage(),      //
@@ -263,7 +263,7 @@ int main(int argc, char **argv) {
     dim3 blks((width + tpb.x - 1) / tpb.x,
               (height + tpb.y - 1) / tpb.y / factor);
     sats::convolve_via_SAT_and_rowSums_dynamicFilters_kernel<
-        Tin, Tout, Tout, Tout, unsigned int, sats::SimpleRule<numFilters>>
+        Tin, Tout, Tout, Tout, int, sats::SimpleRule<numFilters>>
         <<<blks, tpb>>>(multifilter.d_filters(), rule, d_data.cimage(), //
                         preprocessor.d_rowSums().cimage(),              //
                         preprocessor.d_sat().cimage(),                  //

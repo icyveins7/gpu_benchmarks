@@ -57,14 +57,14 @@ void test_remap(const size_t height, const size_t width, const size_t srcHeight,
 
   // Check all output elements
   for (size_t i = 0; i < width * height; ++i) {
-    printf("Index %zd:\n", i);
-    printf("Requested pixel coords are %.1f, %.1f\n", h_inX[i], h_inY[i]);
-    printf("Top left  pixel is %.1f\n",
-           (float)remap.get_h_src()[(size_t)floorf(h_inY[i]) * srcWidth +
-                                    (size_t)floorf(h_inX[i])]);
-    printf("Top right pixel is %.1f\n",
-           (float)remap.get_h_src()[(size_t)floorf(h_inY[i]) * srcWidth +
-                                    (size_t)floorf(h_inX[i]) + 1]);
+    // printf("Index %zd:\n", i);
+    // printf("Requested pixel coords are %.1f, %.1f\n", h_inX[i], h_inY[i]);
+    // printf("Top left  pixel is %.1f\n",
+    //        (float)remap.get_h_src()[(size_t)floorf(h_inY[i]) * srcWidth +
+    //                                 (size_t)floorf(h_inX[i])]);
+    // printf("Top right pixel is %.1f\n",
+    //        (float)remap.get_h_src()[(size_t)floorf(h_inY[i]) * srcWidth +
+    //                                 (size_t)floorf(h_inX[i]) + 1]);
     EXPECT_FLOAT_EQ(h_out[i], d2h_out[i]);
   }
 }

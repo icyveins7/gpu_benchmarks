@@ -58,20 +58,49 @@ __global__ void oversampleBilerpAndCombineKernel(
   static_assert(std::is_floating_point<Tcalc>::value,
                 "Tcalc must be a floating point type");
 
+  SharedMemory<Tin> smem;
+  containers::ImageTile<Tin> stile(nullptr, 0, 0, 0, 0);
+  // We don't initialize it here, since the starting tile row/col derivation
+  // happens in the blockwise loop below
+
   // Loop over blocks
   for (int i = blockIdx.y; i < numOutBlocks.y; i += gridDim.y) {
     for (int j = blockIdx.x; j < numOutBlocks.x; j += gridDim.x) {
-
       // Begin calculation of oversampled tile
       int oversampBlkStartYIdx = i * oversampleFactor.y * blockDim.y;
       int oversampBlkStartXIdx = j * oversampleFactor.x * blockDim.x;
-      // if (i > 0 && threadIdx.x == 0 && threadIdx.y == 0) {
-      //   printf("i = %d, j = %d, oversampBlkStartIdx %d, %d\n", i, j,
-      //          oversampBlkStartYIdx, oversampBlkStartXIdx);
-      // }
 
       // Define final output to aggregate over
       Tcalc value = 0;
+
+      if constexpr (useSharedMem) {
+        // Compute the starting tile position and dimensions
+        Tcalc tileStartY =
+            oversampBlkStartYIdx * params.overSampStepY + params.overSampStartY;
+        Tcalc tileStartX =
+            oversampBlkStartXIdx * params.overSampStepX + params.overSampStartX;
+
+        // int next_oversampBlkStartYIdx =
+        //     (i + 1) * oversampleFactor.y * blockDim.y;
+        // int next_oversampBlkStartXIdx =
+        //     (j + 1) * oversampleFactor.x * blockDim.x;
+        // Tcalc tileEndY =
+        //     (next_oversampBlkStartYIdx - 1) * params.overSampStepY +
+        //     params.overSampStartY;
+        // Tcalc tileEndX =
+        //     (next_oversampBlkStartXIdx - 1) * params.overSampStepX +
+        //     params.overSampStartX;
+
+        // NOTE: this is technically fixed
+        int tilewidth = (int)oversampleFactor.x * blockDim.x +
+                        2; // +1 both sides for safety
+        int tileheight = (int)oversampleFactor.y * blockDim.y +
+                         2; // +1 both sides for safety
+
+        stile.initialize(smem.getPointer(), tilewidth, tileheight,
+                         cuda::std::floor(tileStartY),
+                         cuda::std::floor(tileStartX));
+      }
 
       for (int oy = 0; oy < oversampleFactor.y; ++oy) {
         // Define y index for this block/thread
@@ -131,8 +160,8 @@ void oversampleBilerpAndCombine(containers::Image<const Tin> in,
   OversampleKernelParams<Tcalc> params(oversampleFactor, outStep, outOffset);
 
   // Compute number of blocks to cover the output
-  dim3 outblks(justEnoughBlocks(tpb.x, out.width),
-               justEnoughBlocks(tpb.y, out.height));
+  dim3 outblks(justEnoughBlocks(tpb.x, (unsigned int)out.width),
+               justEnoughBlocks(tpb.y, (unsigned int)out.height));
   size_t shmem = 0;
 
   // DEPRECATED. LATER CHANGE WHEN NEEDED FOR INPUT TILE SHMEM
