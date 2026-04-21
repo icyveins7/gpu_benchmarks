@@ -217,7 +217,6 @@ struct ImageTile : Image<Tdata, Tidx> {
         int x = tx + startCol;
         bool xValid = colIsValid(x) && img.colIsValid(x);
         Tdata value = init;
-        // Sometimes we want to fill the rest of the tile with dummy values
         if (yValid && xValid) {
           value = img.at(y, x);
         }

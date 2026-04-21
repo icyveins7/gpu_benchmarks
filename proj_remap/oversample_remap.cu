@@ -1,3 +1,4 @@
+#include <fstream>
 #include <iostream>
 
 #include "containers/image.cuh"
@@ -21,6 +22,7 @@ int main(int argc, char *argv[]) {
     ("xstep", "Output x step", cxxopts::value<float>()->default_value("0.8"))
     ("ystep", "Output y step", cxxopts::value<float>()->default_value("0.8"))
     ("shm", "Use shared mem", cxxopts::value<bool>()->default_value("false"))
+    ("o,output", "Output file", cxxopts::value<std::string>())
     ("h,help", "Print usage")
   ;
   // clang-format on
@@ -32,10 +34,6 @@ int main(int argc, char *argv[]) {
   }
   bool useSharedMem = result["shm"].as<bool>();
   printf("Using shared mem? %s\n", useSharedMem ? "true" : "false");
-  if (useSharedMem) {
-    printf("Shared mem version not implemented yet\n");
-    return -1;
-  }
 
   containers::DeviceImageStorage<int> d_in(result["inheight"].as<int>(),
                                            result["inwidth"].as<int>());
@@ -61,9 +59,9 @@ int main(int argc, char *argv[]) {
   }
   thrust::pinned_host_vector<float> h_out = d_out.vec;
 
-  if (d_in.width < 32 && d_in.height < 32) {
-    for (size_t y = 0; y < d_in.height; y++) {
-      for (size_t x = 0; x < d_in.width; x++) {
+  if (d_in.width < 64 && d_in.height < 64) {
+    for (size_t y = 0; y < (size_t)d_in.height; y++) {
+      for (size_t x = 0; x < (size_t)d_in.width; x++) {
         size_t idx = y * d_in.width + x;
         printf("%2d ", h_in[idx]);
       }
@@ -72,14 +70,18 @@ int main(int argc, char *argv[]) {
   }
   std::cout << "-------------------" << std::endl;
 
-  if (d_out.width < 32 && d_out.height < 32) {
-    for (size_t y = 0; y < d_out.height; y++) {
-      for (size_t x = 0; x < d_out.width; x++) {
+  if (d_out.width < 64 && d_out.height < 64) {
+    for (size_t y = 0; y < (size_t)d_out.height; y++) {
+      for (size_t x = 0; x < (size_t)d_out.width; x++) {
         size_t idx = y * d_out.width + x;
         printf("%8.3f ", h_out[idx]);
       }
       std::cout << std::endl;
     }
+  }
+  if (result.count("output")) {
+    std::ofstream out(result["output"].as<std::string>(), std::ios::binary);
+    out.write((char *)h_out.data().get(), h_out.size() * sizeof(float));
   }
 
   return 0;
