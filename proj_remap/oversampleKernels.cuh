@@ -12,37 +12,51 @@
 
 #include "kernels.h"
 
+/**
+ * @brief Primarily used to pre-calculate constants for the oversampling, so the
+ * kernel doesn't need to do it at the start.
+ */
+template <typename Tcalc> struct OversampleKernelParams {
+  Tcalc overSampStepX;
+  Tcalc overSampStepY;
+  Tcalc overSampStartX;
+  Tcalc overSampStartY;
+
+  OversampleKernelParams(const int2 oversampleFactor,
+                         const cuda_vec2_t<Tcalc> outStep,
+                         const cuda_vec2_t<Tcalc> outOffset) {
+    // Calculate number of padded elements
+    // Assumes oversampling is already odd
+    int2 padding = make_int2(oversampleFactor.x / 2, oversampleFactor.y / 2);
+    // Calculate the 'length' in input coordinate space per oversampled element
+    /*
+    Example, for oversampleFactor 3
+    O X O|O X O|O X O
+      |     |     |
+      |     outStep
+      |
+      centre of output pixels
+    */
+    overSampStepX = outStep.x / oversampleFactor.x;
+    overSampStepY = outStep.y / oversampleFactor.y;
+    // And then use this to calculate the first oversampled coordinate (in the
+    // padding)
+    overSampStartX = outOffset.x - padding.x * overSampStepX;
+    overSampStartY = outOffset.y - padding.y * overSampStepY;
+  }
+};
+
 template <typename Tin, typename Tout, typename Tcalc = float,
           bool useSharedMem = true>
 __global__ void oversampleBilerpAndCombineKernel(
     containers::Image<const Tin> in, containers::Image<Tout> out,
     const int2 oversampleFactor, // assumed odd
-    const cuda_vec2_t<Tcalc> outOffset, const cuda_vec2_t<Tcalc> outStep,
+    const OversampleKernelParams<Tcalc> params,
     // NOTE: Surprisingly, ncu says computing numOutBlocks stalls a lot, and in
     // fact just passing this in directly speeds up about 4%
     const int2 numOutBlocks) {
   static_assert(std::is_floating_point<Tcalc>::value,
                 "Tcalc must be a floating point type");
-
-  // Calculate number of padded elements
-  // Assumes oversampling is already odd
-  int2 padding = make_int2(oversampleFactor.x / 2, oversampleFactor.y / 2);
-  // Calculate the 'length' in input coordinate space per oversampled element
-  /*
-  Example, for oversampleFactor 3
-  O X O|O X O|O X O
-    |     |     |
-    |     outStep
-    |
-    centre of output pixels
-  */
-  Tcalc overSampStepX = outStep.x / oversampleFactor.x;
-  Tcalc overSampStepY = outStep.y / oversampleFactor.y;
-  // And then use this to calculate the first oversampled coordinate (in the
-  // padding)
-  Tcalc oversampStartX = outOffset.x - padding.x * overSampStepX;
-  Tcalc oversampStartY = outOffset.y - padding.y * overSampStepY;
-  // TODO: maybe we can move some of these outside
 
   // Allocate shared memory if needed
   SharedMemory<Tcalc> smem;
@@ -70,11 +84,11 @@ __global__ void oversampleBilerpAndCombineKernel(
       // If using shared mem to calculate the oversampled
       if constexpr (useSharedMem) {
         for (int y = threadIdx.y; y < s_oversamp.height; y += blockDim.y) {
-          Tcalc sy =
-              (oversampBlkStartYIdx + y) * overSampStepY + oversampStartY;
+          Tcalc sy = (oversampBlkStartYIdx + y) * params.overSampStepY +
+                     params.overSampStartY;
           for (int x = threadIdx.x; x < s_oversamp.width; x += blockDim.x) {
-            Tcalc sx =
-                (oversampBlkStartXIdx + x) * overSampStepX + oversampStartX;
+            Tcalc sx = (oversampBlkStartXIdx + x) * params.overSampStepX +
+                       params.overSampStartX;
             // sx, sy are the coordinates to bilerp
 
             // we get the nearest integer index to read from
@@ -131,10 +145,10 @@ __global__ void oversampleBilerpAndCombineKernel(
           for (int ox = 0; ox < oversampleFactor.x; ++ox) {
             int x = threadIdx.x * oversampleFactor.x + ox;
             // Compute interpolated value directly
-            Tcalc sy =
-                (oversampBlkStartYIdx + y) * overSampStepY + oversampStartY;
-            Tcalc sx =
-                (oversampBlkStartXIdx + x) * overSampStepX + oversampStartX;
+            Tcalc sy = (oversampBlkStartYIdx + y) * params.overSampStepY +
+                       params.overSampStartY;
+            Tcalc sx = (oversampBlkStartXIdx + x) * params.overSampStepX +
+                       params.overSampStartX;
             // sx, sy are the coordinates to bilerp
 
             // we get the nearest integer index to read from
@@ -180,6 +194,9 @@ void oversampleBilerpAndCombine(containers::Image<const Tin> in,
     throw std::runtime_error("oversampleFactor must be odd in both dimensions");
   }
 
+  // Compute oversample kernel parameters externally
+  OversampleKernelParams<Tcalc> params(oversampleFactor, outStep, outOffset);
+
   // Compute number of blocks to cover the output
   dim3 outblks(justEnoughBlocks(tpb.x, out.width),
                justEnoughBlocks(tpb.y, out.height));
@@ -197,7 +214,6 @@ void oversampleBilerpAndCombine(containers::Image<const Tin> in,
 
   // printf("Using shared mem %zu bytes\n", shmem);
   oversampleBilerpAndCombineKernel<int, float, Tcalc, useSharedMem>
-      <<<blks, tpb, shmem, stream>>>(in, out, oversampleFactor, outOffset,
-                                     outStep,
+      <<<blks, tpb, shmem, stream>>>(in, out, oversampleFactor, params,
                                      int2{(int)outblks.x, (int)outblks.y});
 }
