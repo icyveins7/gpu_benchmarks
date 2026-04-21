@@ -73,6 +73,13 @@ target_include_directories(oversample_remap
                            PRIVATE ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
                            )
 
+target_compile_options(
+  oversample_remap
+  PRIVATE
+  -g
+  -lineinfo
+)
+
 target_sources(
   oversample_remap PRIVATE
   ${PROJECT_SOURCE_DIR}/oversample_remap.cu
