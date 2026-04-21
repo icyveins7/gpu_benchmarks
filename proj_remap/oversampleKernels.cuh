@@ -94,10 +94,10 @@ __global__ void oversampleBilerpAndCombineKernel(
         // NOTE: this is technically fixed
         int tilewidth =
             (oversampleFactor.x * blockDim.x) * params.overSampStepX +
-            2; // +1 both sides for safety
+            3; // +1 both sides for safety
         int tileheight =
             (oversampleFactor.y * blockDim.y) * params.overSampStepY +
-            2; // +1 both sides for safety
+            3; // +1 both sides for safety
 
         stile.initialize(
             smem.getPointer(), tilewidth, tileheight,
@@ -209,10 +209,11 @@ void oversampleBilerpAndCombine(containers::Image<const Tin> in,
   // DEPRECATED. LATER CHANGE WHEN NEEDED FOR INPUT TILE SHMEM
   if constexpr (useSharedMem) {
     // NOTE: this is technically fixed
+    // TODO: make it so we don't calculate outside and inside
     int tilewidth = (oversampleFactor.x * tpb.x) * params.overSampStepX +
-                    2; // +1 both sides for safety
+                    3; // +1 both sides for safety
     int tileheight = (oversampleFactor.y * tpb.y) * params.overSampStepY +
-                     2; // +1 both sides for safety
+                     3; // +1 both sides for safety
     shmem = tilewidth * tileheight * sizeof(Tin);
     printf("shmem tile is %dx%d, %zu bytes\n", tilewidth, tileheight, shmem);
   }
