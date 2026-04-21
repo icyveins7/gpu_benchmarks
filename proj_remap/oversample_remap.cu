@@ -20,7 +20,7 @@ int main(int argc, char *argv[]) {
     ("yoffset", "Output y offset", cxxopts::value<float>()->default_value("0"))
     ("xstep", "Output x step", cxxopts::value<float>()->default_value("0.8"))
     ("ystep", "Output y step", cxxopts::value<float>()->default_value("0.8"))
-    ("shm", "Use shared mem", cxxopts::value<bool>()->default_value("true"))
+    ("shm", "Use shared mem", cxxopts::value<bool>()->default_value("false"))
     ("h,help", "Print usage")
   ;
   // clang-format on
@@ -32,6 +32,10 @@ int main(int argc, char *argv[]) {
   }
   bool useSharedMem = result["shm"].as<bool>();
   printf("Using shared mem? %s\n", useSharedMem ? "true" : "false");
+  if (useSharedMem) {
+    printf("Shared mem version not implemented yet\n");
+    return -1;
+  }
 
   containers::DeviceImageStorage<int> d_in(result["inheight"].as<int>(),
                                            result["inwidth"].as<int>());

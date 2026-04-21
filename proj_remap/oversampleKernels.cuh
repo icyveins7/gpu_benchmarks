@@ -58,14 +58,6 @@ __global__ void oversampleBilerpAndCombineKernel(
   static_assert(std::is_floating_point<Tcalc>::value,
                 "Tcalc must be a floating point type");
 
-  // Allocate shared memory if needed
-  SharedMemory<Tcalc> smem;
-  containers::Image<Tcalc> s_oversamp(nullptr, 0, 0);
-  if constexpr (useSharedMem) {
-    s_oversamp.initialize(smem.getPointer(), blockDim.x * oversampleFactor.x,
-                          blockDim.y * oversampleFactor.y);
-  }
-
   // Loop over blocks
   for (int i = blockIdx.y; i < numOutBlocks.y; i += gridDim.y) {
     for (int j = blockIdx.x; j < numOutBlocks.x; j += gridDim.x) {
@@ -81,96 +73,37 @@ __global__ void oversampleBilerpAndCombineKernel(
       // Define final output to aggregate over
       Tcalc value = 0;
 
-      // If using shared mem to calculate the oversampled
-      if constexpr (useSharedMem) {
-        for (int y = threadIdx.y; y < s_oversamp.height; y += blockDim.y) {
+      for (int oy = 0; oy < oversampleFactor.y; ++oy) {
+        // Define y index for this block/thread
+        int y = threadIdx.y * oversampleFactor.y + oy;
+        for (int ox = 0; ox < oversampleFactor.x; ++ox) {
+          int x = threadIdx.x * oversampleFactor.x + ox;
+          // Compute interpolated value directly
           Tcalc sy = (oversampBlkStartYIdx + y) * params.overSampStepY +
                      params.overSampStartY;
-          for (int x = threadIdx.x; x < s_oversamp.width; x += blockDim.x) {
-            Tcalc sx = (oversampBlkStartXIdx + x) * params.overSampStepX +
-                       params.overSampStartX;
-            // sx, sy are the coordinates to bilerp
+          Tcalc sx = (oversampBlkStartXIdx + x) * params.overSampStepX +
+                     params.overSampStartX;
+          // sx, sy are the coordinates to bilerp
 
-            // we get the nearest integer index to read from
-            int iy = (int)cuda::std::floor(sy);
-            int ix = (int)cuda::std::floor(sx);
+          // we get the nearest integer index to read from
+          int iy = (int)cuda::std::floor(sy);
+          int ix = (int)cuda::std::floor(sx);
 
-            // if (i > 0 && j == 0 && y < 3 && x < 3) {
-            //   printf("blk %d, %d -> read from %d, %d\n", i, j, iy, ix);
-            // }
+          // Extract the 4 corners of data
+          // Here is where you would include logic to handle pixel reading
+          // For now we just read simply and default to 0 if it doesn't exist
+          // Read and cast to out floating point type
+          Tcalc topLeft = in.atWithDefault(iy, ix);
+          Tcalc topRight = in.atWithDefault(iy, ix + 1);
+          Tcalc botLeft = in.atWithDefault(iy + 1, ix);
+          Tcalc botRight = in.atWithDefault(iy + 1, ix + 1);
 
-            // Extract the 4 corners of data
-            // Here is where you would include logic to handle pixel reading
-            // For now we just read simply and default to 0 if it doesn't exist
-            // Read and cast to out floating point type
-            Tcalc topLeft = in.atWithDefault(iy, ix);
-            Tcalc topRight = in.atWithDefault(iy, ix + 1);
-            Tcalc botLeft = in.atWithDefault(iy + 1, ix);
-            Tcalc botRight = in.atWithDefault(iy + 1, ix + 1);
+          Tcalc interpolated = bilinearInterpolate<Tcalc>(
+              topLeft, topRight, botLeft, botRight, sx, sy);
 
-            Tcalc interpolated = bilinearInterpolate<Tcalc>(
-                topLeft, topRight, botLeft, botRight, sx, sy);
-            // if (i > 0 && j == 0 && y < 3 && x < 3) {
-            //   printf(
-            //       "sy %f, sx %f -> 4 values are %f, %f, %f, %f -> interp to
-            //       %f\n", sy, sx, topLeft, topRight, botLeft, botRight,
-            //       interpolated);
-            // }
-
-            // Write to shared memory
-            s_oversamp.at(y, x) = interpolated;
-          }
+          value += interpolated;
         }
-        __syncthreads(); // complete fill of shared mem oversampled tile
-
-        // Sum over the oversampled tile for each thread's requirements
-        for (int oy = 0; oy < oversampleFactor.y; ++oy) {
-          for (int ox = 0; ox < oversampleFactor.x; ++ox) {
-            value += s_oversamp.at(threadIdx.y * oversampleFactor.y + oy,
-                                   threadIdx.x * oversampleFactor.x + ox);
-            // if (i == 0 && j == 0 && threadIdx.y == 0 && threadIdx.x == 0) {
-            //   printf("value + %f(from %d, %d) = %f\n",
-            //          s_oversamp.at(threadIdx.y * oversampleFactor.y + oy,
-            //                        threadIdx.x * oversampleFactor.x + ox),
-            //          threadIdx.y * oversampleFactor.y + oy,
-            //          threadIdx.x * oversampleFactor.x + ox, value);
-            // }
-          }
-        }
-      } // end of method 1, using shared mem for oversampled workspace
-      else {
-        for (int oy = 0; oy < oversampleFactor.y; ++oy) {
-          // Define y index for this block/thread
-          int y = threadIdx.y * oversampleFactor.y + oy;
-          for (int ox = 0; ox < oversampleFactor.x; ++ox) {
-            int x = threadIdx.x * oversampleFactor.x + ox;
-            // Compute interpolated value directly
-            Tcalc sy = (oversampBlkStartYIdx + y) * params.overSampStepY +
-                       params.overSampStartY;
-            Tcalc sx = (oversampBlkStartXIdx + x) * params.overSampStepX +
-                       params.overSampStartX;
-            // sx, sy are the coordinates to bilerp
-
-            // we get the nearest integer index to read from
-            int iy = (int)cuda::std::floor(sy);
-            int ix = (int)cuda::std::floor(sx);
-
-            // Extract the 4 corners of data
-            // Here is where you would include logic to handle pixel reading
-            // For now we just read simply and default to 0 if it doesn't exist
-            // Read and cast to out floating point type
-            Tcalc topLeft = in.atWithDefault(iy, ix);
-            Tcalc topRight = in.atWithDefault(iy, ix + 1);
-            Tcalc botLeft = in.atWithDefault(iy + 1, ix);
-            Tcalc botRight = in.atWithDefault(iy + 1, ix + 1);
-
-            Tcalc interpolated = bilinearInterpolate<Tcalc>(
-                topLeft, topRight, botLeft, botRight, sx, sy);
-
-            value += interpolated;
-          }
-        }
-      } // end of method 2, direct calculation and register accumulation
+      }
 
       // Write out final output
       int outRow = i * blockDim.y + threadIdx.y;
@@ -201,10 +134,13 @@ void oversampleBilerpAndCombine(containers::Image<const Tin> in,
   dim3 outblks(justEnoughBlocks(tpb.x, out.width),
                justEnoughBlocks(tpb.y, out.height));
   size_t shmem = 0;
-  if constexpr (useSharedMem) {
-    shmem =
-        tpb.x * tpb.y * oversampleFactor.x * oversampleFactor.y * sizeof(Tcalc);
-  }
+
+  // DEPRECATED. LATER CHANGE WHEN NEEDED FOR INPUT TILE SHMEM
+  // if constexpr (useSharedMem) {
+  //   shmem =
+  //       tpb.x * tpb.y * oversampleFactor.x * oversampleFactor.y *
+  //       sizeof(Tcalc);
+  // }
 
   // Possibly adjust the number of blocks of grid to not cover output
   dim3 blks(outblks.x,
