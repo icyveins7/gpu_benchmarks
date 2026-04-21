@@ -4,6 +4,8 @@
 #include "device_launch_parameters.h"
 #include "cuda.h"
 #include <cmath>
+#include <cuda/std/cmath>
+#include <cuda/std/limits>
 #include <random>
 #include "../include/sharedmem.cuh"
 
@@ -27,13 +29,21 @@ void quickView(const thrust::host_vector<T> &v, const size_t width,
 template <typename T>
 inline __device__ T bilinearInterpolate(
   const T topLeft, const T topRight, const T btmLeft, const T btmRight,
-  const float x, const float y
+  const T x, const T y
 ){
+  static_assert(std::is_floating_point<T>::value, "T must be a floating point type");
   // Interpolate on the rows first
-  const T top = topLeft + (topRight - topLeft) * (x - floorf(x));
-  const T btm = btmLeft + (btmRight - btmLeft) * (x - floorf(x));
+  const T xm = x - cuda::std::floor(x);
+  // Use 2 FMAs?
+  const T top = cuda::std::fma(xm, topRight, cuda::std::fma(-xm, topLeft, topLeft));
+  const T btm = cuda::std::fma(xm, btmRight, cuda::std::fma(-xm, btmLeft, btmLeft));
+  // const T top = topLeft + (topRight - topLeft) * xm;
+  // const T btm = btmLeft + (btmRight - btmLeft) * xm;
   // Then interpolate the two row interpolants
-  const T result = top + (btm - top) * (y - floorf(y));
+  const T ym = y - cuda::std::floor(y);
+  // Use 2 FMAs?
+  const T result = cuda::std::fma(ym, btm, cuda::std::fma(-ym, top, top));
+  // const T result = top + (btm - top) * ym;
   return result;
 }
 

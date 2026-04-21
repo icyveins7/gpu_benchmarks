@@ -17,12 +17,13 @@ template <typename Tin, typename Tout, typename Tcalc = float,
 __global__ void oversampleBilerpAndCombineKernel(
     containers::Image<const Tin> in, containers::Image<Tout> out,
     const int2 oversampleFactor, // assumed odd
-    const cuda_vec2_t<Tcalc> outOffset, const cuda_vec2_t<Tcalc> outStep) {
+    const cuda_vec2_t<Tcalc> outOffset, const cuda_vec2_t<Tcalc> outStep,
+    // NOTE: Surprisingly, ncu says computing numOutBlocks stalls a lot, and in
+    // fact just passing this in directly speeds up about 4%
+    const int2 numOutBlocks) {
   static_assert(std::is_floating_point<Tcalc>::value,
                 "Tcalc must be a floating point type");
-  // Calculate number of blocks required for output
-  int2 numBlocks = make_int2(justEnoughBlocks(blockDim.x, out.width),
-                             justEnoughBlocks(blockDim.y, out.height));
+
   // Calculate number of padded elements
   // Assumes oversampling is already odd
   int2 padding = make_int2(oversampleFactor.x / 2, oversampleFactor.y / 2);
@@ -52,8 +53,8 @@ __global__ void oversampleBilerpAndCombineKernel(
   }
 
   // Loop over blocks
-  for (int i = blockIdx.y; i < numBlocks.y; i += gridDim.y) {
-    for (int j = blockIdx.x; j < numBlocks.x; j += gridDim.x) {
+  for (int i = blockIdx.y; i < numOutBlocks.y; i += gridDim.y) {
+    for (int j = blockIdx.x; j < numOutBlocks.x; j += gridDim.x) {
 
       // Begin calculation of oversampled tile
       int oversampBlkStartYIdx = i * oversampleFactor.y * blockDim.y;
@@ -179,15 +180,24 @@ void oversampleBilerpAndCombine(containers::Image<const Tin> in,
     throw std::runtime_error("oversampleFactor must be odd in both dimensions");
   }
 
-  dim3 blks(justEnoughBlocks(tpb.x, out.width),
-            justEnoughBlocks(tpb.y, out.height));
+  // Compute number of blocks to cover the output
+  dim3 outblks(justEnoughBlocks(tpb.x, out.width),
+               justEnoughBlocks(tpb.y, out.height));
   size_t shmem = 0;
   if constexpr (useSharedMem) {
     shmem =
         tpb.x * tpb.y * oversampleFactor.x * oversampleFactor.y * sizeof(Tcalc);
   }
-  printf("Using shared mem %zu bytes\n", shmem);
+
+  // Possibly adjust the number of blocks of grid to not cover output
+  dim3 blks(outblks.x,
+            outblks.y); // early testing shows possibly 1-2% speedup if we use
+                        // 1/2 total blocks for example, probably only relevant
+                        // when number of blocks is large
+
+  // printf("Using shared mem %zu bytes\n", shmem);
   oversampleBilerpAndCombineKernel<int, float, Tcalc, useSharedMem>
       <<<blks, tpb, shmem, stream>>>(in, out, oversampleFactor, outOffset,
-                                     outStep);
+                                     outStep,
+                                     int2{(int)outblks.x, (int)outblks.y});
 }
