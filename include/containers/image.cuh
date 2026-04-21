@@ -137,6 +137,172 @@ template <typename Tdata, typename Tidx = unsigned int> struct Image {
 };
 
 /**
+ * @brief A data structure to help in referencing rectangular tile sections from
+ * original Image data.
+ *
+ * @detail The targeted use-case is to allow indexing inside kernels into a
+ * shared memory tile, while still using indices from the original (larger)
+ * image.
+ *
+ * @example Original image is 4x4, and we create a tile using the centre 2x2.
+ * X X X X
+ * X T T X ---> A B
+ * X T T X ---> C D
+ * X X X X
+ *
+ * tile.at(1,1) -> A
+ * tile.at(1,2) -> B
+ * tile.at(2,1) -> C
+ * tile.at(2,2) -> D
+ *
+ * Any other element should be out of bounds, and should be pre-checked just as
+ * in the Image struct, e.g.
+ *
+ * tile.rowIsValid(0) -> false
+ * tile.colIsValid(3) -> false
+ *
+ * The beauty of this is that once we have established the bounds of the tile,
+ * we should be able to copy the tile from a global Image to a shared memory
+ * ImageTile via a simple loop over:
+ *
+ * tile.at(i, j) = image.at(i, j);
+ * Note how there are no offsets in any arguments.
+ *
+ * @tparam Tdata Type of data
+ * @tparam Tidx Type of indices used in methods
+ * @param data Pointer to data, usually a device pointer
+ * @param width Width of tile in pixels
+ * @param height Height of tile in pixels
+ * @param bytesPerRow Offset of each row of the tile in bytes
+ * @param startRow Starting row of the tile
+ * @param startCol Starting col of the tile
+ * @return
+ */
+template <typename Tdata, typename Tidx = unsigned int>
+struct ImageTile : Image<Tdata, Tidx> {
+  // Additional trackers
+  Tidx startRow;
+  Tidx startCol;
+
+  ImageTile(Tdata *_data, const Tidx _width, const Tidx _height,
+            const Tidx _startRow, const Tidx _startCol)
+      : Image<Tdata, Tidx>(_data, _width, _height), startRow(_startRow),
+        startCol(_startCol) {}
+
+  __host__ __device__ bool rowIsValid(Tidx y) const {
+    return y >= startRow && y < this->height + startRow;
+  }
+  __host__ __device__ bool colIsValid(Tidx x) const {
+    return x >= startCol && x < this->width + startCol;
+  }
+
+  /**
+   * @brief Converts the global image row index to the local tile row index.
+   * You should not need to call this manually.
+   */
+  __host__ __device__ Tidx internalRow(Tidx y) const { return y - startRow; }
+  /**
+   * @brief Converts the global image col index to the local tile col index.
+   * You should not need to call this manually.
+   */
+  __host__ __device__ Tidx internalCol(Tidx x) const { return x - startCol; }
+
+  /**
+   * @brief Returns a reference to the specified element.
+   *
+   * @param y Row index with respect to the original (larger) image
+   * @param x Col index with respect to the original (larger) image
+   * @return A const reference to the specified element
+   */
+  __host__ __device__ Tdata &at(Tidx y, Tidx x) {
+    return this->row(internalRow(y))[internalCol(x)];
+  }
+
+  /**
+   * @brief Returns a const reference to the specified element.
+   *
+   * @param y Row index with respect to the original (larger) image
+   * @param x Col index with respect to the original (larger) image
+   * @return A const reference to the specified element
+   */
+  __host__ __device__ const Tdata &at(Tidx y, Tidx x) const {
+    return this->row(internalRow(y))[internalCol(x)];
+  }
+
+  /**
+   * @brief Returns a reference to the last element of a row (in the tile).
+
+   * @detail Useful for scenarios where out of bounds access should be treated
+   * as using the last element i.e. 'same-element extrapolation'.
+   */
+  __host__ __device__ Tdata &rowEnd(Tidx y) {
+    return this->row(internalRow(y))[this->width - 1];
+  }
+
+  /**
+   * @brief Returns a const reference to the last element of a row (in the
+   tile).
+
+   * @detail Useful for scenarios where out of bounds access should be treated
+   * as using the last element i.e. 'same-element extrapolation'.
+   */
+  __host__ __device__ const Tdata &rowEnd(Tidx y) const {
+    return this->row(internalRow(y))[this->width - 1];
+  }
+
+  /**
+   * @brief Returns a reference to the last element of a column (in the tile).
+   *
+   * @detail Useful for scenarios where out of bounds access should be treated
+   * as using the last element i.e. 'same-element extrapolation'.
+   */
+  __host__ __device__ Tdata &colEnd(Tidx x) {
+    return this->row(this->height - 1)[internalCol(x)];
+  }
+
+  /**
+   * @brief Returns a const reference to the last element of a column (in the
+   * tile).
+   *
+   * @detail Useful for scenarios where out of bounds access should be treated
+   * as using the last element i.e. 'same-element extrapolation'.
+   */
+  __host__ __device__ const Tdata &colEnd(Tidx x) const {
+    return this->row(this->height - 1)[internalCol(x)];
+  }
+
+  /**
+   * @brief Returns the element by value if in range, otherwise returns the
+   * specified default value.
+   */
+  __host__ __device__ Tdata atWithDefault(Tidx y, Tidx x,
+                                          Tdata defaultValue = 0) const {
+    return rowIsValid(y) && colIsValid(x)
+               ? this->row(internalRow(y))[internalCol(x)]
+               : defaultValue;
+  }
+
+  /**
+   * @brief Returns the element by value if in range, otherwise returns the
+   * specified pointer's dereferenced value. This prevents an early memory
+   * access if it is not required e.g. use row end values for indices extending
+   * past the width.
+
+   * @param defaultValuePtr Pointer location to dereference in the case of out
+   of bounds indices. Defaults to nullptr, which will instead access the first
+   value from *data.
+   */
+  __host__ __device__ Tdata atWithDefaultPointer(
+      Tidx y, Tidx x, const Tdata *defaultValuePtr = nullptr) const {
+    // Prevent nullptr access by defaulting to start of data
+    const Tdata *ptr =
+        defaultValuePtr == nullptr ? this->data : defaultValuePtr;
+    return rowIsValid(y) && colIsValid(x) ? row(internalRow(y))[internalCol(x)]
+                                          : *ptr;
+  }
+};
+
+/**
  * @brief A holder container that uses thrust::device_vector for an Image.
  * Use this for RAII of a device_vector that allows you to easily return an
  * Image struct for kernel calls.
