@@ -32,7 +32,7 @@ template <typename Tcalc> struct OversampleKernelParams {
    * I ----- I ----- I -> input
    * O   O   O   O   O -> outStep of 0.5
    * @param outOffset Starting output pixel point in terms of input pixel
-   * coordinates
+   * coordinates. Origin is defined as the first input pixel i.e. index 0,0
    */
   OversampleKernelParams(const int2 oversampleFactor,
                          const cuda_vec2_t<Tcalc> outStep,
@@ -106,7 +106,10 @@ __global__ void oversampleBilerpAndCombineKernel(
     const OversampleKernelParams<Tcalc> params,
     // NOTE: Surprisingly, ncu says computing numOutBlocks stalls a lot, and in
     // fact just passing this in directly speeds up about 4%
-    const int2 numOutBlocks, const RotationParams<Tcalc> rotParams) {
+    const int2 numOutBlocks, const RotationParams<Tcalc> rotParams
+    // NOTE: the mere existence of the parameters appears to slow down the
+    // kernel, even if it is not used; maybe templatize this
+) {
   static_assert(std::is_floating_point<Tcalc>::value,
                 "Tcalc must be a floating point type");
 
@@ -174,7 +177,6 @@ __global__ void oversampleBilerpAndCombineKernel(
             // Extract the 4 corners of data
             // Here is where you would include logic to handle pixel reading
             // For now we just read simply and default to 0 if it doesn't exist
-            // Read and cast to out floating point type
             Tin topLeft = stile.at(iy, ix);
             Tin topRight = stile.at(iy, ix + 1);
             Tin botLeft = stile.at(iy + 1, ix);
@@ -211,7 +213,6 @@ __global__ void oversampleBilerpAndCombineKernel(
             // Extract the 4 corners of data
             // Here is where you would include logic to handle pixel reading
             // For now we just read simply and default to 0 if it doesn't exist
-            // Read and cast to out floating point type
             Tin topLeft = in.atWithDefault(iy, ix);
             Tin topRight = in.atWithDefault(iy, ix + 1);
             Tin botLeft = in.atWithDefault(iy + 1, ix);

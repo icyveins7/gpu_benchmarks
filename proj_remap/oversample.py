@@ -6,10 +6,10 @@ factor = 5
 padding = factor // 2
 step = 0.8/factor
 
-inwidth = 40
-inheight = 40
-outwidth = 50
-outheight = 50
+inwidth = 4
+inheight = 4
+outwidth = 5
+outheight = 5
 
 x = np.arange(inwidth)
 y = np.arange(inheight)
@@ -18,18 +18,20 @@ print(z)
 zpad = np.pad(z, ((padding,padding), (padding,padding)))
 xpad = np.arange(x.size + 2*padding) - padding
 ypad = np.arange(y.size + 2*padding) - padding
+print(xpad)
+print(ypad)
 
 interp = RegularGridInterpolator((xpad, ypad), zpad)
 
 outShape = np.array([outheight, outwidth])
 xp = np.arange(factor * outShape[1]) * step - step * padding
 yp = np.arange(factor * outShape[0]) * step - step * padding
-xg, yg = np.meshgrid(xp, yp)
-zp = interp(np.vstack((xg.ravel(), yg.ravel())).T).reshape((yp.size,xp.size)).T
+print(xp)
+print(yp)
+xg, yg = np.meshgrid(xp, yp, indexing="ij")
+# zp = interp(np.vstack((xg.ravel(), yg.ravel())).T).reshape((yp.size,xp.size)).T
+zp = interp((xg, yg))
 
-print(zp)
-print(zp[:factor,:factor])
-print(zp[:factor,:factor].sum())
 
 zfinal = np.zeros((outShape[0], outShape[1]), np.float64)
 for i in range(outShape[0]):

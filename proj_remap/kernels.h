@@ -27,7 +27,7 @@ void quickView(const thrust::host_vector<T> &v, const size_t width,
 }
 
 template <typename Tdata, typename Tcalc = float>
-inline __device__ Tdata bilinearInterpolate(
+inline __device__ Tcalc bilinearInterpolate(
   const Tdata topLeft, const Tdata topRight, const Tdata btmLeft, const Tdata btmRight,
   const Tcalc x, const Tcalc y
 ){
