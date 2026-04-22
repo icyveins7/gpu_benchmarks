@@ -26,24 +26,26 @@ void quickView(const thrust::host_vector<T> &v, const size_t width,
   }
 }
 
-template <typename T>
-inline __device__ T bilinearInterpolate(
-  const T topLeft, const T topRight, const T btmLeft, const T btmRight,
-  const T x, const T y
+template <typename Tdata, typename Tcalc = float>
+inline __device__ Tdata bilinearInterpolate(
+  const Tdata topLeft, const Tdata topRight, const Tdata btmLeft, const Tdata btmRight,
+  const Tcalc x, const Tcalc y
 ){
-  static_assert(std::is_floating_point<T>::value, "T must be a floating point type");
+  static_assert(std::is_floating_point<Tcalc>::value, "Tcalc must be a floating point type");
   // Interpolate on the rows first
-  const T xm = x - cuda::std::floor(x);
+  const Tcalc xm = x - cuda::std::floor(x);
   // Use 2 FMAs?
-  const T top = cuda::std::fma(xm, topRight, cuda::std::fma(-xm, topLeft, topLeft));
-  const T btm = cuda::std::fma(xm, btmRight, cuda::std::fma(-xm, btmLeft, btmLeft));
-  // const T top = topLeft + (topRight - topLeft) * xm;
-  // const T btm = btmLeft + (btmRight - btmLeft) * xm;
+  // const Tcalc top = cuda::std::fma(xm, topRight, cuda::std::fma(-xm, topLeft, topLeft));
+  // const Tcalc btm = cuda::std::fma(xm, btmRight, cuda::std::fma(-xm, btmLeft, btmLeft));
+  // Non-FMA (not really slower, and may be important if Tdata is integer)
+  const Tcalc top = topLeft + (topRight - topLeft) * xm;
+  const Tcalc btm = btmLeft + (btmRight - btmLeft) * xm;
   // Then interpolate the two row interpolants
-  const T ym = y - cuda::std::floor(y);
+  const Tcalc ym = y - cuda::std::floor(y);
   // Use 2 FMAs?
-  const T result = cuda::std::fma(ym, btm, cuda::std::fma(-ym, top, top));
-  // const T result = top + (btm - top) * ym;
+  // const Tcalc result = cuda::std::fma(ym, btm, cuda::std::fma(-ym, top, top));
+  // Non-FMA
+  const Tcalc result = top + (btm - top) * ym;
   return result;
 }
 

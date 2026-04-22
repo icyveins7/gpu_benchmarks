@@ -68,22 +68,36 @@ target_sources(
 # --------------------
 set_source_files_properties(oversample_remap.cu PROPERTIES LANGUAGE CUDA)
 add_executable(oversample_remap)
-
 target_include_directories(oversample_remap
                            PRIVATE ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
                            )
-
 target_compile_options(
   oversample_remap
   PRIVATE
   -g
   -lineinfo
 )
-
 target_sources(
   oversample_remap PRIVATE
   ${PROJECT_SOURCE_DIR}/oversample_remap.cu
 )
+
+add_executable(oversample_remap_double)
+target_include_directories(oversample_remap_double
+                           PRIVATE ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
+                           )
+target_compile_options(
+  oversample_remap_double
+  PRIVATE
+  -g
+  -lineinfo
+)
+target_compile_definitions(oversample_remap_double PRIVATE USE_DOUBLE_CALC)
+target_sources(
+  oversample_remap_double PRIVATE
+  ${PROJECT_SOURCE_DIR}/oversample_remap.cu
+)
+
 
 # -------------------- Tests
 if (GTEST_FOUND)

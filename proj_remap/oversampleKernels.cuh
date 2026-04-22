@@ -130,12 +130,12 @@ __global__ void oversampleBilerpAndCombineKernel(
             // Here is where you would include logic to handle pixel reading
             // For now we just read simply and default to 0 if it doesn't exist
             // Read and cast to out floating point type
-            Tcalc topLeft = stile.at(iy, ix);
-            Tcalc topRight = stile.at(iy, ix + 1);
-            Tcalc botLeft = stile.at(iy + 1, ix);
-            Tcalc botRight = stile.at(iy + 1, ix + 1);
+            Tin topLeft = stile.at(iy, ix);
+            Tin topRight = stile.at(iy, ix + 1);
+            Tin botLeft = stile.at(iy + 1, ix);
+            Tin botRight = stile.at(iy + 1, ix + 1);
 
-            Tcalc interpolated = bilinearInterpolate<Tcalc>(
+            Tcalc interpolated = bilinearInterpolate<Tin, Tcalc>(
                 topLeft, topRight, botLeft, botRight, sx, sy);
 
             value += interpolated;
@@ -162,12 +162,12 @@ __global__ void oversampleBilerpAndCombineKernel(
             // Here is where you would include logic to handle pixel reading
             // For now we just read simply and default to 0 if it doesn't exist
             // Read and cast to out floating point type
-            Tcalc topLeft = in.atWithDefault(iy, ix);
-            Tcalc topRight = in.atWithDefault(iy, ix + 1);
-            Tcalc botLeft = in.atWithDefault(iy + 1, ix);
-            Tcalc botRight = in.atWithDefault(iy + 1, ix + 1);
+            Tin topLeft = in.atWithDefault(iy, ix);
+            Tin topRight = in.atWithDefault(iy, ix + 1);
+            Tin botLeft = in.atWithDefault(iy + 1, ix);
+            Tin botRight = in.atWithDefault(iy + 1, ix + 1);
 
-            Tcalc interpolated = bilinearInterpolate<Tcalc>(
+            Tcalc interpolated = bilinearInterpolate<Tin, Tcalc>(
                 topLeft, topRight, botLeft, botRight, sx, sy);
 
             value += interpolated;
@@ -225,7 +225,7 @@ void oversampleBilerpAndCombine(containers::Image<const Tin> in,
                         // when number of blocks is large
 
   // printf("Using shared mem %zu bytes\n", shmem);
-  oversampleBilerpAndCombineKernel<int, float, Tcalc, useSharedMem>
+  oversampleBilerpAndCombineKernel<Tin, Tout, Tcalc, useSharedMem>
       <<<blks, tpb, shmem, stream>>>(in, out, oversampleFactor, params,
                                      int2{(int)outblks.x, (int)outblks.y});
 }

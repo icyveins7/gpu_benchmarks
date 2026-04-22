@@ -7,7 +7,16 @@
 
 #include "cxxopts.hpp"
 
+#if defined(USE_DOUBLE_CALC)
+using Tcalc = double;
+#else
+using Tcalc = float;
+#endif
+
 int main(int argc, char *argv[]) {
+#if defined(USE_DOUBLE_CALC)
+  printf("Using Tcalc = double\n");
+#endif
   // Parse command line args
   // clang-format off
   cxxopts::Options options("Oversampled remap", "Cuda experiment of oversampled remap kernel");
@@ -17,10 +26,10 @@ int main(int argc, char *argv[]) {
     ("outheight", "Output height", cxxopts::value<int>()->default_value("5"))
     ("outwidth", "Output width", cxxopts::value<int>()->default_value("5"))
     ("f,factor", "Oversample factor", cxxopts::value<int>()->default_value("3"))
-    ("xoffset", "Output x offset", cxxopts::value<float>()->default_value("0"))
-    ("yoffset", "Output y offset", cxxopts::value<float>()->default_value("0"))
-    ("xstep", "Output x step", cxxopts::value<float>()->default_value("0.8"))
-    ("ystep", "Output y step", cxxopts::value<float>()->default_value("0.8"))
+    ("xoffset", "Output x offset", cxxopts::value<Tcalc>()->default_value("0"))
+    ("yoffset", "Output y offset", cxxopts::value<Tcalc>()->default_value("0"))
+    ("xstep", "Output x step", cxxopts::value<Tcalc>()->default_value("0.8"))
+    ("ystep", "Output y step", cxxopts::value<Tcalc>()->default_value("0.8"))
     ("shm", "Use shared mem", cxxopts::value<bool>()->default_value("false"))
     ("o,output", "Output file", cxxopts::value<std::string>())
     ("h,help", "Print usage")
@@ -41,23 +50,24 @@ int main(int argc, char *argv[]) {
   std::iota(h_in.begin(), h_in.end(), 1);
   d_in.vec = h_in;
 
-  containers::DeviceImageStorage<float> d_out(result["outheight"].as<int>(),
+  // We use Tcalc for the output as well
+  containers::DeviceImageStorage<Tcalc> d_out(result["outheight"].as<int>(),
                                               result["outwidth"].as<int>());
   int2 oversampleFactor{result["factor"].as<int>(), result["factor"].as<int>()};
-  float2 outOffset{result["xoffset"].as<float>(),
-                   result["yoffset"].as<float>()};
-  float2 outStep{result["xstep"].as<float>(), result["ystep"].as<float>()};
-  using Tcalc = float;
+  cuda_vec2_t<Tcalc> outOffset{result["xoffset"].as<Tcalc>(),
+                               result["yoffset"].as<Tcalc>()};
+  cuda_vec2_t<Tcalc> outStep{result["xstep"].as<Tcalc>(),
+                             result["ystep"].as<Tcalc>()};
   if (useSharedMem) {
-    oversampleBilerpAndCombine<int, float, Tcalc, true>(
+    oversampleBilerpAndCombine<int, Tcalc, Tcalc, true>(
         d_in.cimage(), d_out.image(), oversampleFactor, outOffset, outStep,
         dim3(32, 4));
   } else {
-    oversampleBilerpAndCombine<int, float, Tcalc, false>(
+    oversampleBilerpAndCombine<int, Tcalc, Tcalc, false>(
         d_in.cimage(), d_out.image(), oversampleFactor, outOffset, outStep,
         dim3(32, 4));
   }
-  thrust::pinned_host_vector<float> h_out = d_out.vec;
+  thrust::pinned_host_vector<Tcalc> h_out = d_out.vec;
 
   if (d_in.width < 64 && d_in.height < 64) {
     for (size_t y = 0; y < (size_t)d_in.height; y++) {
@@ -81,7 +91,7 @@ int main(int argc, char *argv[]) {
   }
   if (result.count("output")) {
     std::ofstream out(result["output"].as<std::string>(), std::ios::binary);
-    out.write((char *)h_out.data().get(), h_out.size() * sizeof(float));
+    out.write((char *)h_out.data().get(), h_out.size() * sizeof(Tcalc));
   }
 
   return 0;
