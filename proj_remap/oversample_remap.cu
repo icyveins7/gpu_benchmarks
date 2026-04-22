@@ -1,3 +1,4 @@
+#include <cmath>
 #include <fstream>
 #include <iostream>
 
@@ -31,6 +32,7 @@ int main(int argc, char *argv[]) {
     ("xstep", "Output x step", cxxopts::value<Tcalc>()->default_value("0.8"))
     ("ystep", "Output y step", cxxopts::value<Tcalc>()->default_value("0.8"))
     ("shm", "Use shared mem", cxxopts::value<bool>()->default_value("false"))
+    ("angle", "Rotation angle (degrees)", cxxopts::value<Tcalc>()->default_value("0"))
     ("o,output", "Output file", cxxopts::value<std::string>())
     ("h,help", "Print usage")
   ;
@@ -58,14 +60,16 @@ int main(int argc, char *argv[]) {
                                result["yoffset"].as<Tcalc>()};
   cuda_vec2_t<Tcalc> outStep{result["xstep"].as<Tcalc>(),
                              result["ystep"].as<Tcalc>()};
+
+  Tcalc angleRadians = result["angle"].as<Tcalc>() / 180.0 * M_PI;
   if (useSharedMem) {
     oversampleBilerpAndCombine<int, Tcalc, Tcalc, true>(
         d_in.cimage(), d_out.image(), oversampleFactor, outOffset, outStep,
-        dim3(32, 4));
+        dim3(32, 4), angleRadians);
   } else {
     oversampleBilerpAndCombine<int, Tcalc, Tcalc, false>(
         d_in.cimage(), d_out.image(), oversampleFactor, outOffset, outStep,
-        dim3(32, 4));
+        dim3(32, 4), angleRadians);
   }
   thrust::pinned_host_vector<Tcalc> h_out = d_out.vec;
 
