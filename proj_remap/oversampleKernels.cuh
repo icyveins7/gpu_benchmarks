@@ -67,16 +67,16 @@ template <typename Tcalc> struct RotationParams {
   Tcalc rotmat[2][2];
   bool used;
 
-  __host__ __device__ RotationParams() { this->used = false; }
+  __host__ RotationParams() { this->used = false; }
 
-  __host__ __device__ RotationParams(Tcalc xCentre, Tcalc yCentre,
-                                     Tcalc angleRadians) {
+  __host__ RotationParams(Tcalc xCentre, Tcalc yCentre, Tcalc angleRadians) {
     this->xCentre = xCentre;
     this->yCentre = yCentre;
-    this->rotmat[0][0] = cos(angleRadians);
-    this->rotmat[0][1] = -sin(angleRadians);
-    this->rotmat[1][0] = sin(angleRadians);
-    this->rotmat[1][1] = cos(angleRadians);
+    // Compute matrix in double, since it's on host and 1-time anyway
+    this->rotmat[0][0] = cos((double)angleRadians);
+    this->rotmat[0][1] = -sin((double)angleRadians);
+    this->rotmat[1][0] = sin((double)angleRadians);
+    this->rotmat[1][1] = cos((double)angleRadians);
     this->used = true;
   }
 
@@ -260,6 +260,9 @@ void oversampleBilerpAndCombine(containers::Image<const Tin> in,
     Tcalc yCentre = in.height / 2 - (in.height % 2 == 0 ? 0.5 : 0);
     printf("centre is at %f, %f\n", xCentre, yCentre);
     rotParams = RotationParams<Tcalc>(xCentre, yCentre, angleRadians);
+    printf("%12.8f %12.8f\n%12.8f %12.8f\n", rotParams.rotmat[0][0],
+           rotParams.rotmat[0][1], rotParams.rotmat[1][0],
+           rotParams.rotmat[1][1]);
   }
 
   // Compute number of blocks to cover the output
