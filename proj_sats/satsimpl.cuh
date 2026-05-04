@@ -603,15 +603,26 @@ struct FilterOfDisksRowSATCreator {
   }
 }; // end struct FilterOfDisksRowSATCreator
 
-template <typename Tsection, typename Tscale = double>
+template <typename Tsection, typename Tscale = double,
+          bool useStreamOrdered = false>
 struct MultiFilterOfDisksRowSATCreator {
   // The host is the creator object
-  std::vector<FilterOfDisksRowSATCreator<Tsection, Tscale>> h_filtercreators;
+  std::vector<FilterOfDisksRowSATCreator<Tsection, Tscale, useStreamOrdered>>
+      h_filtercreators;
   // but the device has the actual filter objects
   thrust::pinned_host_vector<FilterOfDisksRowSAT<Tsection, Tscale>>
       h_filters_vec;
-  thrust::device_vector<FilterOfDisksRowSAT<Tsection, Tscale>> d_filters_vec;
 
+  // Switch between standard thrust vector and the stream ordered custom one
+  template <typename T>
+  using deviceVec =
+      typename std::conditional<useStreamOrdered,
+                                containers::StreamOrderedDeviceStorage<T>,
+                                thrust::device_vector<T>>::type;
+
+  deviceVec<FilterOfDisksRowSAT<Tsection, Tscale>> d_filters_vec;
+
+  // Constructors
   MultiFilterOfDisksRowSATCreator() {}
   MultiFilterOfDisksRowSATCreator(const size_t numFilters) {
     h_filtercreators.reserve(numFilters);
@@ -620,7 +631,7 @@ struct MultiFilterOfDisksRowSATCreator {
   size_t numFilters() const { return h_filtercreators.size(); }
 
   void addFilter(const Tscale *scale, const double *radiusPixels,
-                 const int NumDisks) {
+                 const int NumDisks, cudaStream_t stream = 0) {
     for (int i = 0; i < NumDisks; ++i) {
       printf("Adding to multifilter index %zu, disk with scale %f, radius %f\n",
              h_filtercreators.size(), scale[i], radiusPixels[i]);
@@ -630,25 +641,46 @@ struct MultiFilterOfDisksRowSATCreator {
     // push_back triggers moves.
     // with the proper move semantics defined it should actually be possible to
     // push_back even if the numFilters was not reserved
-    h_filtercreators.push_back(FilterOfDisksRowSATCreator<Tsection, Tscale>(
-        scale, radiusPixels, NumDisks));
+    h_filtercreators.push_back(
+        FilterOfDisksRowSATCreator<Tsection, Tscale, useStreamOrdered>(
+            scale, radiusPixels, NumDisks, stream));
     printf("---- Added filter %zu\n", h_filtercreators.size() - 1);
   }
 
-  void h2d() {
+  void h2d(cudaStream_t stream = 0) {
     h_filters_vec.resize(h_filtercreators.size());
-    d_filters_vec.resize(h_filtercreators.size());
-    for (size_t i = 0; i < h_filtercreators.size(); ++i) {
-      printf("Filter %zu disks at %p\n", i,
-             h_filtercreators[i].d_disks.data().get());
-      h_filters_vec[i] = h_filtercreators[i].toDevice();
+    if constexpr (useStreamOrdered) {
+      d_filters_vec.initialize(h_filtercreators.size(), stream);
+      for (size_t i = 0; i < h_filtercreators.size(); ++i) {
+        printf("Filter %zu disks at %p\n", i,
+               h_filtercreators[i].d_disks.data());
+        h_filters_vec[i] = h_filtercreators[i].toDevice();
+      }
+      cudaMemcpyAsync(d_filters_vec.data(), h_filters_vec.data().get(),
+                      h_filters_vec.size() *
+                          sizeof(FilterOfDisksRowSAT<Tsection, Tscale>),
+                      cudaMemcpyHostToDevice, stream);
+    } else {
+      d_filters_vec.resize(h_filtercreators.size());
+      for (size_t i = 0; i < h_filtercreators.size(); ++i) {
+        printf("Filter %zu disks at %p\n", i,
+               h_filtercreators[i].d_disks.data().get());
+        h_filters_vec[i] = h_filtercreators[i].toDevice();
+      }
+      // Copy up all the filters
+      cudaMemcpy(d_filters_vec.data().get(), h_filters_vec.data().get(),
+                 h_filters_vec.size() *
+                     sizeof(FilterOfDisksRowSAT<Tsection, Tscale>),
+                 cudaMemcpyHostToDevice);
     }
-    // Copy up all the filters
-    d_filters_vec = h_filters_vec;
   }
 
   FilterOfDisksRowSAT<Tsection, Tscale> *d_filters() {
-    return d_filters_vec.data().get();
+    if constexpr (useStreamOrdered) {
+      return d_filters_vec.data();
+    } else {
+      return d_filters_vec.data().get();
+    }
   }
 };
 

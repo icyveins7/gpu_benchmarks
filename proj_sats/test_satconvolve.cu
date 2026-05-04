@@ -87,18 +87,19 @@ void test_convolve_singlefilter(const Tscale *scales,
 
 // Expects each filter has same number of disks
 template <int NumFilters, typename Tin, typename Trowsum, typename Tsat,
-          typename Tout, typename Tscale>
+          typename Tout, typename Tscale, bool useStreamOrdered = false>
 void test_convolve_multifilter(const Tscale *scales, const double *radiusPixels,
                                const int numDisks, const int width,
                                const int height) {
-
+  containers::CudaStream stream;
   // Construct multi filter
-  sats::MultiFilterOfDisksRowSATCreator<int16_t, double> multifilter;
+  sats::MultiFilterOfDisksRowSATCreator<int16_t, double, useStreamOrdered>
+      multifilter;
   for (int f = 0; f < NumFilters; ++f) {
     multifilter.addFilter(&scales[f * numDisks], &radiusPixels[f * numDisks],
-                          numDisks);
+                          numDisks, useStreamOrdered ? stream() : 0);
   }
-  multifilter.h2d();
+  multifilter.h2d(useStreamOrdered ? stream() : 0);
   ASSERT_EQ(multifilter.numFilters(), NumFilters);
 
   // Construct disks and containers for them
@@ -142,7 +143,7 @@ void test_convolve_multifilter(const Tscale *scales, const double *radiusPixels,
   std::vector<std::vector<double>> mats(NumFilters);
   std::vector<int> matLengths(NumFilters);
   for (int f = 0; f < (int)multifilter.numFilters(); ++f) {
-    mats.at(f) = multifilter.h_filtercreators[f].makeMat<double>();
+    mats.at(f) = multifilter.h_filtercreators[f].template makeMat<double>();
     matLengths.at(f) = multifilter.h_filtercreators[f].maxDiskLength();
   }
   std::vector<double> checkOut = convExplicitlyWithRule<Tin, double, double>(
@@ -216,6 +217,10 @@ TEST(ConvolverSAT_prefixRows_multiFilter_1disk, size100x100) {
 
   test_convolve_multifilter<numFilters, Tin, Trowsum, Tsat, Tout, Tscale>(
       scales, radiusPixels, numDisks, width, height);
+
+  // test again with stream ordered allocs
+  test_convolve_multifilter<numFilters, Tin, Trowsum, Tsat, Tout, Tscale, true>(
+      scales, radiusPixels, numDisks, width, height);
 }
 
 TEST(ConvolverSAT_prefixRows_multiFilter_4disk, size100x100) {
@@ -236,5 +241,9 @@ TEST(ConvolverSAT_prefixRows_multiFilter_4disk, size100x100) {
                                                 2.0, 3.0, 4.0, 5.0};
 
   test_convolve_multifilter<numFilters, Tin, Trowsum, Tsat, Tout, Tscale>(
+      scales, radiusPixels, numDisks, width, height);
+
+  // test again with stream ordered allocs
+  test_convolve_multifilter<numFilters, Tin, Trowsum, Tsat, Tout, Tscale, true>(
       scales, radiusPixels, numDisks, width, height);
 }
