@@ -108,4 +108,9 @@ if (GTEST_FOUND)
   add_executable(test_image test_image.cu)
   target_link_libraries(test_image GTest::gtest_main)
   gtest_discover_tests(test_image)
+
+  # --------------------
+  add_executable(test_stream_ordered_storage test_stream_ordered_storage.cu ${CMAKE_SOURCE_DIR}/src/containers/streams.cu)
+  target_link_libraries(test_stream_ordered_storage GTest::gtest_main)
+  gtest_discover_tests(test_stream_ordered_storage)
 endif()

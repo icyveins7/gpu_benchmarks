@@ -77,12 +77,31 @@ public:
     }
   }
 
-  // No copy/move semantics whatsoever
+  // No copy semantics whatsoever
   StreamOrderedDeviceStorage(const StreamOrderedDeviceStorage &) = delete;
-  StreamOrderedDeviceStorage(StreamOrderedDeviceStorage &&) = delete;
   StreamOrderedDeviceStorage &
   operator=(const StreamOrderedDeviceStorage &) = delete;
-  StreamOrderedDeviceStorage &operator=(StreamOrderedDeviceStorage &&) = delete;
+
+  // Move-only
+  StreamOrderedDeviceStorage(StreamOrderedDeviceStorage &&other) {
+    m_capacity = other.m_capacity;
+    m_size = other.m_size;
+    m_data = other.m_data;
+    m_stream = other.m_stream;
+    other.m_data = nullptr;
+    other.m_size = 0;
+    other.m_capacity = 0;
+  }
+  StreamOrderedDeviceStorage &operator=(StreamOrderedDeviceStorage &&other) {
+    m_capacity = other.m_capacity;
+    m_size = other.m_size;
+    m_data = other.m_data;
+    m_stream = other.m_stream;
+    other.m_data = nullptr;
+    other.m_size = 0;
+    other.m_capacity = 0;
+    return *this;
+  };
 
   const T *data() const { return m_data; }
   T *data() { return m_data; }
