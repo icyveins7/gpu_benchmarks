@@ -1,4 +1,5 @@
 #include "containers/image.cuh"
+#include "containers/streams.cuh"
 #include "manualConv.h"
 #include "satsimpl.cuh"
 
@@ -31,13 +32,15 @@ void validate_preprocessing(const thrust::host_vector<Tin> &h_data,
 }
 
 template <typename Tin, typename Trowsum, typename Tsat, typename Tout,
-          typename Tscale>
+          typename Tscale, bool useStreamOrdered = false>
 void test_convolve_singlefilter(const Tscale *scales,
                                 const double *radiusPixels, const int numDisks,
                                 const int width, const int height) {
+  containers::CudaStream stream;
+
   // Construct disks and containers for them
-  sats::FilterOfDisksRowSATCreator<int16_t> filter(scales, radiusPixels,
-                                                   numDisks);
+  sats::FilterOfDisksRowSATCreator<int16_t, double, useStreamOrdered> filter(
+      scales, radiusPixels, numDisks, useStreamOrdered ? stream() : 0);
 
   // Construct sample input
   containers::DeviceImageStorage<Tin> d_data(width, height);
@@ -73,7 +76,7 @@ void test_convolve_singlefilter(const Tscale *scales,
   thrust::host_vector<Tout> h_out = d_out.vec;
 
   // Check final output
-  std::vector<double> mat = filter.makeMat<double>();
+  std::vector<double> mat = filter.template makeMat<double>();
   std::vector<double> checkOut = convExplicitly<Tin, double, double>(
       mat, filter.maxDiskLength(), h_data.data(), height, width);
 
@@ -166,6 +169,10 @@ TEST(ConvolverSAT_prefixRows_singleFilter_1disk, size100x100) {
 
   test_convolve_singlefilter<Tin, Trowsum, Tsat, Tout, Tscale>(
       scales, radiusPixels, numDisks, width, height);
+
+  // test again with stream ordered allocs
+  test_convolve_singlefilter<Tin, Trowsum, Tsat, Tout, Tscale, true>(
+      scales, radiusPixels, numDisks, width, height);
 }
 
 TEST(ConvolverSAT_prefixRows_singleFilter_4disk, size100x100) {
@@ -183,6 +190,10 @@ TEST(ConvolverSAT_prefixRows_singleFilter_4disk, size100x100) {
   double radiusPixels[numDisks] = {5.0, 4.0, 3.0, 2.0};
 
   test_convolve_singlefilter<Tin, Trowsum, Tsat, Tout, Tscale>(
+      scales, radiusPixels, numDisks, width, height);
+
+  // test again with stream ordered allocs
+  test_convolve_singlefilter<Tin, Trowsum, Tsat, Tout, Tscale, true>(
       scales, radiusPixels, numDisks, width, height);
 }
 

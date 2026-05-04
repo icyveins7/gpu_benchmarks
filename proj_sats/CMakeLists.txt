@@ -36,7 +36,7 @@ if (GTEST_FOUND)
   target_link_libraries(test_satstructs GTest::gtest_main)
   gtest_discover_tests(test_satstructs)
   # --------------------
-  add_executable(test_satconvolve test_satconvolve.cu)
+  add_executable(test_satconvolve test_satconvolve.cu ${CMAKE_SOURCE_DIR}/src/containers/streams.cu)
   target_link_libraries(test_satconvolve GTest::gtest_main)
   gtest_discover_tests(test_satconvolve)
 endif()

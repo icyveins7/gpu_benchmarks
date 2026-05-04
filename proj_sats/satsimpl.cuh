@@ -12,6 +12,8 @@
 
 #include "containers/cubwrappers.cuh"
 #include "containers/image.cuh"
+#include "containers/stream_ordered_storage.cuh"
+
 #include "transpose.cuh"
 
 namespace sats {
@@ -247,7 +249,8 @@ template <typename T, typename Tscale = double> struct DiskRowSAT {
   }
 };
 
-int getMaximumSectionsForDisk_prefixRows_SAT(const double radiusPixels) {
+__host__ __device__ int
+getMaximumSectionsForDisk_prefixRows_SAT(const double radiusPixels) {
   // rounds towards zero for the radius i.e. if radius 1.1 then only extend 1
   // pixel. +1 to account for the centre pixel. note that our disk sections
   // are mirrored so we don't store 2*radiusPixels
@@ -259,9 +262,9 @@ int getMaximumSectionsForDisk_prefixRows_SAT(const double radiusPixels) {
  * getMaximumSectionsForDisk_prefixRows_SAT() for sections and sectionTypes.
  */
 template <typename T>
-int constructSectionsForDisk_prefixRows_SAT(const double radiusPixels,
-                                            DiskSection<T> *sections,
-                                            uint8_t *sectionTypes) {
+__host__ int constructSectionsForDisk_prefixRows_SAT(const double radiusPixels,
+                                                     DiskSection<T> *sections,
+                                                     uint8_t *sectionTypes) {
   int numSections = 0;
 
   std::vector<T> rowOffsets(
@@ -325,9 +328,10 @@ int constructSectionsForDisk_prefixRows_SAT(const double radiusPixels,
  * @brief Retrieve the disk section for a given row.
  */
 template <typename T>
-DiskSection<T> getDiskSectionForRow(const DiskSection<T> *sections,
-                                    const int numActualSections, const int row,
-                                    int *idx = nullptr) {
+__host__ DiskSection<T> getDiskSectionForRow(const DiskSection<T> *sections,
+                                             const int numActualSections,
+                                             const int row,
+                                             int *idx = nullptr) {
   int targetRow = row;
   int finalRow = -sections[0].startRow;
   // int totalRows = finalRow * 2 + 1;
@@ -359,26 +363,40 @@ struct FilterOfDisksRowSAT {
 
 // This is used to construct and hold the underlying RAII containers
 // for all the disks and associated sections.
-template <typename Tsection, typename Tscale = double>
+template <typename Tsection, typename Tscale = double,
+          bool useStreamOrdered = false>
 struct FilterOfDisksRowSATCreator {
+  // Switch between standard thrust vector and the stream ordered custom one
+  template <typename T>
+  using deviceVec =
+      typename std::conditional<useStreamOrdered,
+                                containers::StreamOrderedDeviceStorage<T>,
+                                thrust::device_vector<T>>::type;
+
   thrust::pinned_host_vector<DiskRowSAT<Tsection, Tscale>> h_disks;
-  thrust::device_vector<DiskRowSAT<Tsection, Tscale>> d_disks;
-  thrust::device_vector<DiskSection<Tsection>> d_sections;
-  thrust::device_vector<uint8_t> d_sectionTypes;
+  deviceVec<DiskRowSAT<Tsection, Tscale>> d_disks;
+  deviceVec<DiskSection<Tsection>> d_sections;
+  deviceVec<uint8_t> d_sectionTypes;
   thrust::pinned_host_vector<DiskSection<Tsection>> h_sections;
   thrust::pinned_host_vector<uint8_t> h_sectionTypes;
 
   int numDisks() const { return h_disks.size(); }
 
   FilterOfDisksRowSAT<Tsection, Tscale> toDevice() {
-    FilterOfDisksRowSAT<Tsection, Tscale> container{
-        d_disks.data().get(), (unsigned int)d_disks.size()};
-    return container;
+    if constexpr (useStreamOrdered) {
+      FilterOfDisksRowSAT<Tsection, Tscale> container{
+          d_disks.data(), (unsigned int)d_disks.size()};
+      return container;
+    } else {
+      FilterOfDisksRowSAT<Tsection, Tscale> container{
+          d_disks.data().get(), (unsigned int)d_disks.size()};
+      return container;
+    }
   }
 
   // Primary constructor
   FilterOfDisksRowSATCreator(const Tscale *scale, const double *radiusPixels,
-                             const int NumDisks) {
+                             const int NumDisks, cudaStream_t stream = 0) {
 
     // Count how much we would need
     int maxSections = 0;
@@ -405,22 +423,43 @@ struct FilterOfDisksRowSATCreator {
       totalActualSections += numActualSections;
       numActualSectionsPerDisk[i] = numActualSections; // cache this for later
     }
+
     // Copy to device
-    d_sections.resize(totalActualSections);
-    d_sectionTypes.resize(totalActualSections);
-    printf("d_sections size: %zu\n", d_sections.size());
-    printf("d_sectionTypes size: %zu\n", d_sectionTypes.size());
-    // Don't really need streams here, should be a one time thing during prep
-    thrust::copy(h_sections.begin(), h_sections.begin() + totalActualSections,
-                 d_sections.begin());
-    thrust::copy(h_sectionTypes.begin(),
-                 h_sectionTypes.begin() + totalActualSections,
-                 d_sectionTypes.begin());
+    DiskSection<Tsection> *d_sections_ptr = nullptr;
+    uint8_t *d_sectionTypes_ptr = nullptr;
+    if constexpr (useStreamOrdered) {
+      d_sections.initialize(totalActualSections, stream);
+      d_sectionTypes.initialize(totalActualSections, stream);
+      printf("d_sections size: %zu\n", d_sections.size());
+      printf("d_sectionTypes size: %zu\n", d_sectionTypes.size());
+
+      d_sections_ptr = d_sections.data();
+      d_sectionTypes_ptr = d_sectionTypes.data();
+      cudaMemcpyAsync(d_sections_ptr, h_sections.data().get(),
+                      totalActualSections * sizeof(DiskSection<Tsection>),
+                      cudaMemcpyHostToDevice, stream);
+      cudaMemcpyAsync(d_sectionTypes_ptr, h_sectionTypes.data().get(),
+                      totalActualSections * sizeof(uint8_t),
+                      cudaMemcpyHostToDevice, stream);
+
+    } else {
+      d_sections.resize(totalActualSections);
+      d_sectionTypes.resize(totalActualSections);
+      printf("d_sections size: %zu\n", d_sections.size());
+      printf("d_sectionTypes size: %zu\n", d_sectionTypes.size());
+
+      d_sections_ptr = d_sections.data().get();
+      d_sectionTypes_ptr = d_sectionTypes.data().get();
+      cudaMemcpy(d_sections_ptr, h_sections.data().get(),
+                 totalActualSections * sizeof(DiskSection<Tsection>),
+                 cudaMemcpyHostToDevice);
+      cudaMemcpy(d_sectionTypes_ptr, h_sectionTypes.data().get(),
+                 totalActualSections * sizeof(uint8_t), cudaMemcpyHostToDevice);
+    }
 
     // Construct the wrapper containers
     int offsetToDiskSections = 0;
     h_disks.resize(NumDisks);
-    d_disks.resize(NumDisks);
     for (int i = 0; i < NumDisks; ++i) {
       printf("Creating DiskRowSAT %d with sections offset %d, scale %f\n", i,
              offsetToDiskSections, scale[i]);
@@ -429,14 +468,24 @@ struct FilterOfDisksRowSATCreator {
       // so they house the device pointers
       h_disks[i] = DiskRowSAT<Tsection, Tscale>(
           scale[i], radiusPixels[i], numActualSectionsPerDisk[i],
-          d_sections.data().get() + offsetToDiskSections,
-          d_sectionTypes.data().get() + offsetToDiskSections);
+          d_sections_ptr + offsetToDiskSections,
+          d_sectionTypes_ptr + offsetToDiskSections);
 
       if (i < NumDisks - 1)
         offsetToDiskSections += numActualSectionsPerDisk[i];
     }
     // Copy disk containers to device vector
-    thrust::copy(h_disks.begin(), h_disks.end(), d_disks.begin());
+    if constexpr (useStreamOrdered) {
+      d_disks.initialize(NumDisks, stream);
+      cudaMemcpyAsync(d_disks.data(), h_disks.data().get(),
+                      sizeof(DiskRowSAT<Tsection, Tscale>) * NumDisks,
+                      cudaMemcpyHostToDevice, stream);
+    } else {
+      d_disks.resize(NumDisks);
+      cudaMemcpy(d_disks.data().get(), h_disks.data().get(),
+                 sizeof(DiskRowSAT<Tsection, Tscale>) * NumDisks,
+                 cudaMemcpyHostToDevice);
+    }
   }
 
   // Delete copy constructor and assignment

@@ -40,7 +40,14 @@ namespace containers {
  */
 template <typename T> class StreamOrderedDeviceStorage {
 public:
-  StreamOrderedDeviceStorage() = delete;
+  /**
+   * @brief Default constructor. Sets everything to 0 / null.
+   */
+  StreamOrderedDeviceStorage()
+      : m_capacity(0), m_size(0), m_data(nullptr), m_stream(0) {
+
+        };
+
   /**
    * @brief Primary constructor for StreamOrderedDeviceStorage.
    * Acts as a wrapper around cudaMallocAsync.
@@ -51,17 +58,7 @@ public:
   explicit StreamOrderedDeviceStorage(const size_t size,
                                       const cudaStream_t stream)
       : m_capacity(size), m_size(size), m_data(nullptr), m_stream(stream) {
-#ifndef NDEBUG
-    printf("StreamOrderedDeviceStorage: cudaMallocAsync of %zu bytes\n",
-           m_size);
-#endif
-    cudaError_t err = cudaMallocAsync(&m_data, sizeof(T) * m_size, stream);
-    if (err != cudaSuccess) {
-      throw std::runtime_error(
-          "cudaMallocAsync failed with size " +
-          std::to_string(m_size * sizeof(T)) + " and stream " +
-          std::to_string(reinterpret_cast<uint64_t>(stream)));
-    }
+    alloc();
   }
 
   ~StreamOrderedDeviceStorage() {
@@ -109,11 +106,43 @@ public:
   size_t capacity() const { return m_capacity; }
   cudaStream_t stream() const { return m_stream; }
 
+  /**
+   * @brief Run-time initialization. Useful when this vector is used as a member
+   * of another struct, but cannot be list-initialized.
+   *
+   * @param stream Valid non-default stream.
+   */
+  void initialize(size_t size, cudaStream_t stream) {
+    if (m_data != nullptr) {
+      throw std::runtime_error("Already initialized");
+    }
+    if (stream == 0)
+      throw std::runtime_error("Must not be a default stream");
+    m_stream = stream;
+    m_size = size;
+    m_capacity = size;
+    alloc();
+  }
+
 protected:
   size_t m_capacity;
   size_t m_size;
   T *m_data;
   cudaStream_t m_stream;
+
+  void alloc() {
+#ifndef NDEBUG
+    printf("StreamOrderedDeviceStorage: cudaMallocAsync of %zu bytes\n",
+           m_size);
+#endif
+    cudaError_t err = cudaMallocAsync(&m_data, sizeof(T) * m_size, m_stream);
+    if (err != cudaSuccess) {
+      throw std::runtime_error(
+          "cudaMallocAsync failed with size " +
+          std::to_string(m_size * sizeof(T)) + " and stream " +
+          std::to_string(reinterpret_cast<uint64_t>(m_stream)));
+    }
+  }
 };
 
 } // namespace containers
