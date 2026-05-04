@@ -2,6 +2,7 @@
 #include <iostream>
 
 #include "containers/image.cuh"
+#include "containers/stream_ordered_storage.cuh"
 #include "containers/streams.cuh"
 
 __global__ void testkernel(const int *a) { printf("%d\n", a[0]); }
@@ -19,19 +20,22 @@ int main(int argc, char *argv[]) {
 
   containers::CudaStream stream;
 
+  using Vec = containers::StreamOrderedDeviceStorage<int>;
+  using ImgVec = containers::StreamOrderedDeviceImageStorage<int>;
+
   for (int i = 0; i < 3; ++i) {
-    containers::StreamOrderedDeviceStorage<int> d_a(len * (i + 1), stream());
+    Vec d_a(len * (i + 1), stream());
     testkernel<<<1, 1, 0, stream()>>>(d_a.data());
-    containers::StreamOrderedDeviceStorage<int> d_b(len * (i + 1), stream());
+    Vec d_b(len * (i + 1), stream());
 #if defined(WITH_MEMCPY)
     cudaMemcpyAsync(d_b.data(), d_a.data(), sizeof(int) * len,
                     cudaMemcpyDeviceToDevice, stream());
 #endif
   }
   for (int i = 0; i < 3; ++i) {
-    containers::StreamOrderedDeviceStorage<int> d_a(len, stream());
+    Vec d_a(len, stream());
     testkernel<<<1, 1, 0, stream()>>>(d_a.data());
-    containers::StreamOrderedDeviceStorage<int> d_b(len, stream());
+    Vec d_b(len, stream());
 #if defined(WITH_MEMCPY)
     cudaMemcpyAsync(d_b.data(), d_a.data(), sizeof(int) * len,
                     cudaMemcpyDeviceToDevice, stream());
@@ -39,20 +43,18 @@ int main(int argc, char *argv[]) {
   }
 
   for (int i = 0; i < 3; ++i) {
-    containers::StreamOrderedDeviceImageStorage<int> d_a(
-        len * (i + 1), len * (i + 1), stream());
+    ImgVec d_a(len * (i + 1), len * (i + 1), stream());
     testImagekernel<<<1, 1, 0, stream()>>>(d_a.cimage());
-    containers::StreamOrderedDeviceImageStorage<int> d_b(
-        len * (i + 1), len * (i + 1), stream());
+    ImgVec d_b(len * (i + 1), len * (i + 1), stream());
 #if defined(WITH_MEMCPY)
     cudaMemcpyAsync(d_b.data(), d_a.data(), sizeof(int) * len,
                     cudaMemcpyDeviceToDevice, stream());
 #endif
   }
   for (int i = 0; i < 3; ++i) {
-    containers::StreamOrderedDeviceImageStorage<int> d_a(len, len, stream());
+    ImgVec d_a(len, len, stream());
     testImagekernel<<<1, 1, 0, stream()>>>(d_a.cimage());
-    containers::StreamOrderedDeviceImageStorage<int> d_b(len, len, stream());
+    ImgVec d_b(len, len, stream());
 #if defined(WITH_MEMCPY)
     cudaMemcpyAsync(d_b.data(), d_a.data(), sizeof(int) * len,
                     cudaMemcpyDeviceToDevice, stream());

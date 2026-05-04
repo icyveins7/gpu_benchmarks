@@ -71,6 +71,7 @@ target_sources(
   ${CMAKE_SOURCE_DIR}/src/containers/streams.cu
 )
 
+# 
 add_executable(stream_ordered_alloc_with_memcpy)
 target_include_directories(stream_ordered_alloc_with_memcpy
                            PRIVATE ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
@@ -79,6 +80,17 @@ target_compile_definitions(stream_ordered_alloc_with_memcpy PRIVATE WITH_MEMCPY)
 target_sources(
   stream_ordered_alloc_with_memcpy PRIVATE
   ${PROJECT_SOURCE_DIR}/stream_ordered_alloc.cu
+  ${CMAKE_SOURCE_DIR}/src/containers/streams.cu
+)
+
+# --------------------
+add_executable(stream_ordered_alloc_comparison_to_devicevec)
+target_include_directories(stream_ordered_alloc_comparison_to_devicevec
+                           PRIVATE ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
+                           )
+target_sources(
+  stream_ordered_alloc_comparison_to_devicevec PRIVATE
+  ${PROJECT_SOURCE_DIR}/stream_ordered_alloc_comparison.cu
   ${CMAKE_SOURCE_DIR}/src/containers/streams.cu
 )
 
