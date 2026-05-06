@@ -29,20 +29,27 @@ TEST(ContainersImage, LargeImage) {
   // moderately sized images if we use an int32_t (max 2^31) then
   // we only have 2^28 left for the pointer arithmetic. This entails
   // 2^14 for both x and y, which is 16384.
+  // NOTE: the above is no longer valid, since i no longer use byte-wise pointer
+  // arithmetic, but instead use element-wise pointer arithmetic. Hence the
+  // likelihood for this to cause an error is far smaller, since the requirement
+  // is now for (elementsPerRow * y) to be fully defined within the default
+  // int32_t. Assuming the padding is small i.e. elementsPerRow ~= width, then
+  // we have that height and width can be up to 2^15 = 32768 each. Anything
+  // larger should enforce a larger Tidx like int64_t anyway.
   containers::DeviceImageStorage<double> dimg(17000, 17000);
   containers::Image<double> img = dimg.image();
 
   EXPECT_EQ(img.data, dimg.vec.data().get());
   EXPECT_EQ(img.width, dimg.width);
   EXPECT_EQ(img.height, dimg.height);
-  EXPECT_EQ(img.bytesPerRow, img.width * 8);
+  EXPECT_EQ(img.elementsPerRow, img.width);
 
   int reqRow = 16999;
-  size_t offset = (size_t)sizeof(double) * (size_t)reqRow * (size_t)dimg.width;
+  size_t elementOffset = (size_t)reqRow * (size_t)dimg.width;
   char errStr[1024];
-  snprintf(errStr, sizeof(errStr), "Data start pointer at %p, offset = %zu\n",
-           dimg.vec.data().get(), offset);
-  EXPECT_EQ(img.row(reqRow), dimg.vec.data().get() + offset) << errStr;
+  snprintf(errStr, sizeof(errStr), "Data start pointer at %p\n",
+           dimg.vec.data().get());
+  EXPECT_EQ(img.row(reqRow), dimg.vec.data().get() + elementOffset) << errStr;
 }
 
 TEST(ContainersImageTile, BasicChecks) {

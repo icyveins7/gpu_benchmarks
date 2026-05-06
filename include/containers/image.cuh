@@ -22,7 +22,7 @@ namespace containers {
  * @param data Pointer to data, usually a device pointer
  * @param width Width of image in pixels
  * @param height Height of image in pixels
- * @param bytesPerRow Offset of each row in bytes
+ * @param elementsPerRow Number of elements per row, including padding
  */
 template <typename Tdata, typename Tidx = int> struct Image {
   static_assert(std::is_integral_v<Tidx>, "Tidx must be an integer type");
@@ -30,15 +30,14 @@ template <typename Tdata, typename Tidx = int> struct Image {
   Tdata *data;
   Tidx width;
   Tidx height;
-  Tidx bytesPerRow;
+  Tidx elementsPerRow; // includes possible padding
 
   /**
    * @brief Constructor. Automatically sets bytePerRow, assuming no padding.
    * Otherwise, list-initialization for the members can/should be used directly.
    */
   __host__ __device__ Image(Tdata *_data, const Tidx _width, const Tidx _height)
-      : data(_data), width(_width), height(_height),
-        bytesPerRow(width * sizeof(Tdata)) {}
+      : data(_data), width(_width), height(_height), elementsPerRow(width) {}
 
   /**
    * @brief Does the same thing as the constructor. Useful for delayed
@@ -49,7 +48,7 @@ template <typename Tdata, typename Tidx = int> struct Image {
     data = _data;
     width = _width;
     height = _height;
-    bytesPerRow = width * sizeof(Tdata);
+    elementsPerRow = width;
   }
 
   __host__ __device__ bool rowIsValid(Tidx y) const {
@@ -63,7 +62,9 @@ template <typename Tdata, typename Tidx = int> struct Image {
    * @brief Returns a pointer to the specified row.
    */
   __host__ __device__ Tdata *row(Tidx y) const {
-    return (Tdata *)((uint8_t *)(data) + (int64_t)y * (int64_t)bytesPerRow);
+    // we make a cast to int64_t for 'large' y or elementsPerRow e.g. > 2^16,
+    // since this would overflow an int32
+    return &data[(int64_t)y * elementsPerRow];
   }
 
   /**
