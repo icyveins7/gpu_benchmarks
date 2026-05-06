@@ -63,7 +63,7 @@ template <typename Tdata, typename Tidx = int> struct Image {
    * @brief Returns a pointer to the specified row.
    */
   __host__ __device__ Tdata *row(Tidx y) const {
-    return (Tdata *)((uint8_t *)(data) + y * bytesPerRow);
+    return (Tdata *)((uint8_t *)(data) + (int64_t)y * (int64_t)bytesPerRow);
   }
 
   /**

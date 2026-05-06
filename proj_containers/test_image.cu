@@ -23,6 +23,28 @@ TEST(ContainersDeviceImageStorage, BasicChecks) {
   EXPECT_EQ(img.vec.capacity(), 20 * 20);
 }
 
+TEST(ContainersImage, LargeImage) {
+  // For 8-byte words like doubles, this constitutes a 2^3 factor in
+  // the pointer calculation. This means that it may be dangerous for
+  // moderately sized images if we use an int32_t (max 2^31) then
+  // we only have 2^28 left for the pointer arithmetic. This entails
+  // 2^14 for both x and y, which is 16384.
+  containers::DeviceImageStorage<double> dimg(17000, 17000);
+  containers::Image<double> img = dimg.image();
+
+  EXPECT_EQ(img.data, dimg.vec.data().get());
+  EXPECT_EQ(img.width, dimg.width);
+  EXPECT_EQ(img.height, dimg.height);
+  EXPECT_EQ(img.bytesPerRow, img.width * 8);
+
+  int reqRow = 16999;
+  size_t offset = (size_t)sizeof(double) * (size_t)reqRow * (size_t)dimg.width;
+  char errStr[1024];
+  snprintf(errStr, sizeof(errStr), "Data start pointer at %p, offset = %zu\n",
+           dimg.vec.data().get(), offset);
+  EXPECT_EQ(img.row(reqRow), dimg.vec.data().get() + offset) << errStr;
+}
+
 TEST(ContainersImageTile, BasicChecks) {
   unsigned int width = 4, height = 4;
   std::vector<int> vec(width * height);
