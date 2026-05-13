@@ -122,4 +122,5 @@ add_subdirectory(proj_sats)
 add_subdirectory(proj_mempools)
 add_subdirectory(proj_floodfill)
 add_subdirectory(proj_slipups)
+add_subdirectory(proj_cudagraphs)
 
