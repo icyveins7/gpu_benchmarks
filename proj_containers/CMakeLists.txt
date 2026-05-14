@@ -113,4 +113,9 @@ if (GTEST_FOUND)
   add_executable(test_stream_ordered_storage test_stream_ordered_storage.cu ${CMAKE_SOURCE_DIR}/src/containers/streams.cu)
   target_link_libraries(test_stream_ordered_storage GTest::gtest_main)
   gtest_discover_tests(test_stream_ordered_storage)
+
+  # --------------------
+  add_executable(test_cubwrappers_devicesegmentedreduce test_cubwrappers_devicesegmentedreduce.cu)
+  target_link_libraries(test_cubwrappers_devicesegmentedreduce GTest::gtest_main)
+  gtest_discover_tests(test_cubwrappers_devicesegmentedreduce)
 endif()

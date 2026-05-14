@@ -232,6 +232,9 @@ struct If : public CubWrapper {
 
 } // namespace DeviceSelect
 
+// ===========================
+// DeviceScan
+// ===========================
 namespace DeviceScan {
 
 template <typename KeysInputIteratorT, typename ValuesInputIteratorT,
@@ -271,5 +274,48 @@ struct InclusiveSumByKey : public CubWrapper {
 };
 
 } // namespace DeviceScan
+
+// ===========================
+// DeviceSegmentedReduce
+// ===========================
+namespace DeviceSegmentedReduce {
+
+template <typename InputIteratorT, typename OutputIteratorT,
+          typename BeginOffsetIteratorT, typename EndOffsetIteratorT,
+          typename ReductionOpT, typename T>
+struct Reduce : public CubWrapper {
+  Reduce() {}
+  Reduce(int num_segments) : CubWrapper() {
+    resizeStorage((size_t)num_segments);
+  }
+
+  size_t getStorageBytes(size_t num_segments) override {
+    size_t temp_storage_bytes = 0;
+    // Default-construct all types; pointers automatically become nullptrs
+    ReductionOpT reduction_op{};
+    InputIteratorT input{};
+    OutputIteratorT output{};
+    BeginOffsetIteratorT begin_offsets{};
+    EndOffsetIteratorT end_offsets{};
+    T initialValue{};
+    cub::DeviceSegmentedReduce::Reduce(nullptr, temp_storage_bytes, input,
+                                       output, num_segments, begin_offsets,
+                                       end_offsets, reduction_op, initialValue);
+    return temp_storage_bytes;
+  }
+
+  cudaError_t exec(InputIteratorT d_in, OutputIteratorT d_out,
+                   int64_t num_segments, BeginOffsetIteratorT d_begin_offsets,
+                   EndOffsetIteratorT d_end_offsets, ReductionOpT reduction_op,
+                   T initialValue, cudaStream_t stream = 0) {
+    size_t temp_storage_bytes = this->d_temp_storage.size();
+    return cub::DeviceSegmentedReduce::Reduce(
+        this->d_temp_storage.data().get(), temp_storage_bytes, d_in, d_out,
+        num_segments, d_begin_offsets, d_end_offsets, reduction_op,
+        initialValue, stream);
+  }
+};
+
+} // namespace DeviceSegmentedReduce
 
 } // namespace cubw
