@@ -118,4 +118,9 @@ if (GTEST_FOUND)
   add_executable(test_cubwrappers_devicesegmentedreduce test_cubwrappers_devicesegmentedreduce.cu)
   target_link_libraries(test_cubwrappers_devicesegmentedreduce GTest::gtest_main)
   gtest_discover_tests(test_cubwrappers_devicesegmentedreduce)
+
+  # --------------------
+  add_executable(test_cubwrappers_devicerunlengthencode test_cubwrappers_devicerunlengthencode.cu)
+  target_link_libraries(test_cubwrappers_devicerunlengthencode GTest::gtest_main)
+  gtest_discover_tests(test_cubwrappers_devicerunlengthencode)
 endif()

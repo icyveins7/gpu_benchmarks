@@ -318,4 +318,44 @@ struct Reduce : public CubWrapper {
 
 } // namespace DeviceSegmentedReduce
 
+// ===========================
+// DeviceRunLengthEncode
+// ===========================
+namespace DeviceRunLengthEncode {
+
+template <typename InputIteratorT, typename UniqueOutputIteratorT,
+          typename LengthsOutputIteratorT, typename NumRunsOutputIteratorT,
+          typename NumItemsT>
+struct Encode : public CubWrapper {
+  Encode() {}
+  Encode(NumItemsT num_items) : CubWrapper() {
+    resizeStorage((size_t)num_items);
+  }
+
+  size_t getStorageBytes(size_t num_items) override {
+    size_t temp_storage_bytes = 0;
+    // Default-construct all types; pointers automatically become nullptrs
+    InputIteratorT input{};
+    UniqueOutputIteratorT unique_output{};
+    LengthsOutputIteratorT lengths_output{};
+    NumRunsOutputIteratorT num_runs_output{};
+    cub::DeviceRunLengthEncode::Encode(nullptr, temp_storage_bytes, input,
+                                       unique_output, lengths_output,
+                                       num_runs_output, num_items);
+    return temp_storage_bytes;
+  }
+
+  cudaError_t exec(InputIteratorT d_in, UniqueOutputIteratorT d_unique_out,
+                   LengthsOutputIteratorT d_lengths_out,
+                   NumRunsOutputIteratorT d_num_runs_out, NumItemsT num_items,
+                   cudaStream_t stream = 0) {
+    size_t temp_storage_bytes = this->d_temp_storage.size();
+    return cub::DeviceRunLengthEncode::Encode(
+        this->d_temp_storage.data().get(), temp_storage_bytes, d_in,
+        d_unique_out, d_lengths_out, d_num_runs_out, num_items, stream);
+  }
+};
+
+} // namespace DeviceRunLengthEncode
+
 } // namespace cubw
