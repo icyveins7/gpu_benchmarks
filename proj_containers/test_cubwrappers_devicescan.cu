@@ -6,10 +6,10 @@
 #include <thrust/host_vector.h>
 #include <thrust/sequence.h>
 
-TEST(ContainersCubw, DeviceScanExclusiveSum) {
+TEST(ContainersCubw, DeviceScanExclusiveSumInPlace) {
   thrust::device_vector<int> d_inout{1, 1, 2, 2, 2, 3, 1, 1};
 
-  cubw::DeviceScan::ExclusiveSum<int *, int> scan(8);
+  cubw::DeviceScan::ExclusiveSumInPlace<int *, int> scan(8);
   scan.exec(d_inout.data().get(), d_inout.size());
 
   thrust::host_vector<int> h_inout = d_inout;
@@ -22,4 +22,23 @@ TEST(ContainersCubw, DeviceScanExclusiveSum) {
   ASSERT_EQ(h_inout[5], 8);
   ASSERT_EQ(h_inout[6], 11);
   ASSERT_EQ(h_inout[7], 12);
+}
+
+TEST(ContainersCubw, DeviceScanExclusiveSum) {
+  thrust::device_vector<int> d_in{1, 1, 2, 2, 2, 3, 1, 1};
+  thrust::device_vector<int> d_out(d_in.size());
+
+  cubw::DeviceScan::ExclusiveSum<int *, int *, int> scan(8);
+  scan.exec(d_in.data().get(), d_out.data().get(), d_in.size());
+
+  thrust::host_vector<int> h_out = d_out;
+
+  ASSERT_EQ(h_out[0], 0);
+  ASSERT_EQ(h_out[1], 1);
+  ASSERT_EQ(h_out[2], 2);
+  ASSERT_EQ(h_out[3], 4);
+  ASSERT_EQ(h_out[4], 6);
+  ASSERT_EQ(h_out[5], 8);
+  ASSERT_EQ(h_out[6], 11);
+  ASSERT_EQ(h_out[7], 12);
 }
