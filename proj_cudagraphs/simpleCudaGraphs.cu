@@ -400,6 +400,64 @@ void cudaGraphsUsingStreamCapture(float *inputVec_h, float *inputVec_d,
   checkCudaErrors(cudaStreamDestroy(streamForGraph));
 }
 
+void manual(float *inputVec_h, float *inputVec_d, double *outputVec_d,
+            double *result_d, size_t inputSize, size_t numOfBlocks) {
+
+  // In this case the manual way is actually measured to be slightly faster.
+  // so it depends on the actual CPU overhead. if cpu latency is essentially
+  // zero then right now not much point using (unless you need other things like
+  // conditional nodes)
+  cudaStream_t stream1, stream2, stream3, streamForGraph;
+  cudaEvent_t forkStreamEvent, memsetEvent1, memsetEvent2;
+  double result_h = 0.0;
+  checkCudaErrors(cudaStreamCreate(&stream1));
+  checkCudaErrors(cudaStreamCreate(&stream2));
+
+  checkCudaErrors(cudaStreamCreate(&stream3));
+
+  checkCudaErrors(cudaEventCreate(&forkStreamEvent));
+  checkCudaErrors(cudaEventCreate(&memsetEvent1));
+  checkCudaErrors(cudaEventCreate(&memsetEvent2));
+
+  for (int i = 0; i < 3; ++i) {
+    checkCudaErrors(cudaMemcpyAsync(inputVec_d, inputVec_h,
+                                    sizeof(float) * inputSize,
+                                    cudaMemcpyDefault, stream1));
+    checkCudaErrors(
+        cudaMemsetAsync(outputVec_d, 0, sizeof(double) * numOfBlocks, stream1));
+
+    // checkCudaErrors(cudaEventRecord(memsetEvent1, stream2));
+
+    checkCudaErrors(cudaMemsetAsync(result_d, 0, sizeof(double), stream1));
+    checkCudaErrors(cudaEventRecord(memsetEvent2, stream1));
+
+    checkCudaErrors(cudaStreamWaitEvent(stream1, memsetEvent1, 0));
+
+    reduce<<<numOfBlocks, THREADS_PER_BLOCK, 0, stream1>>>(
+        inputVec_d, outputVec_d, inputSize, numOfBlocks);
+
+    checkCudaErrors(cudaStreamWaitEvent(stream1, memsetEvent2, 0));
+
+    reduceFinal<<<1, THREADS_PER_BLOCK, 0, stream1>>>(outputVec_d, result_d,
+                                                      numOfBlocks);
+    checkCudaErrors(cudaMemcpyAsync(&result_h, result_d, sizeof(double),
+                                    cudaMemcpyDefault, stream1));
+
+    // callBackData_t hostFnData = {0};
+    // hostFnData.data = &result_h;
+    // hostFnData.fn_name = "manual";
+    // cudaHostFn_t fn = myHostNodeCallback;
+    // checkCudaErrors(cudaLaunchHostFunc(stream1, fn, &hostFnData));
+  }
+  checkCudaErrors(cudaStreamDestroy(stream1));
+  checkCudaErrors(cudaStreamDestroy(stream2));
+  checkCudaErrors(cudaStreamDestroy(stream3));
+
+  checkCudaErrors(cudaEventDestroy(forkStreamEvent));
+  checkCudaErrors(cudaEventDestroy(memsetEvent1));
+  checkCudaErrors(cudaEventDestroy(memsetEvent2));
+}
+
 int main(int argc, char **argv) {
   size_t size = 1 << 24; // number of elements to reduce
   size_t maxBlocks = 512;
@@ -425,6 +483,8 @@ int main(int argc, char **argv) {
                                size, maxBlocks);
   cudaGraphsManual(inputVec_h, inputVec_d, outputVec_d, result_d, size,
                    maxBlocks);
+
+  manual(inputVec_h, inputVec_d, outputVec_d, result_d, size, maxBlocks);
 
   checkCudaErrors(cudaFree(inputVec_d));
   checkCudaErrors(cudaFree(outputVec_d));
