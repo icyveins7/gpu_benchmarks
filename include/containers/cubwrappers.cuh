@@ -273,6 +273,31 @@ struct InclusiveSumByKey : public CubWrapper {
   }
 };
 
+template <typename IteratorT, typename NumItemsT>
+struct ExclusiveSum : public CubWrapper {
+  ExclusiveSum() {}
+  ExclusiveSum(NumItemsT num_items) : CubWrapper() {
+    resizeStorage((size_t)num_items);
+  }
+
+  size_t getStorageBytes(size_t num_items) override {
+    size_t temp_storage_bytes = 0;
+    // Default-construct all types; pointers automatically become nullptrs
+    IteratorT inout{};
+    cub::DeviceScan::ExclusiveSum(nullptr, temp_storage_bytes, inout,
+                                  num_items);
+    return temp_storage_bytes;
+  }
+
+  cudaError_t exec(IteratorT d_inout, NumItemsT num_items,
+                   cudaStream_t stream = 0) {
+    size_t temp_storage_bytes = this->d_temp_storage.size();
+    return cub::DeviceScan::ExclusiveSum(this->d_temp_storage.data().get(),
+                                         temp_storage_bytes, d_inout, num_items,
+                                         stream);
+  }
+};
+
 } // namespace DeviceScan
 
 // ===========================

@@ -123,4 +123,9 @@ if (GTEST_FOUND)
   add_executable(test_cubwrappers_devicerunlengthencode test_cubwrappers_devicerunlengthencode.cu)
   target_link_libraries(test_cubwrappers_devicerunlengthencode GTest::gtest_main)
   gtest_discover_tests(test_cubwrappers_devicerunlengthencode)
+
+  # --------------------
+  add_executable(test_cubwrappers_devicescan test_cubwrappers_devicescan.cu)
+  target_link_libraries(test_cubwrappers_devicescan GTest::gtest_main)
+  gtest_discover_tests(test_cubwrappers_devicescan)
 endif()

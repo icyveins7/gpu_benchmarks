@@ -4,6 +4,7 @@
 #include "gtest/gtest.h"
 
 #include <thrust/device_vector.h>
+#include <thrust/host_vector.h>
 #include <thrust/sequence.h>
 
 struct CustomMin {
