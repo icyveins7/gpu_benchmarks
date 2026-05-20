@@ -68,7 +68,7 @@ int main(int argc, char *argv[]) {
   thrust::device_vector<double> da = ha, db = hb, dc = hc, dr = hr;
   thrust::device_vector<double> du(NUM_ROWS * N, 0.0);
   thrust::device_vector<size_t> dlen(NUM_ROWS, (size_t)N);
-  TridiagPCRGlobalWorkspace<double> ws(NUM_ROWS, N);
+  TridiagPCRWorkspace<double> ws(NUM_ROWS, N);
 
   timer.start("gpuPCR");
   tridiag_blockwise_pcr_kernel<double><<<NUM_ROWS, NUM_THREADS>>>(
@@ -102,7 +102,61 @@ int main(int argc, char *argv[]) {
     if (verbose)
       printf("-------------\n");
   }
-  printf("Max error: %e\n", maxErr);
+  printf("Max error (global mem): %e\n", maxErr);
+
+  // GPU PCR with shared memory
+  {
+    // Determine the shmem workspace requirement, same struct but static method
+    size_t shmemBytes = TridiagPCRWorkspace<double>::requiredShmemBytes(N);
+
+    int device;
+    cudaGetDevice(&device);
+    int maxShmem;
+    cudaDeviceGetAttribute(&maxShmem, cudaDevAttrMaxSharedMemoryPerBlock,
+                           device);
+
+    if (shmemBytes > (size_t)maxShmem) {
+      printf("Shmem PCR skipped: need %zu bytes, device limit is %d bytes\n",
+             shmemBytes, maxShmem);
+    } else {
+      printf("Shmem PCR: %zu bytes requested (device max %d bytes)\n",
+             shmemBytes, maxShmem);
+
+      thrust::fill(du.begin(), du.end(), 0.0);
+
+      timer.start("gpuPCR_shmem");
+      tridiag_blockwise_pcr_shmem_kernel<double>
+          <<<NUM_ROWS, NUM_THREADS, shmemBytes>>>(
+              da.data().get(), db.data().get(), dc.data().get(),
+              dr.data().get(), du.data().get(), dlen.data().get(), N, NUM_ROWS);
+      cudaDeviceSynchronize();
+      timer.stop();
+
+      hu_gpu = du;
+
+      double maxErrShmem = 0.0;
+      for (int row = 0; row < NUM_ROWS; ++row) {
+        int off = row * N;
+        if (verbose)
+          printf("Shmem Row %d (n=%d, threads=%d):\n", row, N, NUM_THREADS);
+        for (int i = 0; i < N; ++i) {
+          auto err = fabs(hu_cpu[off + i] - hu_gpu[off + i]);
+          if (err > maxErrShmem)
+            maxErrShmem = err;
+          if (verbose)
+            printf("  [%2d] cpu=%+.10f  gpu=%+.10f  err=%e\n", i,
+                   hu_cpu[off + i], hu_gpu[off + i], err);
+          if (err > 1e-10) {
+            printf("LARGE ERROR (shmem) at row %d, element %d\n", row, i);
+            return 1;
+          }
+        }
+        if (verbose)
+          printf("-------------\n");
+      }
+      printf("Max error (shmem): %e\n", maxErrShmem);
+    }
+  }
 
   return 0;
 }

@@ -1,4 +1,5 @@
 #include <cub/cub.cuh>
+#include <sharedmem.cuh>
 #include <thrust/device_vector.h>
 
 #include <cstdint>
@@ -38,21 +39,20 @@ template <typename T> struct tridiag_pcr_params {
 
 /**
  * @brief Helper that allocates the 8 double-buffer arrays in global memory
- * for the PCR solver. Call makeParams() to produce a tridiag_pcr_params
- * that can be passed to a kernel.
+ * for the PCR solver.
  *
  * @tparam T Type of data, must be floating point.
  */
-template <typename T> struct TridiagPCRGlobalWorkspace {
+template <typename T> struct TridiagPCRWorkspace {
   static_assert(std::is_floating_point<T>::value,
                 "T must be a floating point type");
 
   thrust::device_vector<T> buf0_a, buf0_b, buf0_c, buf0_rhs;
   thrust::device_vector<T> buf1_a, buf1_b, buf1_c, buf1_rhs;
 
-  TridiagPCRGlobalWorkspace() = default;
+  TridiagPCRWorkspace() = default;
 
-  TridiagPCRGlobalWorkspace(int num_rows, int stride_elements_per_row) {
+  TridiagPCRWorkspace(int num_rows, int stride_elements_per_row) {
     resize(num_rows, stride_elements_per_row);
   }
 
@@ -76,6 +76,26 @@ template <typename T> struct TridiagPCRGlobalWorkspace {
   T *buf1_b_ptr() { return thrust::raw_pointer_cast(buf1_b.data()); }
   T *buf1_c_ptr() { return thrust::raw_pointer_cast(buf1_c.data()); }
   T *buf1_rhs_ptr() { return thrust::raw_pointer_cast(buf1_rhs.data()); }
+
+  /**
+   * @brief Returns the dynamic shared memory bytes needed for the shmem PCR
+   * variant, given a system of length n.
+   *
+   * Requires 8 arrays of n elements each (2 buffers x 4 coefficients).
+   * For double: 64 * n bytes. For float: 32 * n bytes.
+   *
+   * NOTE: n should be the stride_elements_per_row (i.e. the maximum number
+   * of elements in any row), since the shmem is carved once and reused
+   * across all rows processed by a block.
+   *
+   * NOTE: Default shmem limit is typically 48 KB (768 doubles, 1536 floats).
+   * For larger n, use cudaFuncSetAttribute with
+   * cudaFuncAttributeMaxDynamicSharedMemorySize to opt in to extended shmem
+   * (up to ~100-164 KB depending on GPU architecture).
+   */
+  static constexpr size_t requiredShmemBytes(int n) {
+    return 8 * n * sizeof(T);
+  }
 };
 
 /**
@@ -183,6 +203,39 @@ __global__ void tridiag_blockwise_pcr_kernel(
                                     &buf1_a[off], &buf1_b[off],
                                     &buf1_c[off], &buf1_rhs[off],
                                     &u[off],      num_elements_in_row[blk]};
+    tridiag_blockwide_pcr<T>(params);
+  }
+}
+
+// NOTE: early measurements show that for doubles, this has effectively the same
+// performance as the non-shmem variant above, likely due to exceedingly low
+// occupancy
+template <typename T>
+__global__ void tridiag_blockwise_pcr_shmem_kernel(
+    const T *a, const T *b, const T *c, const T *rhs, T *u,
+    const size_t *num_elements_in_row, const int stride_elements_per_row,
+    const int num_rows) {
+
+  SharedMemory<T> smem;
+  T *shmem = smem.getPointer();
+
+  // Carve out 8 arrays from dynamic shmem, using stride as the max length
+  T *buf0_a = shmem;
+  T *buf0_b = buf0_a + stride_elements_per_row;
+  T *buf0_c = buf0_b + stride_elements_per_row;
+  T *buf0_rhs = buf0_c + stride_elements_per_row;
+  T *buf1_a = buf0_rhs + stride_elements_per_row;
+  T *buf1_b = buf1_a + stride_elements_per_row;
+  T *buf1_c = buf1_b + stride_elements_per_row;
+  T *buf1_rhs = buf1_c + stride_elements_per_row;
+
+  for (int blk = blockIdx.x; blk < num_rows; blk += gridDim.x) {
+    int off = blk * stride_elements_per_row;
+    int n = num_elements_in_row[blk];
+
+    tridiag_pcr_params<T> params = {
+        &a[off],  &b[off], &c[off], &rhs[off], buf0_a,   buf0_b,  buf0_c,
+        buf0_rhs, buf1_a,  buf1_b,  buf1_c,    buf1_rhs, &u[off], (size_t)n};
     tridiag_blockwide_pcr<T>(params);
   }
 }
