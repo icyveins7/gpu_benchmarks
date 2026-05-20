@@ -12,6 +12,13 @@ target_sources(
   ${CMAKE_CURRENT_SOURCE_DIR}/tridiag.cu
 )
 
+add_executable(tridiag_float)
+target_sources(
+  tridiag_float PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/tridiag.cu
+)
+target_compile_definitions(tridiag_float PRIVATE USE_FLOAT)
+
 # # -------------------- Tests
 # if (GTEST_FOUND)
 #   message("Enabling tests for proj_windowccl")

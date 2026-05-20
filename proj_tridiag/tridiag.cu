@@ -9,6 +9,16 @@
 #include <thrust/device_vector.h>
 #include <thrust/host_vector.h>
 
+#ifdef USE_FLOAT
+using Real = float;
+constexpr double ERR_TOL = 1e-5;
+constexpr const char *TYPE_STR = "float";
+#else
+using Real = double;
+constexpr double ERR_TOL = 1e-10;
+constexpr const char *TYPE_STR = "double";
+#endif
+
 int main(int argc, char *argv[]) {
   int NUM_ROWS = 2;
   int N = 64;
@@ -21,18 +31,18 @@ int main(int argc, char *argv[]) {
   if (argc > 3)
     NUM_THREADS = atoi(argv[3]);
 
-  printf("Tridiagonal PCR test: %d rows x %d elements, %d threads/block\n",
-         NUM_ROWS, N, NUM_THREADS);
+  printf("Tridiagonal PCR test (%s): %d rows x %d elements, %d threads/block\n",
+         TYPE_STR, NUM_ROWS, N, NUM_THREADS);
 
   using namespace cutridiag;
 
   bool verbose = (NUM_ROWS <= 2 && N <= 64);
 
   srand(42);
-  auto randf = []() { return (double)rand() / RAND_MAX; };
+  auto randf = []() { return (Real)rand() / RAND_MAX; };
 
   // Generate random tridiagonal data, packed with stride N
-  thrust::host_vector<double> ha(NUM_ROWS * N), hb(NUM_ROWS * N),
+  thrust::host_vector<Real> ha(NUM_ROWS * N), hb(NUM_ROWS * N),
       hc(NUM_ROWS * N), hr(NUM_ROWS * N);
 
   for (int row = 0; row < NUM_ROWS; ++row) {
@@ -54,24 +64,24 @@ int main(int argc, char *argv[]) {
   }
 
   // CPU reference: solve each row independently
-  thrust::host_vector<double> hu_cpu(NUM_ROWS * N), hgam(N);
+  thrust::host_vector<Real> hu_cpu(NUM_ROWS * N), hgam(N);
   HighResolutionTimer<> timer;
   timer.start("cpuTridag");
   for (int row = 0; row < NUM_ROWS; ++row) {
     int off = row * N;
-    tridag<double>(&ha[off], &hb[off], &hc[off], &hr[off], &hu_cpu[off],
-                   hgam.data(), N);
+    tridag<Real>(&ha[off], &hb[off], &hc[off], &hr[off], &hu_cpu[off],
+                 hgam.data(), N);
   }
   timer.stop();
 
   // GPU PCR
-  thrust::device_vector<double> da = ha, db = hb, dc = hc, dr = hr;
-  thrust::device_vector<double> du(NUM_ROWS * N, 0.0);
+  thrust::device_vector<Real> da = ha, db = hb, dc = hc, dr = hr;
+  thrust::device_vector<Real> du(NUM_ROWS * N, Real(0));
   thrust::device_vector<size_t> dlen(NUM_ROWS, (size_t)N);
-  TridiagPCRWorkspace<double> ws(NUM_ROWS, N);
+  TridiagPCRWorkspace<Real> ws(NUM_ROWS, N);
 
   timer.start("gpuPCR");
-  tridiag_blockwise_pcr_kernel<double><<<NUM_ROWS, NUM_THREADS>>>(
+  tridiag_blockwise_pcr_kernel<Real><<<NUM_ROWS, NUM_THREADS>>>(
       da.data().get(), db.data().get(), dc.data().get(), dr.data().get(),
       du.data().get(), ws.buf0_a_ptr(), ws.buf0_b_ptr(), ws.buf0_c_ptr(),
       ws.buf0_rhs_ptr(), ws.buf1_a_ptr(), ws.buf1_b_ptr(), ws.buf1_c_ptr(),
@@ -79,10 +89,10 @@ int main(int argc, char *argv[]) {
   cudaDeviceSynchronize();
   timer.stop();
 
-  thrust::host_vector<double> hu_gpu = du;
+  thrust::host_vector<Real> hu_gpu = du;
 
   // Compare
-  double maxErr = 0.0;
+  Real maxErr = 0.0;
   for (int row = 0; row < NUM_ROWS; ++row) {
     int off = row * N;
     if (verbose)
@@ -94,7 +104,7 @@ int main(int argc, char *argv[]) {
       if (verbose)
         printf("  [%2d] cpu=%+.10f  gpu=%+.10f  err=%e\n", i, hu_cpu[off + i],
                hu_gpu[off + i], err);
-      if (err > 1e-10) {
+      if (err > ERR_TOL) {
         printf("LARGE ERROR at row %d, element %d\n", row, i);
         return 1;
       }
@@ -107,7 +117,7 @@ int main(int argc, char *argv[]) {
   // GPU PCR with shared memory
   {
     // Determine the shmem workspace requirement, same struct but static method
-    size_t shmemBytes = TridiagPCRWorkspace<double>::requiredShmemBytes(N);
+    size_t shmemBytes = TridiagPCRWorkspace<Real>::requiredShmemBytes(N);
 
     int device;
     cudaGetDevice(&device);
@@ -122,10 +132,10 @@ int main(int argc, char *argv[]) {
       printf("Shmem PCR: %zu bytes requested (device max %d bytes)\n",
              shmemBytes, maxShmem);
 
-      thrust::fill(du.begin(), du.end(), 0.0);
+      thrust::fill(du.begin(), du.end(), Real(0));
 
       timer.start("gpuPCR_shmem");
-      tridiag_blockwise_pcr_shmem_kernel<double>
+      tridiag_blockwise_pcr_shmem_kernel<Real>
           <<<NUM_ROWS, NUM_THREADS, shmemBytes>>>(
               da.data().get(), db.data().get(), dc.data().get(),
               dr.data().get(), du.data().get(), dlen.data().get(), N, NUM_ROWS);
@@ -134,7 +144,7 @@ int main(int argc, char *argv[]) {
 
       hu_gpu = du;
 
-      double maxErrShmem = 0.0;
+      Real maxErrShmem = 0.0;
       for (int row = 0; row < NUM_ROWS; ++row) {
         int off = row * N;
         if (verbose)
@@ -146,7 +156,7 @@ int main(int argc, char *argv[]) {
           if (verbose)
             printf("  [%2d] cpu=%+.10f  gpu=%+.10f  err=%e\n", i,
                    hu_cpu[off + i], hu_gpu[off + i], err);
-          if (err > 1e-10) {
+          if (err > ERR_TOL) {
             printf("LARGE ERROR (shmem) at row %d, element %d\n", row, i);
             return 1;
           }
