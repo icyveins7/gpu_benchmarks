@@ -1,552 +1,158 @@
 #include <gtest/gtest.h>
 
-#include "pinnedalloc.cuh"
-#include "wccl.h"
-#include "wccl_kernels.cuh"
+#include "cpu_tridiag.h"
+#include "tridiag.cuh"
 
+#include <cstdlib>
 #include <thrust/device_vector.h>
 #include <thrust/host_vector.h>
 
-#include <random>
-#include <algorithm>
+using namespace cutridiag;
 
-#define ERROR_EXPECTED_INACTIVE_GOT_ACTIVE 1
-#define ERROR_EXPECTED_ACTIVE_GOT_INACTIVE 2
-#define ERROR_NEIGHBOUR_MISMATCH           3
-
-#define METHOD_LOCAL_NAIVE 0
-#define METHOD_LOCAL_NAIVE_ATOMICFREE 1
-#define METHOD_LOCAL_NEIGHBOURCHAIN 2
-
-#define METHOD_GLOBAL_NAIVE 0
-#define METHOD_GLOBAL_NAIVE_COOPERATIVEGRID 1
-
+// Generate a random diagonally dominant tridiagonal system.
+// num_rows rows, each with stride elements allocated but only
+// row_lengths[row] active elements. row_lengths.size() == num_rows.
 template <typename T>
-int validatePointBasic(
-  const uint8_t* input,
-  const T* mapping,
-  const int height,
-  const int width,
-  const int hDist,
-  const int vDist,
-  const int i,
-  const int j
-){
-  T centre = mapping[i * width + j];
-  uint8_t inputVal = input[i * width + j];
-  // Mapping (output) point is inactive
-  if (centre < 0)
+void generate_tridiag_system(int num_rows, int stride,
+                             const std::vector<int> &row_lengths,
+                             thrust::host_vector<T> &ha,
+                             thrust::host_vector<T> &hb,
+                             thrust::host_vector<T> &hc,
+                             thrust::host_vector<T> &hr) {
+  ha.resize(num_rows * stride, T(0));
+  hb.resize(num_rows * stride, T(0));
+  hc.resize(num_rows * stride, T(0));
+  hr.resize(num_rows * stride, T(0));
+
+  for (int row = 0; row < num_rows; ++row) {
+    int off = row * stride;
+    int n = row_lengths[row];
+    ha[off] = T(0);
+    hb[off] = T(4) + T(rand()) / T(RAND_MAX);
+    hc[off] = T(rand()) / T(RAND_MAX);
+    hr[off] = T(rand()) / T(RAND_MAX);
+    for (int i = 1; i < n - 1; ++i) {
+      ha[off + i] = T(rand()) / T(RAND_MAX);
+      hb[off + i] = T(4) + T(rand()) / T(RAND_MAX);
+      hc[off + i] = T(rand()) / T(RAND_MAX);
+      hr[off + i] = T(rand()) / T(RAND_MAX);
+    }
+    ha[off + n - 1] = T(rand()) / T(RAND_MAX);
+    hb[off + n - 1] = T(4) + T(rand()) / T(RAND_MAX);
+    hc[off + n - 1] = T(0);
+    hr[off + n - 1] = T(rand()) / T(RAND_MAX);
+  }
+}
+
+// Generic test: runs CPU tridag as reference, then tests both global-mem
+// and shmem PCR kernels. Supports multiple rows with varying lengths.
+template <typename T>
+void test_pcr(int num_rows, int stride, const std::vector<int> &row_lengths,
+              int num_threads, T tol) {
+  srand(42);
+
+  thrust::host_vector<T> ha, hb, hc, hr;
+  generate_tridiag_system<T>(num_rows, stride, row_lengths, ha, hb, hc, hr);
+
+  // CPU reference
+  int max_n = *std::max_element(row_lengths.begin(), row_lengths.end());
+  thrust::host_vector<T> hu_cpu(num_rows * stride, T(0));
+  thrust::host_vector<T> hgam(max_n);
+  for (int row = 0; row < num_rows; ++row) {
+    int off = row * stride;
+    int n = row_lengths[row];
+    tridag<T>(&ha[off], &hb[off], &hc[off], &hr[off], &hu_cpu[off], hgam.data(),
+              n);
+  }
+
+  // Prepare device data
+  thrust::device_vector<T> da = ha, db = hb, dc = hc, dr = hr;
+  thrust::device_vector<T> du(num_rows * stride, T(0));
+  thrust::host_vector<size_t> hlen(num_rows);
+  for (int i = 0; i < num_rows; ++i)
+    hlen[i] = (size_t)row_lengths[i];
+  thrust::device_vector<size_t> dlen = hlen;
+
+  // --- Global memory PCR ---
   {
-    // Input point is also inactive, correct
-    if (inputVal == 0)
-      return 0;
-    else
-      return ERROR_EXPECTED_ACTIVE_GOT_INACTIVE; // output is wrongly classified as inactive
-  }
-  // Mapping point is active
-  else{
-    // Input point is inactive, wrong
-    if (inputVal == 0)
-      return ERROR_EXPECTED_INACTIVE_GOT_ACTIVE; // output is wrongly classified as active
-  }
+    TridiagPCRWorkspace<T> ws(num_rows, stride);
+    tridiag_blockwise_pcr_kernel<T><<<num_rows, num_threads>>>(
+        da.data().get(), db.data().get(), dc.data().get(), dr.data().get(),
+        du.data().get(), ws.buf0_a_ptr(), ws.buf0_b_ptr(), ws.buf0_c_ptr(),
+        ws.buf0_rhs_ptr(), ws.buf1_a_ptr(), ws.buf1_b_ptr(), ws.buf1_c_ptr(),
+        ws.buf1_rhs_ptr(), dlen.data().get(), stride, num_rows);
+    cudaDeviceSynchronize();
 
-  // If active, check all neighbours
-  for (int y = i - vDist; y <= i + vDist; ++y){
-    if (y < 0 || y >= height)
-      continue;
-    for (int x = j - hDist; x <= j + hDist; ++x){
-      if (x < 0 || x >= width)
-        continue;
-      // Read neighbour
-      T neighbourValue = mapping[y * width + x];
-      // Ignore inactive neighbours
-      if (neighbourValue < 0)
-        continue;
-      // Active neighbours must match
-      if (mapping[y * width + x] != centre)
-        return ERROR_NEIGHBOUR_MISMATCH;
-    }
-  }
-  // All pass then true
-  return 0;
-}
-
-template <typename T>
-int validatePoint(
-  const std::vector<uint8_t>& input,
-  const wccl::CPUMapping<T>& mapping,
-  const int hDist,
-  const int vDist,
-  const int i,
-  const int j
-){
-  return validatePointBasic(input.data(), mapping.data.data(), (int)mapping.height, (int)mapping.width, hDist, vDist, i, j);
-}
-
-template <typename T>
-void validate(const std::vector<uint8_t>& input, const wccl::CPUMapping<T>& mapping, const int hDist, const int vDist){
-  for (int i = 0; i < (int)mapping.height; ++i){
-    for (int j = 0; j < (int)mapping.width; ++j){
-      if (mapping.data[i * mapping.width + j] < 0)
-        continue;
-      EXPECT_EQ(validatePoint(input, mapping, hDist, vDist, i, j), 0) << mapping.tostring();
-    }
-  }
-}
-
-template <typename T>
-void copyTile(const T* src, const int srcWidth, const int srcHeight, T* dst, const int dstWidth, const int dstHeight, const int startRow, const int startCol, const T invalidValue){
-  for (int i = 0; i < dstHeight; ++i){
-    for (int j = 0; j < dstWidth; ++j){
-      int srow = i + startRow;
-      int scol = j + startCol;
-      if (srow < 0 || srow >= srcHeight || scol < 0 || scol >= srcWidth)
-        dst[i * dstWidth + j] = invalidValue;
-      else
-        dst[i * dstWidth + j] = src[srow * srcWidth + scol];
-    }
-  }
-}
-
-template <typename Tmapping, int method = METHOD_LOCAL_NAIVE, typename Tbitset = unsigned int>
-thrust::device_vector<Tmapping> localTileCudaTest(
-  const std::vector<uint8_t>& img,
-  const int rows,
-  const int cols,
-  const dim3 tpb,
-  const int2 tileDims,
-  const int2 windowDist
-){
-  thrust::host_vector<uint8_t> h_imgvec(img.size());
-  thrust::copy(img.begin(), img.end(), h_imgvec.begin());
-  thrust::device_vector<uint8_t> d_imgvec = h_imgvec;
-
-  thrust::device_vector<Tmapping> d_mappingvec(rows * cols);
-  
-  wccl::DeviceImage<uint8_t> d_img(d_imgvec, rows, cols);
-  wccl::DeviceImage<Tmapping> d_mapping(d_mappingvec, rows, cols);
-
-  dim3 bpg;
-  static_assert(method == METHOD_LOCAL_NAIVE || method == METHOD_LOCAL_NEIGHBOURCHAIN,
-    "Method must be either METHOD_LOCAL_NAIVE or METHOD_LOCAL_NEIGHBOURCHAIN (for now)");
-  if constexpr(method == METHOD_LOCAL_NAIVE){
-    bpg = wccl::local_connect_naive_unionfind<Tmapping>(d_img, d_mapping, tileDims, windowDist, tpb);
-  }
-  else if constexpr(method == METHOD_LOCAL_NEIGHBOURCHAIN){
-    bpg = wccl::local_chain_neighbours_v2<Tbitset, Tmapping>(d_img, d_mapping, tileDims, windowDist, tpb);
-  }
-
-  thrust::host_vector<Tmapping> h_mappingvec = d_mappingvec;
-
-  // Read each tile separately
-  for (int i = 0; i < (int)bpg.y; ++i){
-    for (int j = 0; j < (int)bpg.x; ++j){
-      int startRow = i * tileDims.y;
-      int startCol = j * tileDims.x;
-      std::vector<uint8_t> tileinputvec(tileDims.x * tileDims.y);
-      copyTile<uint8_t>(h_imgvec.data(), cols, rows, tileinputvec.data(), tileDims.x, tileDims.y, startRow, startCol, 0);
-      std::vector<Tmapping> tilemappingvec(tileDims.x * tileDims.y);
-      copyTile<Tmapping>(h_mappingvec.data(), cols, rows, tilemappingvec.data(), tileDims.x, tileDims.y, startRow, startCol, -1);
-
-      std::string tilemappingstr;
-      char tmp[8];
-      if (tileDims.x <= 64 && tileDims.y <= 64){
-        for (int ti = 0; ti < (int)tileDims.y; ++ti){
-          for (int tj = 0; tj < (int)tileDims.x; ++tj){
-            snprintf(tmp, 8, "%2d", tilemappingvec[ti * tileDims.x + tj]);
-            tilemappingstr += std::string(tmp) + " ";
-          }
-          tilemappingstr += "\n";
-        }
-      }
-
-      std::string tileinputstr;
-      for (int ti = 0; ti < (int)tileDims.y; ++ti){
-        for (int tj = 0; tj < (int)tileDims.x; ++tj){
-          snprintf(tmp, 8, "%2d", tileinputvec[ti * tileDims.x + tj]);
-          tileinputstr += std::string(tmp) + " ";
-        }
-        tileinputstr += "\n";
-      }
-
-      for (int ii = 0; ii < (int)tileDims.y; ++ii){
-        for (int jj = 0; jj < (int)tileDims.x; ++jj){
-          char errmsg[2048];
-          snprintf(errmsg, sizeof(errmsg),
-                   "tile (%d,%d), idx (%d,%d), coords (%d,%d) = %d // input is %hhu\n",
-                   i, j, ii, jj, i*tileDims.y + ii, j*tileDims.x + jj, tilemappingvec[ii * tileDims.x + jj], tileinputvec[ii * tileDims.x + jj]);
-          EXPECT_EQ(validatePointBasic(
-            tileinputvec.data(), tilemappingvec.data(), tileDims.y, tileDims.x, windowDist.x, windowDist.y, ii, jj
-          ), 0) << errmsg + tilemappingstr + "\n-------------------------------------------------------------\n" + tileinputstr;
-        }
+    thrust::host_vector<T> hu_gpu = du;
+    for (int row = 0; row < num_rows; ++row) {
+      int off = row * stride;
+      int n = row_lengths[row];
+      for (int i = 0; i < n; ++i) {
+        EXPECT_NEAR(hu_cpu[off + i], hu_gpu[off + i], tol)
+            << "Global mem mismatch at row " << row << " index " << i;
       }
     }
   }
 
-  return d_mappingvec;
-}
+  // --- Shared memory PCR ---
+  {
+    thrust::fill(du.begin(), du.end(), T(0));
+    size_t shmemBytes = TridiagPCRWorkspace<T>::requiredShmemBytes(stride);
 
-template <typename Tmapping, int method = METHOD_GLOBAL_NAIVE>
-void globalTileCudaTest(
-  const std::vector<uint8_t> &originalImg,
-  const int rows, const int cols,
-  thrust::device_vector<Tmapping>& d_mappingvec,
-  const int2 tileDims,
-  const int2 windowDist,
-  const dim3 tpb
-){
-  // Wrap first
-  wccl::DeviceImage<Tmapping> d_mapping(d_mappingvec, rows, cols);
+    tridiag_blockwise_pcr_shmem_kernel<T>
+        <<<num_rows, num_threads, shmemBytes>>>(
+            da.data().get(), db.data().get(), dc.data().get(), dr.data().get(),
+            du.data().get(), dlen.data().get(), stride, num_rows);
+    cudaDeviceSynchronize();
 
-  // Call the method
-  if constexpr(method == METHOD_GLOBAL_NAIVE){
-    // make the counter variables
-    thrust::pinned_host_vector<unsigned int> h_counter(1);
-    thrust::device_vector<unsigned int> d_counter(1);
-
-    size_t numUnionFindIter = wccl::naive_global_unionfind(d_mapping, tileDims, windowDist, tpb, h_counter, d_counter);
-  }
-  else if constexpr(method == METHOD_GLOBAL_NAIVE_COOPERATIVEGRID){
-    thrust::device_vector<unsigned int> d_counterPair(2); 
-    wccl::naive_global_unionfind_cooperativegrid(
-      d_mapping, tileDims, windowDist,
-      tpb, d_counterPair);
-  }
-
-  thrust::host_vector<Tmapping> h_mappingvec = d_mappingvec;
-
-  // Check across the entire image
-  for (int i = 0; i < rows; ++i){
-    for (int j = 0; j < cols; ++j){
-      validatePointBasic<Tmapping>(originalImg.data(), h_mappingvec.data(), rows, cols, windowDist.x, windowDist.y, i, j);
+    thrust::host_vector<T> hu_gpu = du;
+    for (int row = 0; row < num_rows; ++row) {
+      int off = row * stride;
+      int n = row_lengths[row];
+      for (int i = 0; i < n; ++i) {
+        EXPECT_NEAR(hu_cpu[off + i], hu_gpu[off + i], tol)
+            << "Shmem mismatch at row " << row << " index " << i;
+      }
     }
   }
 }
 
+// ---- Double tests ----
 
-// ======================================================================
-// ======================================================================
-// ========================= TESTS ======================================
-// ======================================================================
-// ======================================================================
-
-TEST(WindowCCL, CPUSolver_basic) {
-  uint32_t height = 5, width = 5;
-  int hDist = 1, vDist = 1;
-
-  wccl::CPUMapping mapping(height, width);
-  wccl::CPUSolver solver(hDist, vDist);
-
-  std::vector<uint8_t> img = {
-    0, 0, 0, 0, 0,
-    0, 1, 0, 1, 0,
-    1, 0, 0, 0, 1,
-    0, 1, 0, 1, 0,
-    0, 0, 1, 0, 0
-  };
-
-  solver.connect(img, mapping.height, mapping.width, mapping.data);
-  solver.readout(height, width, mapping.data);
-
-  validate(img, mapping, hDist, vDist);
+TEST(CudaTridiagDouble, SingleRowSimple) {
+  test_pcr<double>(1, 4, {4}, 32, 1e-10);
 }
 
-TEST(CudaWindowCCL, NaiveLocal_basic1){
-  std::vector<uint8_t> img = {
-    0, 0, 0, 0, 0,
-    0, 1, 0, 1, 0,
-    1, 0, 0, 0, 1,
-    0, 1, 0, 1, 0,
-    0, 0, 1, 0, 0
-  };
-  int rows = 5, cols = 5;
-  dim3 tpb(32,4);
-  int2 tileDims = {32, 4};
-  int2 windowDist = {1, 1};
-  thrust::device_vector<int> d_mappingvec = localTileCudaTest<int>(img, rows, cols, tpb, tileDims, windowDist);
-  globalTileCudaTest<int>(img, rows, cols, d_mappingvec, tileDims, windowDist, tpb);
+TEST(CudaTridiagDouble, SingleRowLong) {
+  test_pcr<double>(1, 64, {64}, 32, 1e-10);
 }
 
-TEST(CudaWindowCCL, NaiveLocal_basic2){
-  constexpr int rows = 4;
-  constexpr int cols = 5;
-  const std::vector<uint8_t> img = {
-    1, 0, 0, 0, 1,
-    0, 1, 0, 1, 0,
-    0, 0, 1, 0, 0,
-    0, 1, 0, 0, 1,
-  };
-  const int2 windowDist = {1, 1};
-  const int2 tileDims = {32, 4};
-  dim3 tpb(32,4);
-  thrust::device_vector<int> d_mappingvec = localTileCudaTest<int>(img, rows, cols, tpb, tileDims, windowDist);
-  globalTileCudaTest<int>(img, rows, cols, d_mappingvec, tileDims, windowDist, tpb);
+TEST(CudaTridiagDouble, MultiRow) { test_pcr<double>(2, 4, {4, 4}, 32, 1e-10); }
+
+TEST(CudaTridiagDouble, MultiRowLong) {
+  test_pcr<double>(2, 64, {64, 64}, 32, 1e-10);
 }
 
-
-TEST(CudaWindowCCL, NaiveLocal_basic3){
-  constexpr int rows = 4;
-  constexpr int cols = 5;
-  const std::vector<uint8_t> img = {
-    0, 0, 0, 0, 1,
-    0, 1, 0, 1, 0,
-    1, 0, 0, 0, 0,
-    0, 0, 0, 0, 0,
-  };
-  const int2 windowDist = {1, 1};
-  const int2 tileDims = {32, 4};
-  dim3 tpb(32,4);
-  thrust::device_vector<int> d_mappingvec = localTileCudaTest<int>(img, rows, cols, tpb, tileDims, windowDist);
-  globalTileCudaTest<int>(img, rows, cols, d_mappingvec, tileDims, windowDist, tpb);
+TEST(CudaTridiagDouble, MultiRowVarying) {
+  test_pcr<double>(2, 64, {40, 50}, 32, 1e-10);
 }
 
-TEST(CudaWindowCCL, NaiveLocal_basic4){
-  constexpr int rows = 8;
-  constexpr int cols = 5;
-  const std::vector<uint8_t> img = {
-    1, 0, 0, 0, 1,
-    0, 1, 0, 1, 0,
-    0, 0, 1, 0, 0,
-    0, 1, 0, 0, 1,
-    0, 0, 0, 0, 1,
-    0, 1, 0, 1, 0,
-    1, 0, 0, 0, 0,
-    0, 0, 0, 0, 0,
-  };
-  const int2 windowDist = {1, 1};
-  const int2 tileDims = {32, 4};
-  dim3 tpb(32,4);
-  thrust::device_vector<int> d_mappingvec = localTileCudaTest<int>(img, rows, cols, tpb, tileDims, windowDist);
-  globalTileCudaTest<int>(img, rows, cols, d_mappingvec, tileDims, windowDist, tpb);
+// ---- Float tests ----
+
+TEST(CudaTridiagFloat, SingleRowSimple) {
+  test_pcr<float>(1, 4, {4}, 32, 1e-5f);
 }
 
-TEST(CudaWindowCCL, NaiveLocal_basic5){
-  constexpr int rows = 12;
-  constexpr int cols = 6;
-
-  const std::vector<uint8_t> img = {
-    0, 0, 1, 0, 1, 0,
-    0, 1, 0, 0, 0, 1,
-    0, 1, 0, 0, 0, 1,
-    0, 0, 1, 0, 1, 0,
-    0, 0, 1, 0, 1, 0,
-    0, 1, 0, 0, 0, 1,
-    0, 1, 0, 0, 0, 1,
-    0, 0, 1, 0, 1, 0,
-    1, 0, 0, 1, 0, 0,
-    1, 0, 1, 0, 1, 0,
-    0, 1, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0,
-  };
-  const int2 tileDims = {32, 4};
-  const int2 windowDist = {1, 1};
-  dim3 tpb(32,4);
-  thrust::device_vector<int> d_mappingvec = localTileCudaTest<int>(img, rows, cols, tpb, tileDims, windowDist);
-  globalTileCudaTest<int>(img, rows, cols, d_mappingvec, tileDims, windowDist, tpb);
+TEST(CudaTridiagFloat, SingleRowLong) {
+  test_pcr<float>(1, 64, {64}, 32, 1e-5f);
 }
 
-TEST(CudaWindowCCL, NaiveLocal_random64x64_1percent){
-  constexpr int rows = 64;
-  constexpr int cols = 64;
+TEST(CudaTridiagFloat, MultiRow) { test_pcr<float>(2, 4, {4, 4}, 32, 1e-5f); }
 
-  std::vector<uint8_t> img(rows * cols);
-  const double fraction = 0.01;
-  std::fill(img.begin(), img.begin() + (int)(fraction * rows * cols), 1);
-  std::fill(img.begin() + (int)(fraction * rows * cols), img.end(), 0);
-  std::random_device rd;
-  std::mt19937 g(rd());
-  std::shuffle(img.begin(), img.end(), g);
-
-  const int2 tileDims = {32, 4};
-  const int2 windowDist = {1, 1};
-  dim3 tpb(32,4);
-  thrust::device_vector<int> d_mappingvec = localTileCudaTest<int>(img, rows, cols, tpb, tileDims, windowDist);
-  globalTileCudaTest<int>(img, rows, cols, d_mappingvec, tileDims, windowDist, tpb);
+TEST(CudaTridiagFloat, MultiRowLong) {
+  test_pcr<float>(2, 64, {64, 64}, 32, 1e-5f);
 }
 
-
-TEST(CudaWindowCCL, NaiveLocal_random8192x1024_1percent){
-  constexpr int rows = 8192;
-  constexpr int cols = 1024;
-
-  std::vector<uint8_t> img(rows * cols);
-  const double fraction = 0.01;
-  std::fill(img.begin(), img.begin() + (int)(fraction * rows * cols), 1);
-  std::fill(img.begin() + (int)(fraction * rows * cols), img.end(), 0);
-  std::random_device rd;
-  std::mt19937 g(rd());
-  std::shuffle(img.begin(), img.end(), g);
-
-  const int2 tileDims = {32, 4};
-  const int2 windowDist = {1, 1};
-  dim3 tpb(32,4);
-  thrust::device_vector<int> d_mappingvec = localTileCudaTest<int>(img, rows, cols, tpb, tileDims, windowDist);
-  globalTileCudaTest<int>(img, rows, cols, d_mappingvec, tileDims, windowDist, tpb);
+TEST(CudaTridiagFloat, MultiRowVarying) {
+  test_pcr<float>(2, 64, {40, 50}, 32, 1e-5f);
 }
-
-TEST(CudaWindowCCL, NaiveLocal_random8192x1024_1percent_CooperativeGlobal){
-  constexpr int rows = 8192;
-  constexpr int cols = 1024;
-
-  std::vector<uint8_t> img(rows * cols);
-  const double fraction = 0.01;
-  std::fill(img.begin(), img.begin() + (int)(fraction * rows * cols), 1);
-  std::fill(img.begin() + (int)(fraction * rows * cols), img.end(), 0);
-  std::random_device rd;
-  std::mt19937 g(rd());
-  std::shuffle(img.begin(), img.end(), g);
-
-  const int2 tileDims = {32, 4};
-  const int2 windowDist = {1, 1};
-  dim3 tpb(32,4);
-  thrust::device_vector<int> d_mappingvec = localTileCudaTest<int>(img, rows, cols, tpb, tileDims, windowDist);
-  globalTileCudaTest<int, METHOD_GLOBAL_NAIVE_COOPERATIVEGRID>(img, rows, cols, d_mappingvec, tileDims, windowDist, tpb);
-}
-
-TEST(CudaWindowCCL, NaiveLocal_random8192x1024_50percent){
-  constexpr int rows = 8192;
-  constexpr int cols = 1024;
-
-  std::vector<uint8_t> img(rows * cols);
-  const double fraction = 0.50;
-  std::fill(img.begin(), img.begin() + (int)(fraction * rows * cols), 1);
-  std::fill(img.begin() + (int)(fraction * rows * cols), img.end(), 0);
-  std::random_device rd;
-  std::mt19937 g(rd());
-  std::shuffle(img.begin(), img.end(), g);
-
-  const int2 tileDims = {32, 4};
-  const int2 windowDist = {1, 1};
-  dim3 tpb(32,4);
-  thrust::device_vector<int> d_mappingvec = localTileCudaTest<int>(img, rows, cols, tpb, tileDims, windowDist);
-  globalTileCudaTest<int>(img, rows, cols, d_mappingvec, tileDims, windowDist, tpb);
-}
-
-TEST(CudaWindowCCL, NeighbourChainerLocal_custom1){
-  constexpr int rows = 4;
-  constexpr int cols = 32;
-
-  const std::vector<uint8_t> img = {
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0
-  };
-  const int2 tileDims = {32, 4};
-  const int2 windowDist = {1, 1};
-  dim3 tpb(32,4);
-  thrust::device_vector<int> d_mappingvec = localTileCudaTest<int>(img, rows, cols, tpb, tileDims, windowDist);
-  globalTileCudaTest<int>(img, rows, cols, d_mappingvec, tileDims, windowDist, tpb);
-}
-
-TEST(CudaWindowCCL, NeighbourChainerLocal_random64x64_1percent){
-  constexpr int rows = 64;
-  constexpr int cols = 64;
-
-  std::vector<uint8_t> img(rows * cols);
-  const double fraction = 0.01;
-  std::fill(img.begin(), img.begin() + (int)(fraction * rows * cols), 1);
-  std::fill(img.begin() + (int)(fraction * rows * cols), img.end(), 0);
-  std::random_device rd;
-  std::mt19937 g(rd());
-  std::shuffle(img.begin(), img.end(), g);
-
-  const int2 tileDims = {32, 4};
-  const int2 windowDist = {1, 1};
-  dim3 tpb(32,4);
-  thrust::device_vector<int> d_mappingvec = localTileCudaTest<int, METHOD_LOCAL_NEIGHBOURCHAIN>(img, rows, cols, tpb, tileDims, windowDist);
-  globalTileCudaTest<int>(img, rows, cols, d_mappingvec, tileDims, windowDist, tpb);
-}
-
-TEST(CudaWindowCCL, NeighbourChainerLocal_random64x64_50percent){
-  constexpr int rows = 64;
-  constexpr int cols = 64;
-
-  std::vector<uint8_t> img(rows * cols);
-  const double fraction = 0.5;
-  std::fill(img.begin(), img.begin() + (int)(fraction * rows * cols), 1);
-  std::fill(img.begin() + (int)(fraction * rows * cols), img.end(), 0);
-  std::random_device rd;
-  std::mt19937 g(rd());
-  std::shuffle(img.begin(), img.end(), g);
-
-  const int2 tileDims = {32, 4};
-  const int2 windowDist = {1, 1};
-  dim3 tpb(32,4);
-  thrust::device_vector<int> d_mappingvec = localTileCudaTest<int, METHOD_LOCAL_NEIGHBOURCHAIN>(img, rows, cols, tpb, tileDims, windowDist);
-  globalTileCudaTest<int>(img, rows, cols, d_mappingvec, tileDims, windowDist, tpb);
-}
-
-TEST(CudaWindowCCL, NeighbourChainerLocal_random512x512_1percent){
-  constexpr int rows = 512;
-  constexpr int cols = 512;
-
-  std::vector<uint8_t> img(rows * cols);
-  const double fraction = 0.01;
-  std::fill(img.begin(), img.begin() + (int)(fraction * rows * cols), 1);
-  std::fill(img.begin() + (int)(fraction * rows * cols), img.end(), 0);
-  std::random_device rd;
-  std::mt19937 g(rd());
-  std::shuffle(img.begin(), img.end(), g);
-
-  const int2 tileDims = {32, 4};
-  const int2 windowDist = {1, 1};
-  dim3 tpb(32,4);
-  thrust::device_vector<int> d_mappingvec = localTileCudaTest<int, METHOD_LOCAL_NEIGHBOURCHAIN>(img, rows, cols, tpb, tileDims, windowDist);
-  globalTileCudaTest<int>(img, rows, cols, d_mappingvec, tileDims, windowDist, tpb);
-}
-
-
-TEST(CudaWindowCCL, NeighbourChainerLocal_random8192x1024_1percent){
-  constexpr int rows = 8192;
-  constexpr int cols = 1024;
-
-  std::vector<uint8_t> img(rows * cols);
-  const double fraction = 0.01;
-  std::fill(img.begin(), img.begin() + (int)(fraction * rows * cols), 1);
-  std::fill(img.begin() + (int)(fraction * rows * cols), img.end(), 0);
-  std::random_device rd;
-  std::mt19937 g(rd());
-  std::shuffle(img.begin(), img.end(), g);
-
-  const int2 tileDims = {32, 4};
-  const int2 windowDist = {1, 1};
-  dim3 tpb(32,4);
-  thrust::device_vector<int> d_mappingvec = localTileCudaTest<int, METHOD_LOCAL_NEIGHBOURCHAIN>(img, rows, cols, tpb, tileDims, windowDist);
-  globalTileCudaTest<int>(img, rows, cols, d_mappingvec, tileDims, windowDist, tpb);
-}
-
-TEST(CudaWindowCCL, NeighbourChainerLocal_random8192x1024_50percent){
-  constexpr int rows = 8192;
-  constexpr int cols = 1024;
-
-  std::vector<uint8_t> img(rows * cols);
-  const double fraction = 0.50;
-  std::fill(img.begin(), img.begin() + (int)(fraction * rows * cols), 1);
-  std::fill(img.begin() + (int)(fraction * rows * cols), img.end(), 0);
-  std::random_device rd;
-  std::mt19937 g(rd());
-  std::shuffle(img.begin(), img.end(), g);
-
-  const int2 tileDims = {32, 4};
-  const int2 windowDist = {1, 1};
-  dim3 tpb(32,4);
-  thrust::device_vector<int> d_mappingvec = localTileCudaTest<int, METHOD_LOCAL_NEIGHBOURCHAIN>(img, rows, cols, tpb, tileDims, windowDist);
-  globalTileCudaTest<int>(img, rows, cols, d_mappingvec, tileDims, windowDist, tpb);
-}
-
-// TEST(CudaWindowCCL, NeighbourChainerLocal_uchar_random8192x1024_50percent){
-//   constexpr int rows = 8192;
-//   constexpr int cols = 1024;
-//
-//   std::vector<uint8_t> img(rows * cols);
-//   const double fraction = 0.50;
-//   std::fill(img.begin(), img.begin() + (int)(fraction * rows * cols), 1);
-//   std::fill(img.begin() + (int)(fraction * rows * cols), img.end(), 0);
-//   std::random_shuffle(img.begin(), img.end());
-//
-//   const int2 tileDims = {32, 4};
-//   const int2 windowDist = {1, 1};
-//   dim3 tpb(32,4);
-//   localTileCudaTest<int, METHOD_LOCAL_NEIGHBOURCHAIN, unsigned char>(img, rows, cols, tpb, tileDims, windowDist);
-// }

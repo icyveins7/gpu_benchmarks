@@ -19,17 +19,13 @@ target_sources(
 )
 target_compile_definitions(tridiag_float PRIVATE USE_FLOAT)
 
-# # -------------------- Tests
-# if (GTEST_FOUND)
-#   message("Enabling tests for proj_windowccl")
-#
-#   # --------------------
-#   set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/test/test_wccl.cpp PROPERTIES LANGUAGE CUDA)
-#   add_executable(test_wccl test/test_wccl.cpp src/wccl.cpp)
-#   target_link_libraries(test_wccl GTest::gtest_main)
-#   target_include_directories(
-#     test_wccl PRIVATE
-#     ${CMAKE_CURRENT_SOURCE_DIR}/include
-#   )
-#   gtest_discover_tests(test_wccl)
-# endif()
+# -------------------- Tests
+if (GTEST_FOUND)
+  message("Enabling tests for proj_tridiag")
+
+  add_executable(test_tridiag
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_tridiag.cu
+  )
+  target_link_libraries(test_tridiag GTest::gtest_main)
+  gtest_discover_tests(test_tridiag)
+endif()
