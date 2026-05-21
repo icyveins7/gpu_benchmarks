@@ -19,6 +19,13 @@ target_sources(
 )
 target_compile_definitions(tridiag_float PRIVATE USE_FLOAT)
 
+# --------------------
+add_executable(splines)
+target_sources(
+  splines PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/splines.cu
+)
+
 # -------------------- Tests
 if (GTEST_FOUND)
   message("Enabling tests for proj_tridiag")
