@@ -227,6 +227,16 @@ __device__ void tridiag_blockwide_pcr(tridiag_pcr_params<T> &params, T *out) {
   __syncthreads();
 }
 
+/**
+ * @brief Standard tridiagonal solver kernel (global memory variant).
+ *
+ * @example For a 4x4 system:
+ *
+ *   | b0  c0   0   0 |       a[] = { 0,  a1, a2, a3 }
+ *   | a1  b1  c1   0 |       b[] = { b0, b1, b2, b3 }
+ *   |  0  a2  b2  c2 |       c[] = { c0, c1, c2, 0  }
+ *   |  0   0  a3  b3 |
+ */
 template <typename T>
 __global__ void tridiag_blockwise_pcr_kernel(
     const T *a, const T *b, const T *c, const T *rhs, T *u, T *buf0_a,
@@ -315,8 +325,9 @@ __device__ void cyclic_tridiag_blockwide_pcr(tridiag_pcr_params<T> &params,
   int n = params.length;
 
   // Convention: each row's corner is in that row's unused slot
-  T beta = params.a[0];      // top-right corner (stored in row 0's unused a)
-  T alpha = params.c[n - 1]; // bottom-left corner (stored in row n-1's unused c)
+  T beta = params.a[0]; // top-right corner (stored in row 0's unused a)
+  T alpha =
+      params.c[n - 1]; // bottom-left corner (stored in row n-1's unused c)
 
   // Sherman-Morrison vectors: mu (u) and nu (v)
   T gamma = -params.b[0];
@@ -396,6 +407,20 @@ __device__ void cyclic_tridiag_blockwide_pcr(tridiag_pcr_params<T> &params,
   __syncthreads();
 }
 
+/**
+ * @brief Cyclic tridiagonal solver kernel (global memory variant).
+ *
+ * The cyclic corner elements are packed into the unused slots of a[] and c[]:
+ *   a[0]   = beta  (top-right corner)
+ *   c[n-1] = alpha (bottom-left corner)
+ *
+ * @example For a 4x4 cyclic system:
+ *
+ *   | b0  c0   0   β |       a[] = { β,  a1, a2, a3 }
+ *   | a1  b1  c1   0 |       b[] = { b0, b1, b2, b3 }
+ *   |  0  a2  b2  c2 |       c[] = { c0, c1, c2, α  }
+ *   |  α   0  a3  b3 |
+ */
 template <typename T>
 __global__ void cyclic_tridiag_blockwise_pcr_kernel(
     const T *a, const T *b, const T *c, const T *rhs, T *u, T *buf0_a,
