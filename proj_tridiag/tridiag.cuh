@@ -200,13 +200,20 @@ __global__ void tridiag_blockwise_pcr_kernel(
 
   for (int blk = blockIdx.x; blk < num_rows; blk += gridDim.x) {
     int off = blk * stride_elements_per_row;
-    tridiag_pcr_params<T> params = {&a[off],      &b[off],
-                                    &c[off],      &rhs[off],
-                                    &buf0_a[off], &buf0_b[off],
-                                    &buf0_c[off], &buf0_rhs[off],
-                                    &buf1_a[off], &buf1_b[off],
-                                    &buf1_c[off], &buf1_rhs[off],
-                                    &u[off],      num_elements_in_row[blk]};
+    tridiag_pcr_params<T> params = {const_cast<T *>(&a[off]),
+                                    const_cast<T *>(&b[off]),
+                                    const_cast<T *>(&c[off]),
+                                    const_cast<T *>(&rhs[off]),
+                                    &buf0_a[off],
+                                    &buf0_b[off],
+                                    &buf0_c[off],
+                                    &buf0_rhs[off],
+                                    &buf1_a[off],
+                                    &buf1_b[off],
+                                    &buf1_c[off],
+                                    &buf1_rhs[off],
+                                    &u[off],
+                                    num_elements_in_row[blk]};
     tridiag_blockwide_pcr<T>(params);
   }
 }
@@ -237,9 +244,20 @@ __global__ void tridiag_blockwise_pcr_shmem_kernel(
     int off = blk * stride_elements_per_row;
     int n = num_elements_in_row[blk];
 
-    tridiag_pcr_params<T> params = {
-        &a[off],  &b[off], &c[off], &rhs[off], buf0_a,   buf0_b,  buf0_c,
-        buf0_rhs, buf1_a,  buf1_b,  buf1_c,    buf1_rhs, &u[off], (size_t)n};
+    tridiag_pcr_params<T> params = {const_cast<T *>(&a[off]),
+                                    const_cast<T *>(&b[off]),
+                                    const_cast<T *>(&c[off]),
+                                    const_cast<T *>(&rhs[off]),
+                                    buf0_a,
+                                    buf0_b,
+                                    buf0_c,
+                                    buf0_rhs,
+                                    buf1_a,
+                                    buf1_b,
+                                    buf1_c,
+                                    buf1_rhs,
+                                    &u[off],
+                                    (size_t)n};
     tridiag_blockwide_pcr<T>(params);
   }
 }
