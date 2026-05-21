@@ -168,5 +168,89 @@ int main(int argc, char *argv[]) {
     }
   }
 
+  // ============================================
+  // ============================================
+  // ============== CYCLIC ======================
+  // ============================================
+  // ============================================
+
+  printf("\n--- Cyclic tridiagonal test ---\n");
+
+  // Generate cyclic tridiagonal data (all rows same length N)
+  // a[0] = alpha (bottom-left corner), c[N-1] = beta (top-right corner)
+  thrust::host_vector<Real> cha(NUM_ROWS * N), chb(NUM_ROWS * N),
+      chc(NUM_ROWS * N), chr(NUM_ROWS * N);
+
+  srand(123);
+  for (int row = 0; row < NUM_ROWS; ++row) {
+    int off = row * N;
+    for (int i = 0; i < N; ++i) {
+      cha[off + i] = randf();
+      chb[off + i] = Real(4) + randf(); // diagonally dominant
+      chc[off + i] = randf();
+      chr[off + i] = randf();
+    }
+    // a[0] and c[N-1] are the cyclic corner elements (kept in-place)
+  }
+
+  // CPU reference: cyclic solver
+  // cyclic() expects a[0]=0, c[N-1]=0 with corners passed separately,
+  // so we extract them and zero the positions for the CPU call
+  thrust::host_vector<Real> cha_cpu = cha, chc_cpu = chc;
+  thrust::host_vector<Real> chu_cpu(NUM_ROWS * N);
+  thrust::host_vector<Real> cbb(N), cu(N), cz(N), cgam(N);
+  timer.start("cpuCyclic");
+  for (int row = 0; row < NUM_ROWS; ++row) {
+    int off = row * N;
+    Real beta = cha_cpu[off];          // top-right (row 0's unused a)
+    Real alpha = chc_cpu[off + N - 1]; // bottom-left (row N-1's unused c)
+    cha_cpu[off] = Real(0);
+    chc_cpu[off + N - 1] = Real(0);
+    cyclic<Real>(&cha_cpu[off], &chb[off], &chc_cpu[off], alpha, beta,
+                 &chr[off], &chu_cpu[off], cbb.data(), cu.data(), cz.data(),
+                 cgam.data(), N);
+  }
+  timer.stop();
+
+  // GPU cyclic PCR (corners read directly from a[0] and c[N-1])
+  thrust::device_vector<Real> cda = cha, cdb = chb, cdc = chc, cdr = chr;
+  thrust::device_vector<Real> cdu(NUM_ROWS * N, Real(0));
+  thrust::device_vector<size_t> cdlen(NUM_ROWS, (size_t)N);
+  TridiagPCRWorkspace<Real> cws(NUM_ROWS, N);
+
+  timer.start("gpuCyclicPCR");
+  cyclic_tridiag_blockwise_pcr_kernel<Real><<<NUM_ROWS, NUM_THREADS>>>(
+      cda.data().get(), cdb.data().get(), cdc.data().get(), cdr.data().get(),
+      cdu.data().get(), cws.buf0_a_ptr(), cws.buf0_b_ptr(), cws.buf0_c_ptr(),
+      cws.buf0_rhs_ptr(), cws.buf1_a_ptr(), cws.buf1_b_ptr(),
+      cws.buf1_c_ptr(), cws.buf1_rhs_ptr(), cdlen.data().get(), N, NUM_ROWS);
+  cudaDeviceSynchronize();
+  timer.stop();
+
+  thrust::host_vector<Real> chu_gpu = cdu;
+
+  // Compare
+  Real maxErrCyclic = 0.0;
+  for (int row = 0; row < NUM_ROWS; ++row) {
+    int off = row * N;
+    if (verbose)
+      printf("Cyclic Row %d (n=%d, threads=%d):\n", row, N, NUM_THREADS);
+    for (int i = 0; i < N; ++i) {
+      auto err = fabs(chu_cpu[off + i] - chu_gpu[off + i]);
+      if (err > maxErrCyclic)
+        maxErrCyclic = err;
+      if (verbose)
+        printf("  [%2d] cpu=%+.10f  gpu=%+.10f  err=%e\n", i,
+               chu_cpu[off + i], chu_gpu[off + i], err);
+      if (err > ERR_TOL) {
+        printf("LARGE ERROR (cyclic) at row %d, element %d\n", row, i);
+        return 1;
+      }
+    }
+    if (verbose)
+      printf("-------------\n");
+  }
+  printf("Max error (cyclic global mem): %e\n", maxErrCyclic);
+
   return 0;
 }

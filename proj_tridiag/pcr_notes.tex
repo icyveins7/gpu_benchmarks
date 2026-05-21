@@ -447,6 +447,112 @@ This wraps the tridiagonal system into a \textbf{cyclic tridiagonal} system,
 which can be solved via the Sherman--Morrison formula (reducing it to two
 standard tridiagonal solves).
 
+\subsection{Sherman--Morrison for Cyclic Tridiagonals}
+
+The periodic spline produces a \textbf{cyclic tridiagonal} system:
+the matrix has two extra corner entries $\alpha$ (bottom-left) and
+$\beta$ (top-right) in addition to the usual three diagonals:
+\[
+\tilde{A} =
+\begin{pmatrix}
+b_0    & c_0    &        &          & \beta  \\
+a_1    & b_1    & c_1    &          &        \\
+       & \ddots & \ddots & \ddots   &        \\
+       &        & a_{m-2}& b_{m-2}  & c_{m-2}\\
+\alpha &        &        & a_{m-1}  & b_{m-1}
+\end{pmatrix}.
+\]
+We want to solve $\tilde{A}\,x = r$.
+A standard tridiagonal solver cannot handle the corners directly.
+The Sherman--Morrison formula lets us decompose this into two
+standard tridiagonal solves plus a cheap combine step.
+
+\paragraph{The Sherman--Morrison formula.}
+Recall: given an invertible matrix $A'$ and vectors $u, v$ such that
+$\tilde{A} = A' + u\,v^T$ (a \textbf{rank-1 update}), the solution
+of $\tilde{A}\,x = r$ is:
+\[
+x = \underbrace{A'^{-1}\,r}_{y}
+  \;-\; \frac{v^T\!\overbrace{A'^{-1}\,r}^{y}}
+             {1 + v^T\!\underbrace{A'^{-1}\,u}_{z}}
+       \;\cdot\;\underbrace{A'^{-1}\,u}_{z}.
+\]
+Crucially, you never form $A'^{-1}$---you just solve two linear
+systems with the \emph{same} coefficient matrix $A'$:
+\begin{enumerate}
+\item Solve $A'\,y = r$ \quad (standard tridiagonal solve),
+\item Solve $A'\,z = u$ \quad (standard tridiagonal solve),
+\end{enumerate}
+then combine:
+\[
+x = y - \frac{v^T y}{1 + v^T z}\; z.
+\]
+
+\paragraph{Constructing the decomposition.}
+Choose $\gamma = -b_0$ (any nonzero value works; this particular
+choice ensures $b_0' = b_0 - \gamma = 2\,b_0$, avoiding catastrophic
+cancellation that would occur if $\gamma \approx b_0$). It is also
+\textbf{scale-invariant}: the modification is always a factor of~2
+on $b_0$, regardless of its magnitude. A na\"ive choice like
+$\gamma = -1$ would give $b_0' = b_0 + 1$, which distorts the
+relative scale when $b_0 \ll 1$ or $b_0 \gg 1$, potentially
+worsening the condition number of $A'$.
+
+With this choice, define:
+\[
+u = \begin{pmatrix} \gamma \\ 0 \\ \vdots \\ 0 \\ \alpha \end{pmatrix},
+\qquad
+v = \begin{pmatrix} 1 \\ 0 \\ \vdots \\ 0 \\ \beta/\gamma \end{pmatrix}.
+\]
+The outer product $u\,v^T$ is a matrix with only four nonzero entries:
+\[
+(u\,v^T)_{ij} =
+\begin{cases}
+\gamma            & (i,j) = (0,\,0), \\
+\beta             & (i,j) = (0,\,m{-}1), \\
+\alpha            & (i,j) = (m{-}1,\,0), \\
+\alpha\beta/\gamma & (i,j) = (m{-}1,\,m{-}1).
+\end{cases}
+\]
+Setting $A' = \tilde{A} - u\,v^T$:
+\begin{itemize}
+\item The corners are cancelled:
+  $A'_{0,\,m-1} = \beta - \beta = 0$ and
+  $A'_{m-1,\,0} = \alpha - \alpha = 0$.
+\item The diagonal is modified:
+  $b_0' = b_0 - \gamma = 2\,b_0$ and
+  $b_{m-1}' = b_{m-1} - \alpha\beta/\gamma$.
+\item All other entries are unchanged.
+\end{itemize}
+Thus $A'$ is a \textbf{standard tridiagonal} matrix, and
+$\tilde{A} = A' + u\,v^T$ exactly.
+
+\paragraph{The combine step.}
+After obtaining $y$ and $z$, the dot products are cheap since $v$
+is sparse:
+\[
+v^T y = y_0 + \frac{\beta}{\gamma}\,y_{m-1},
+\qquad
+v^T z = z_0 + \frac{\beta}{\gamma}\,z_{m-1}.
+\]
+The final solution is:
+\[
+x_i = y_i - \frac{v^T y}{1 + v^T z}\; z_i,
+\qquad i = 0, \ldots, m{-}1.
+\]
+This last step is trivially parallel (element-wise).
+
+\paragraph{GPU strategy.}
+The two tridiagonal solves share the same coefficient matrix $A'$
+but have different right-hand sides ($r$ and $u$). They can be:
+\begin{itemize}
+\item batched as two rows in a single PCR kernel call, or
+\item executed as two sequential PCR calls (same $A'$, different RHS).
+\end{itemize}
+The combine step is a simple element-wise kernel. In a batched
+setting where many periodic splines are solved simultaneously,
+each spline simply contributes two rows to the batch.
+
 \subsection{Why PCR fits well}
 
 \begin{itemize}
