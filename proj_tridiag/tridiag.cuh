@@ -17,21 +17,21 @@ namespace cutridiag {
  */
 
 /**
- * @brief Parameters for PCR tridiagonal solver.
- * buf0 and buf1 are double-buffers for the reduction, each containing
- * a, b, c, rhs arrays of length >= length. These may reside in global
- * or shared memory. The output is written to u.
+ * @brief Double-buffer workspace for the PCR reduction.
+ * buf0 and buf1 each contain a, b, c, rhs arrays of length >= length.
+ * These may reside in global or shared memory.
+ *
+ * For global memory workspaces, see TriDiagPCRWorkspace below for a helpful
+ * container.
+ *
+ * buf0 should be populated at the start. This is left to the caller to do so
+ * appropriately.
  *
  * @tparam T Type of data, must be floating point.
  */
-template <typename T> struct tridiag_pcr_params {
+template <typename T> struct tridiag_pcr_scratch {
   static_assert(std::is_floating_point<T>::value,
                 "T must be a floating point type");
-  T *a; // we leave these non-const so that other kernels can fill these in
-  T *b; // e.g. splines will calculate these coefficients
-  T *c;
-  T *rhs;
-  // Double buffers for the reduction (read/write)
   T *buf0_a, *buf0_b, *buf0_c, *buf0_rhs;
   T *buf1_a, *buf1_b, *buf1_c, *buf1_rhs;
   size_t length;
@@ -99,9 +99,11 @@ template <typename T> struct TridiagPCRWorkspace {
 };
 
 /**
- * @brief Core PCR reduction loop for a single block. Assumes buf0 already
- * contains the initial a, b, c, rhs data. Performs the reduction in-place
- * across buf0/buf1 (double-buffering).
+ * @brief Core PCR reduction loop for a single block.
+ * NOTE: Assumes buf0 already contains the initial a, b, c, rhs data.
+ * Onus is on the caller to populate this beforehand. See tridiag_pcr_params.
+ *
+ * Performs the reduction in-place across buf0/buf1 (double-buffering).
  *
  * On return, rFinal[i]/bFinal[i] gives the solution x[i]. The caller is
  * responsible for performing this division, e.g.:
@@ -190,27 +192,26 @@ pcr_reduce_blockwide(T *buf0_a, T *buf0_b, T *buf0_c, T *buf0_rhs, T *buf1_a,
 /**
  * @brief PCR tridiagonal solver within a single block.
  * Uses block-stride loops, so length may exceed blockDim.x.
- * The caller must provide two sets of buffers (buf0, buf1) in the params
- * for double-buffering during the reduction steps.
- *
- * @detail In a standard tridiagonal problem the coefficients are simply copied
- * to the double buffer for the PCR.
+ * Copies the input arrays (a,b,c,rhs) into buf0, then performs PCR.
  *
  * @tparam T Type of data, see tridiag_pcr_params
- * @param params Parameters for PCR tridiagonal linear system
- * @param out    Output array of length >= params.length
+ * @param params PCR double-buffer workspace
+ * @param a, b, c, rhs  Input tridiagonal coefficients (length >= n)
+ * @param out    Output array of length >= n
  */
 template <typename T>
-__device__ void tridiag_blockwide_pcr(tridiag_pcr_params<T> &params, T *out) {
+__device__ void tridiag_blockwide_pcr(tridiag_pcr_scratch<T> &params,
+                                      const T *a, const T *b, const T *c,
+                                      const T *rhs, T *out) {
 
   int n = params.length;
 
   // Copy inputs into buf0
   for (int i = threadIdx.x; i < n; i += blockDim.x) {
-    params.buf0_a[i] = params.a[i];
-    params.buf0_b[i] = params.b[i];
-    params.buf0_c[i] = params.c[i];
-    params.buf0_rhs[i] = params.rhs[i];
+    params.buf0_a[i] = a[i];
+    params.buf0_b[i] = b[i];
+    params.buf0_c[i] = c[i];
+    params.buf0_rhs[i] = rhs[i];
   }
   __syncthreads();
 
@@ -246,20 +247,12 @@ __global__ void tridiag_blockwise_pcr_kernel(
 
   for (int blk = blockIdx.x; blk < num_rows; blk += gridDim.x) {
     int off = blk * stride_elements_per_row;
-    tridiag_pcr_params<T> params = {const_cast<T *>(&a[off]),
-                                    const_cast<T *>(&b[off]),
-                                    const_cast<T *>(&c[off]),
-                                    const_cast<T *>(&rhs[off]),
-                                    &buf0_a[off],
-                                    &buf0_b[off],
-                                    &buf0_c[off],
-                                    &buf0_rhs[off],
-                                    &buf1_a[off],
-                                    &buf1_b[off],
-                                    &buf1_c[off],
-                                    &buf1_rhs[off],
-                                    num_elements_in_row[blk]};
-    tridiag_blockwide_pcr<T>(params, &u[off]);
+    tridiag_pcr_scratch<T> params = {
+        &buf0_a[off],   &buf0_b[off],   &buf0_c[off],
+        &buf0_rhs[off], &buf1_a[off],   &buf1_b[off],
+        &buf1_c[off],   &buf1_rhs[off], num_elements_in_row[blk]};
+    tridiag_blockwide_pcr<T>(params, &a[off], &b[off], &c[off], &rhs[off],
+                             &u[off]);
   }
 }
 
@@ -289,20 +282,10 @@ __global__ void tridiag_blockwise_pcr_shmem_kernel(
     int off = blk * stride_elements_per_row;
     int n = num_elements_in_row[blk];
 
-    tridiag_pcr_params<T> params = {const_cast<T *>(&a[off]),
-                                    const_cast<T *>(&b[off]),
-                                    const_cast<T *>(&c[off]),
-                                    const_cast<T *>(&rhs[off]),
-                                    buf0_a,
-                                    buf0_b,
-                                    buf0_c,
-                                    buf0_rhs,
-                                    buf1_a,
-                                    buf1_b,
-                                    buf1_c,
-                                    buf1_rhs,
-                                    (size_t)n};
-    tridiag_blockwide_pcr<T>(params, &u[off]);
+    tridiag_pcr_scratch<T> params = {buf0_a, buf0_b, buf0_c,   buf0_rhs, buf1_a,
+                                     buf1_b, buf1_c, buf1_rhs, (size_t)n};
+    tridiag_blockwide_pcr<T>(params, &a[off], &b[off], &c[off], &rhs[off],
+                             &u[off]);
   }
 }
 
@@ -313,24 +296,25 @@ __global__ void tridiag_blockwise_pcr_shmem_kernel(
  * avoiding the need for a second output array.
  *
  * The cyclic corner elements are stored in each row's unused slot:
- * params.a[0] = beta (top-right corner, row 0's unused sub-diagonal)
- * params.c[n-1] = alpha (bottom-left corner, row n-1's unused super-diagonal)
+ * a[0] = beta (top-right corner, row 0's unused sub-diagonal)
+ * c[n-1] = alpha (bottom-left corner, row n-1's unused super-diagonal)
  *
- * @param params  Tridiagonal coefficients with corners in a[0] and c[n-1]
+ * @param params  PCR double-buffer workspace
+ * @param a, b, c, rhs  Input tridiagonal coefficients (length >= n)
  * @param out     Output array (length >= n), receives final result
  */
 template <typename T>
-__device__ void cyclic_tridiag_blockwide_pcr(tridiag_pcr_params<T> &params,
-                                             T *out) {
+__device__ void cyclic_tridiag_blockwide_pcr(tridiag_pcr_scratch<T> &params,
+                                             const T *a, const T *b, const T *c,
+                                             const T *rhs, T *out) {
   int n = params.length;
 
   // Convention: each row's corner is in that row's unused slot
-  T beta = params.a[0]; // top-right corner (stored in row 0's unused a)
-  T alpha =
-      params.c[n - 1]; // bottom-left corner (stored in row n-1's unused c)
+  T beta = a[0];      // top-right corner (stored in row 0's unused a)
+  T alpha = c[n - 1]; // bottom-left corner (stored in row n-1's unused c)
 
   // Sherman-Morrison vectors: mu (u) and nu (v)
-  T gamma = -params.b[0];
+  T gamma = -b[0];
   T mu_start = gamma;
   T mu_end = alpha;
   T nu_start = T(1);
@@ -339,18 +323,17 @@ __device__ void cyclic_tridiag_blockwide_pcr(tridiag_pcr_params<T> &params,
   // --- Solve 1: A'y = rhs ---
   // Copy inputs into buf0 with modified diagonal (corners removed)
   for (int i = threadIdx.x; i < n; i += blockDim.x) {
-    params.buf0_a[i] = params.a[i];
-    params.buf0_b[i] = params.b[i];
-    params.buf0_c[i] = params.c[i];
-    params.buf0_rhs[i] = params.rhs[i];
+    params.buf0_a[i] = a[i];
+    params.buf0_b[i] = b[i];
+    params.buf0_c[i] = c[i];
+    params.buf0_rhs[i] = rhs[i];
     if (i == 0) {
       params.buf0_a[i] = T(0);
-      params.buf0_b[i] = params.b[i] - gamma; // b0' = b0 - gamma = 2*b0
+      params.buf0_b[i] = b[i] - gamma; // b0' = b0 - gamma = 2*b0
     } else if (i == n - 1) {
       params.buf0_c[i] = T(0);
       params.buf0_b[i] =
-          params.b[i] -
-          mu_end * nu_end; // b_{n-1}' = b_{n-1} - alpha*beta/gamma
+          b[i] - mu_end * nu_end; // b_{n-1}' = b_{n-1} - alpha*beta/gamma
     }
   }
   __syncthreads();
@@ -369,17 +352,17 @@ __device__ void cyclic_tridiag_blockwide_pcr(tridiag_pcr_params<T> &params,
   // --- Solve 2: A'z = mu ---
   // Same A' (need to reload), RHS is the mu vector: (gamma, 0, ..., 0, alpha)
   for (int i = threadIdx.x; i < n; i += blockDim.x) {
-    params.buf0_a[i] = params.a[i];
-    params.buf0_b[i] = params.b[i];
-    params.buf0_c[i] = params.c[i];
+    params.buf0_a[i] = a[i];
+    params.buf0_b[i] = b[i];
+    params.buf0_c[i] = c[i];
     params.buf0_rhs[i] = T(0);
     if (i == 0) {
       params.buf0_a[i] = T(0);
-      params.buf0_b[i] = params.b[i] - gamma;
+      params.buf0_b[i] = b[i] - gamma;
       params.buf0_rhs[i] = mu_start;
     } else if (i == n - 1) {
       params.buf0_c[i] = T(0);
-      params.buf0_b[i] = params.b[i] - mu_end * nu_end;
+      params.buf0_b[i] = b[i] - mu_end * nu_end;
       params.buf0_rhs[i] = mu_end;
     }
   }
@@ -430,20 +413,12 @@ __global__ void cyclic_tridiag_blockwise_pcr_kernel(
 
   for (int blk = blockIdx.x; blk < num_rows; blk += gridDim.x) {
     int off = blk * stride_elements_per_row;
-    tridiag_pcr_params<T> params = {const_cast<T *>(&a[off]),
-                                    const_cast<T *>(&b[off]),
-                                    const_cast<T *>(&c[off]),
-                                    const_cast<T *>(&rhs[off]),
-                                    &buf0_a[off],
-                                    &buf0_b[off],
-                                    &buf0_c[off],
-                                    &buf0_rhs[off],
-                                    &buf1_a[off],
-                                    &buf1_b[off],
-                                    &buf1_c[off],
-                                    &buf1_rhs[off],
-                                    num_elements_in_row[blk]};
-    cyclic_tridiag_blockwide_pcr<T>(params, &u[off]);
+    tridiag_pcr_scratch<T> params = {
+        &buf0_a[off],   &buf0_b[off],   &buf0_c[off],
+        &buf0_rhs[off], &buf1_a[off],   &buf1_b[off],
+        &buf1_c[off],   &buf1_rhs[off], num_elements_in_row[blk]};
+    cyclic_tridiag_blockwide_pcr<T>(params, &a[off], &b[off], &c[off],
+                                    &rhs[off], &u[off]);
   }
 }
 

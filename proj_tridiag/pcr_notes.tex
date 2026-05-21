@@ -447,6 +447,41 @@ This wraps the tridiagonal system into a \textbf{cyclic tridiagonal} system,
 which can be solved via the Sherman--Morrison formula (reducing it to two
 standard tridiagonal solves).
 
+\subparagraph{Example: 5 data points.}
+Given $n=4$ intervals over 5 points $(x_0, y_0), \ldots, (x_4, y_4)$ with
+$y_0 = y_4$, the unknowns are $z_0, z_1, z_2, z_3$ (with $z_4 = z_0$).
+Denote the interval widths $h_i = x_{i+1} - x_i$ for $i = 0,\ldots,3$.
+Each row~$t$ enforces continuity of $S''$ at knot~$t$:
+\[
+h_{t-1}\,z_{t-1} + 2(h_{t-1}+h_t)\,z_t + h_t\,z_{t+1}
+= 6\!\left(\frac{y_{t+1}-y_t}{h_t} - \frac{y_t - y_{t-1}}{h_{t-1}}\right),
+\]
+where indices wrap periodically ($z_{-1} = z_3$, $z_4 = z_0$,
+$y_{-1} = y_3$, $y_4 = y_0$, $h_{-1} = h_3$).
+
+The $4\times 4$ cyclic system is:
+\[
+\underbrace{
+\begin{pmatrix}
+2(h_3+h_0) & h_0        & 0          & h_3        \\
+h_0        & 2(h_0+h_1) & h_1        & 0          \\
+0          & h_1        & 2(h_1+h_2) & h_2        \\
+h_3        & 0          & h_2        & 2(h_2+h_3)
+\end{pmatrix}
+}_{\tilde{A}}
+\begin{pmatrix} z_0 \\ z_1 \\ z_2 \\ z_3 \end{pmatrix}
+=
+\begin{pmatrix} r_0 \\ r_1 \\ r_2 \\ r_3 \end{pmatrix}.
+\]
+The top-right corner $\beta = h_3$ and bottom-left corner $\alpha = h_3$
+(both equal $h_{n-1}$ for the periodic spline).
+In the packed representation:
+\[
+\mathbf{a} = (h_3,\; h_0,\; h_1,\; h_2), \quad
+\mathbf{c} = (h_0,\; h_1,\; h_2,\; h_3),
+\]
+where $a_0 = \beta$ and $c_3 = \alpha$ occupy the otherwise-unused slots.
+
 \subsection{Sherman--Morrison for Cyclic Tridiagonals}
 
 The periodic spline produces a \textbf{cyclic tridiagonal} system:
