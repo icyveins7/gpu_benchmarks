@@ -1,4 +1,5 @@
-#include <cub/cub.cuh>
+#pragma once
+
 #include <sharedmem.cuh>
 #include <thrust/device_vector.h>
 
@@ -26,10 +27,10 @@ namespace cutridiag {
 template <typename T> struct tridiag_pcr_params {
   static_assert(std::is_floating_point<T>::value,
                 "T must be a floating point type");
-  const T *a;
-  const T *b;
-  const T *c;
-  const T *rhs;
+  T *a; // we leave these non-const so that other kernels can fill these in
+  T *b; // e.g. splines will calculate these coefficients
+  T *c;
+  T *rhs;
   // Double buffers for the reduction (read/write)
   T *buf0_a, *buf0_b, *buf0_c, *buf0_rhs;
   T *buf1_a, *buf1_b, *buf1_c, *buf1_rhs;
@@ -151,8 +152,11 @@ __device__ void tridiag_blockwide_pcr(tridiag_pcr_params<T> &params) {
       T r_hi = (hi < n) ? rR[hi] : T(0);
 
       // 'New' coefficients
-      T alpha = -aR[i] / b_lo;
-      T gamma = -cR[i] / b_hi;
+      // Add redundancy for direct setting of alpha/gamma
+      // so that even if a[0] and c[n-1] are set, the correct value is still
+      // computed
+      T alpha = (lo >= 0) ? -aR[i] / b_lo : T(0);
+      T gamma = (hi < n) ? -cR[i] / b_hi : T(0);
 
       aW[i] = alpha * a_lo;
       bW[i] = bR[i] + alpha * c_lo + gamma * a_hi;
