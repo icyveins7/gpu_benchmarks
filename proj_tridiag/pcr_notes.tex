@@ -1,0 +1,473 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{booktabs}
+\usepackage{hyperref}
+
+\title{Parallel Cyclic Reduction (PCR) for Tridiagonal Systems}
+\author{Notes for \texttt{proj\_tridiag}}
+\date{}
+
+\begin{document}
+\maketitle
+
+\section{The Tridiagonal System}
+
+We wish to solve $Ax = d$ where $A$ is an $n \times n$ tridiagonal matrix:
+\[
+\begin{pmatrix}
+b_0 & c_0 \\
+a_1 & b_1 & c_1 \\
+    & a_2 & b_2 & c_2 \\
+    &     & \ddots & \ddots & \ddots \\
+    &     &        & a_{n-2} & b_{n-2} & c_{n-2} \\
+    &     &        &         & a_{n-1} & b_{n-1}
+\end{pmatrix}
+\begin{pmatrix}
+x_0 \\ x_1 \\ x_2 \\ \vdots \\ x_{n-2} \\ x_{n-1}
+\end{pmatrix}
+=
+\begin{pmatrix}
+d_0 \\ d_1 \\ d_2 \\ \vdots \\ d_{n-2} \\ d_{n-1}
+\end{pmatrix}
+\]
+
+Each row $i$ of this system gives the equation:
+\begin{equation}\label{eq:row}
+a_i \, x_{i-1} + b_i \, x_i + c_i \, x_{i+1} = d_i,
+\end{equation}
+with the convention $a_0 = 0$ and $c_{n-1} = 0$.
+
+\section{The Key Idea: Eliminating Neighbours}
+
+The Thomas algorithm (sequential LU) eliminates unknowns one at a time,
+producing a serial dependency chain. PCR instead eliminates \emph{both}
+neighbours $x_{i-1}$ and $x_{i+1}$ simultaneously from every equation,
+at the cost of coupling to $x_{i-2}$ and $x_{i+2}$. After $\lceil \log_2 n \rceil$
+rounds every equation depends only on its own unknown, yielding the solution directly.
+
+\subsection{Derivation of one elimination step}
+
+Consider three consecutive equations at step $s$. We use superscripts to
+denote the step: $(a_i^{(s)}, b_i^{(s)}, c_i^{(s)}, d_i^{(s)})$.
+
+At step $s$, every row $i$ satisfies:
+\begin{equation}\label{eq:step}
+a_i^{(s)} \, x_{i - 2^{s-1}} \;+\; b_i^{(s)} \, x_i \;+\; c_i^{(s)} \, x_{i + 2^{s-1}} \;=\; d_i^{(s)}.
+\end{equation}
+
+Initially ($s=0$), each equation couples $x_{i-1}, x_i, x_{i+1}$.
+We want to eliminate $x_{i-2^{s-1}}$ and $x_{i+2^{s-1}}$ from equation $i$
+by using the equations at rows $i - 2^{s-1}$ and $i + 2^{s-1}$.
+
+\paragraph{Eliminating $x_{i-2^{s-1}}$.}
+Row $i - 2^{s-1}$ at step $s$ reads:
+\[
+a_{i-2^{s-1}}^{(s)} \, x_{i - 2^s} + b_{i-2^{s-1}}^{(s)} \, x_{i-2^{s-1}} + c_{i-2^{s-1}}^{(s)} \, x_i = d_{i-2^{s-1}}^{(s)}.
+\]
+Solving for $x_{i-2^{s-1}}$:
+\[
+x_{i-2^{s-1}} = \frac{1}{b_{i-2^{s-1}}^{(s)}} \Bigl( d_{i-2^{s-1}}^{(s)} - a_{i-2^{s-1}}^{(s)} \, x_{i-2^s} - c_{i-2^{s-1}}^{(s)} \, x_i \Bigr).
+\]
+Define the multiplier:
+\[
+\alpha_i = -\frac{a_i^{(s)}}{b_{i-2^{s-1}}^{(s)}}.
+\]
+Multiplying row $i - 2^{s-1}$ by $\alpha_i$ and adding to row $i$ eliminates $x_{i-2^{s-1}}$.
+
+\paragraph{Eliminating $x_{i+2^{s-1}}$.}
+Similarly, from row $i + 2^{s-1}$:
+\[
+a_{i+2^{s-1}}^{(s)} \, x_i + b_{i+2^{s-1}}^{(s)} \, x_{i+2^{s-1}} + c_{i+2^{s-1}}^{(s)} \, x_{i+2^s} = d_{i+2^{s-1}}^{(s)}.
+\]
+Define:
+\[
+\gamma_i = -\frac{c_i^{(s)}}{b_{i+2^{s-1}}^{(s)}}.
+\]
+Multiplying row $i + 2^{s-1}$ by $\gamma_i$ and adding to row $i$ eliminates $x_{i+2^{s-1}}$.
+
+\paragraph{Combined update.}
+After both eliminations, the new coefficients for row $i$ at step $s+1$ are:
+\begin{align}
+a_i^{(s+1)} &= \alpha_i \cdot a_{i-2^{s-1}}^{(s)}, \label{eq:update_a} \\
+b_i^{(s+1)} &= b_i^{(s)} + \alpha_i \cdot c_{i-2^{s-1}}^{(s)} + \gamma_i \cdot a_{i+2^{s-1}}^{(s)}, \label{eq:update_b} \\
+c_i^{(s+1)} &= \gamma_i \cdot c_{i+2^{s-1}}^{(s)}, \label{eq:update_c} \\
+d_i^{(s+1)} &= d_i^{(s)} + \alpha_i \cdot d_{i-2^{s-1}}^{(s)} + \gamma_i \cdot d_{i+2^{s-1}}^{(s)}. \label{eq:update_d}
+\end{align}
+
+After this step, row $i$ now couples unknowns at distance $2^s$ instead of $2^{s-1}$.
+
+\paragraph{Boundary handling.}
+When an index falls outside $[0, n)$, the corresponding neighbour does not exist.
+We handle this by setting:
+\[
+a_i^{(s)} = 0 \;\text{if } i - 2^{s-1} < 0, \qquad
+c_i^{(s)} = 0 \;\text{if } i + 2^{s-1} \geq n.
+\]
+This is equivalent to saying the multiplier $\alpha_i = 0$ or $\gamma_i = 0$
+respectively, so no elimination is performed in that direction.
+
+\section{Convergence}
+
+At step $s$, each equation $i$ depends on $x_{i-2^{s-1}}$, $x_i$, and $x_{i+2^{s-1}}$.
+After $S = \lceil \log_2 n \rceil$ steps, we have $2^{S-1} \geq n/2$, so
+$i - 2^{S-1} < 0$ and $i + 2^{S-1} \geq n$ for every $i$. Therefore
+$a_i^{(S)} = c_i^{(S)} = 0$ and each equation reduces to:
+\[
+b_i^{(S)} \, x_i = d_i^{(S)} \quad \Longrightarrow \quad x_i = \frac{d_i^{(S)}}{b_i^{(S)}}.
+\]
+
+\section{Explicit Example: $n = 4$}
+
+Consider the system with $a_0 = 0$, $c_3 = 0$:
+\[
+\begin{pmatrix}
+b_0 & c_0 &     &     \\
+a_1 & b_1 & c_1 &     \\
+    & a_2 & b_2 & c_2 \\
+    &     & a_3 & b_3
+\end{pmatrix}
+\begin{pmatrix} x_0 \\ x_1 \\ x_2 \\ x_3 \end{pmatrix}
+=
+\begin{pmatrix} d_0 \\ d_1 \\ d_2 \\ d_3 \end{pmatrix}.
+\]
+
+\subsection{Step $s = 1$ (stride $2^0 = 1$)}
+
+Each row $i$ currently couples $(x_{i-1}, x_i, x_{i+1})$.
+We eliminate $x_{i-1}$ and $x_{i+1}$ using neighbours at distance 1.
+
+\paragraph{Row 0:} $i - 1 = -1 < 0$, so $\alpha_0 = 0$. $i + 1 = 1$, so:
+\[
+\gamma_0 = -\frac{c_0}{b_1}, \qquad
+a_0' = 0, \quad
+b_0' = b_0 + \gamma_0 \, a_1, \quad
+c_0' = \gamma_0 \, c_1, \quad
+d_0' = d_0 + \gamma_0 \, d_1.
+\]
+
+\paragraph{Row 1:} Both neighbours exist:
+\[
+\alpha_1 = -\frac{a_1}{b_0}, \quad \gamma_1 = -\frac{c_1}{b_2}.
+\]
+\[
+a_1' = \alpha_1 \, a_0 = 0, \quad
+b_1' = b_1 + \alpha_1 \, c_0 + \gamma_1 \, a_2, \quad
+c_1' = \gamma_1 \, c_2, \quad
+d_1' = d_1 + \alpha_1 \, d_0 + \gamma_1 \, d_2.
+\]
+Note $a_1' = 0$ because $a_0 = 0$.
+
+\paragraph{Row 2:} Both neighbours exist:
+\[
+\alpha_2 = -\frac{a_2}{b_1}, \quad \gamma_2 = -\frac{c_2}{b_3}.
+\]
+\[
+a_2' = \alpha_2 \, a_1, \quad
+b_2' = b_2 + \alpha_2 \, c_1 + \gamma_2 \, a_3, \quad
+c_2' = \gamma_2 \, c_3 = 0, \quad
+d_2' = d_2 + \alpha_2 \, d_1 + \gamma_2 \, d_3.
+\]
+
+\paragraph{Row 3:} $i + 1 = 4 \geq n$, so $\gamma_3 = 0$:
+\[
+\alpha_3 = -\frac{a_3}{b_2}, \qquad
+a_3' = \alpha_3 \, a_2, \quad
+b_3' = b_3 + \alpha_3 \, c_2, \quad
+c_3' = 0, \quad
+d_3' = d_3 + \alpha_3 \, d_2.
+\]
+
+After step 1, each row $i$ couples $(x_{i-2}, x_i, x_{i+2})$:
+\[
+\begin{aligned}
+&\text{Row 0:} & &b_0' \, x_0 + c_0' \, x_2 = d_0', \\
+&\text{Row 1:} & &b_1' \, x_1 + c_1' \, x_3 = d_1', \\
+&\text{Row 2:} & a_2' \, x_0 + &b_2' \, x_2 = d_2', \\
+&\text{Row 3:} & a_3' \, x_1 + &b_3' \, x_3 = d_3'.
+\end{aligned}
+\]
+
+\subsection{Step $s = 2$ (stride $2^1 = 2$)}
+
+Now we eliminate the remaining couplings at distance 2.
+
+\paragraph{Row 0:} $i - 2 = -2 < 0$, and $i + 2 = 2$:
+\[
+\gamma_0'' = -\frac{c_0'}{b_2'}, \qquad
+b_0'' = b_0' + \gamma_0'' \, a_2', \quad
+d_0'' = d_0' + \gamma_0'' \, d_2'.
+\]
+Now $a_0'' = 0$, $c_0'' = 0$ (since $c_2' = 0$). So: $x_0 = d_0'' / b_0''$.
+
+\paragraph{Row 1:} $i - 2 = -1 < 0$, and $i + 2 = 3$:
+\[
+\gamma_1'' = -\frac{c_1'}{b_3'}, \qquad
+b_1'' = b_1' + \gamma_1'' \, a_3', \quad
+d_1'' = d_1' + \gamma_1'' \, d_3'.
+\]
+So: $x_1 = d_1'' / b_1''$.
+
+\paragraph{Row 2:} $i - 2 = 0$ exists, $i + 2 = 4 \geq n$:
+\[
+\alpha_2'' = -\frac{a_2'}{b_0'}, \qquad
+b_2'' = b_2' + \alpha_2'' \, c_0', \quad
+d_2'' = d_2' + \alpha_2'' \, d_0'.
+\]
+So: $x_2 = d_2'' / b_2''$.
+
+\paragraph{Row 3:} $i - 2 = 1$ exists, $i + 2 = 5 \geq n$:
+\[
+\alpha_3'' = -\frac{a_3'}{b_1'}, \qquad
+b_3'' = b_3' + \alpha_3'' \, c_1', \quad
+d_3'' = d_3' + \alpha_3'' \, d_1'.
+\]
+So: $x_3 = d_3'' / b_3''$.
+
+After $S = \lceil \log_2 4 \rceil = 2$ steps, every equation is decoupled, and we
+read off each $x_i$ by simple division.
+
+\section{Numerical Example}
+
+Let us trace through with concrete numbers:
+\[
+A = \begin{pmatrix}
+1 & 1 \\
+2.1 & 2 & 1.1 \\
+ & 4.1 & 3 & 1.2 \\
+ & & 1.9 & 4
+\end{pmatrix}, \quad
+d = \begin{pmatrix} 0.1 \\ 0.5 \\ 0.3 \\ 0.2 \end{pmatrix}.
+\]
+
+So: $a = (0, 2.1, 4.1, 1.9)$, $b = (1, 2, 3, 4)$, $c = (1, 1.1, 1.2, 0)$.
+
+\paragraph{Step 1.}
+\begin{align*}
+\text{Row 0:}\quad & \alpha_0 = 0, \quad \gamma_0 = -c_0/b_1 = -1/2 = -0.5 \\
+& b_0' = 1 + (-0.5)(2.1) = -0.05, \quad c_0' = (-0.5)(1.1) = -0.55 \\
+& d_0' = 0.1 + (-0.5)(0.5) = -0.15 \\[6pt]
+\text{Row 1:}\quad & \alpha_1 = -a_1/b_0 = -2.1/1 = -2.1, \quad \gamma_1 = -c_1/b_2 = -1.1/3 \approx -0.3\overline{6} \\
+& a_1' = (-2.1)(0) = 0, \quad c_1' = (-0.3\overline{6})(1.2) = -0.44 \\
+& b_1' = 2 + (-2.1)(1) + (-0.3\overline{6})(4.1) = 2 - 2.1 - 1.503\overline{3} = -1.603\overline{3} \\
+& d_1' = 0.5 + (-2.1)(0.1) + (-0.3\overline{6})(0.3) = 0.5 - 0.21 - 0.11 = 0.18 \\[6pt]
+\text{Row 2:}\quad & \alpha_2 = -a_2/b_1 = -4.1/2 = -2.05, \quad \gamma_2 = -c_2/b_3 = -1.2/4 = -0.3 \\
+& a_2' = (-2.05)(2.1) = -4.305, \quad c_2' = (-0.3)(0) = 0 \\
+& b_2' = 3 + (-2.05)(1.1) + (-0.3)(1.9) = 3 - 2.255 - 0.57 = 0.175 \\
+& d_2' = 0.3 + (-2.05)(0.5) + (-0.3)(0.2) = 0.3 - 1.025 - 0.06 = -0.785 \\[6pt]
+\text{Row 3:}\quad & \alpha_3 = -a_3/b_2 = -1.9/3 \approx -0.6\overline{3}, \quad \gamma_3 = 0 \\
+& a_3' = (-0.6\overline{3})(4.1) = -2.596\overline{6}, \quad c_3' = 0 \\
+& b_3' = 4 + (-0.6\overline{3})(1.2) = 4 - 0.76 = 3.24 \\
+& d_3' = 0.2 + (-0.6\overline{3})(0.3) = 0.2 - 0.19 = 0.01
+\end{align*}
+
+\paragraph{Step 2.}
+Now stride is 2. Each row eliminates coupling at distance 2.
+\begin{align*}
+\text{Row 0:}\quad & \gamma_0'' = -c_0'/b_2' = -(-0.55)/0.175 \approx 3.142857 \\
+& b_0'' = -0.05 + (3.142857)(-4.305) \approx -0.05 - 13.53 = -13.58 \\
+& d_0'' = -0.15 + (3.142857)(-0.785) \approx -0.15 - 2.467 = -2.617 \\
+& x_0 = d_0''/b_0'' \approx -2.617 / -13.58 \approx 0.19271 \\[6pt]
+\text{Row 1:}\quad & \gamma_1'' = -c_1'/b_3' = -(-0.44)/3.24 \approx 0.135802 \\
+& b_1'' = -1.603\overline{3} + (0.135802)(-2.596\overline{6}) \approx -1.603 - 0.353 = -1.956 \\
+& d_1'' = 0.18 + (0.135802)(0.01) \approx 0.18 + 0.00136 = 0.18136 \\
+& x_1 = d_1''/b_1'' \approx 0.18136 / -1.956 \approx -0.09272 \\[6pt]
+\text{Row 2:}\quad & \alpha_2'' = -a_2'/b_0' = -(-4.305)/(-0.05) = -86.1 \\
+& b_2'' = 0.175 + (-86.1)(-0.55) = 0.175 + 47.355 = 47.53 \\
+& d_2'' = -0.785 + (-86.1)(-0.15) = -0.785 + 12.915 = 12.13 \\
+& x_2 = d_2''/b_2'' \approx 12.13/47.53 \approx 0.25521 \\[6pt]
+\text{Row 3:}\quad & \alpha_3'' = -a_3'/b_1' = -(-2.596\overline{6})/(-1.603\overline{3}) \approx -1.6195 \\
+& b_3'' = 3.24 + (-1.6195)(-0.44) = 3.24 + 0.7126 = 3.9526 \\
+& d_3'' = 0.01 + (-1.6195)(0.18) = 0.01 - 0.2915 = -0.2815 \\
+& x_3 = d_3''/b_3'' \approx -0.2815/3.9526 \approx -0.07123
+\end{align*}
+
+These values match the CPU Thomas algorithm output (and can be verified with
+NumPy: \texttt{np.linalg.solve(A, d)}).
+
+\section{Parallelism and Complexity}
+
+\begin{itemize}
+\item \textbf{Work:} Each step updates all $n$ equations using
+  Eqs.~\eqref{eq:update_a}--\eqref{eq:update_d}, requiring $O(n)$ work per step.
+  With $\lceil \log_2 n \rceil$ steps, total work is $O(n \log n)$.
+\item \textbf{Span (depth):} All $n$ updates within a step are independent
+  and can execute in parallel. So the parallel depth is $O(\log n)$.
+\item \textbf{Comparison to Thomas:} Thomas is $O(n)$ work but $O(n)$ span
+  (fully sequential). PCR trades extra work for exponentially less depth,
+  making it ideal for GPUs.
+\end{itemize}
+
+\section{Double Buffering}
+
+The update equations read from step $s$ and write to step $s+1$.
+Since all rows are updated simultaneously, we cannot overwrite in place.
+Two buffers suffice: read from buffer $A$, write to buffer $B$, then swap.
+This is the ``double buffering'' or ``ping-pong'' technique used in
+the CUDA implementation.
+
+A \texttt{\_\_syncthreads()} barrier is required between steps to ensure
+all threads have finished writing before any thread reads the next step's
+input.
+
+\section{Block-Stride Loops}
+
+When $n > \texttt{blockDim.x}$, a single thread must process multiple
+elements. The inner loops iterate as:
+\begin{verbatim}
+    for (int i = threadIdx.x; i < n; i += blockDim.x) {
+        // process element i
+    }
+\end{verbatim}
+This ``block-stride'' pattern ensures coalesced memory access and full
+utilization of available threads regardless of problem size.
+
+\section{Application: Cubic Spline Fitting}
+
+A natural application of tridiagonal solvers---and the original motivation
+for the GPU PCR implementation---is cubic spline interpolation.
+
+\subsection{Setup}
+
+Given data points $(x_0, y_0),\, (x_1, y_1),\, \ldots,\, (x_n, y_n)$ with
+$x_0 < x_1 < \cdots < x_n$, a cubic spline $S$ is a piecewise cubic
+polynomial satisfying:
+\begin{enumerate}
+\item \textbf{Interpolation:} $S(x_i) = y_i$ for all $i$.
+\item \textbf{$C^1$ continuity:} $S'$ is continuous at each interior knot.
+\item \textbf{$C^2$ continuity:} $S''$ is continuous at each interior knot.
+\end{enumerate}
+Let $h_i = x_{i+1} - x_i$ denote the interval widths, and let
+$z_i = S''(x_i)$ be the unknown second derivatives at the knots.
+
+\subsection{Deriving the tridiagonal system}
+
+On each interval $[x_i, x_{i+1}]$, $S$ is cubic, so $S''$ is linear.
+Interpolating $S''$ between its endpoint values gives:
+\[
+S_i''(x) = z_i \,\frac{x_{i+1} - x}{h_i} + z_{i+1}\,\frac{x - x_i}{h_i}.
+\]
+Integrating twice and applying $S_i(x_i) = y_i$, $S_i(x_{i+1}) = y_{i+1}$
+yields:
+\begin{align*}
+S_i(x) &= \frac{z_i}{6h_i}(x_{i+1}-x)^3
+         + \frac{z_{i+1}}{6h_i}(x - x_i)^3 \\
+       &\quad + \left(\frac{y_i}{h_i} - \frac{z_i\,h_i}{6}\right)(x_{i+1}-x)
+         + \left(\frac{y_{i+1}}{h_i} - \frac{z_{i+1}\,h_i}{6}\right)(x - x_i).
+\end{align*}
+Differentiating, we obtain the first derivative at $x_{i+1}$ as
+computed from the polynomial on its \emph{left} interval ($S_i$)
+and its \emph{right} interval ($S_{i+1}$).
+From the left:
+\[
+S_i'(x_{i+1}) = -\frac{z_i\,h_i}{6} + \frac{z_{i+1}\,h_i}{3}
+  + \frac{y_{i+1} - y_i}{h_i},
+\]
+From the right:
+\[
+S_{i+1}'(x_{i+1}) = -\frac{z_{i+1}\,h_{i+1}}{3} + \frac{z_{i+2}\,h_{i+1}}{6}
+  + \frac{y_{i+2} - y_{i+1}}{h_{i+1}}.
+\]
+The $C^1$ condition $S_i'(x_{i+1}) = S_{i+1}'(x_{i+1})$ at each
+interior knot $i+1$ (for $i = 0, \ldots, n-2$) gives:
+\begin{equation}\label{eq:spline_tridiag}
+h_i \, z_i + 2(h_i + h_{i+1})\, z_{i+1} + h_{i+1}\, z_{i+2}
+= 6\left(\frac{y_{i+2} - y_{i+1}}{h_{i+1}} - \frac{y_{i+1} - y_i}{h_i}\right).
+\end{equation}
+Re-indexing with $j = i+1$ for the interior knots $j = 1, \ldots, n-1$:
+\[
+\underbrace{h_{j-1}}_{a_j}\, z_{j-1}
++ \underbrace{2(h_{j-1} + h_j)}_{b_j}\, z_j
++ \underbrace{h_j}_{c_j}\, z_{j+1}
+= \underbrace{6\!\left(\frac{y_{j+1} - y_j}{h_j}
+  - \frac{y_j - y_{j-1}}{h_{j-1}}\right)}_{d_j}.
+\]
+This is a tridiagonal system of $n-1$ equations in $n+1$ unknowns
+$(z_0, \ldots, z_n)$. Two boundary conditions close the system.
+
+\subsection{Boundary conditions}
+
+The choice of boundary condition determines the spline type
+and how the first/last rows of the system are modified.
+
+\begin{table}[h]
+\centering
+\renewcommand{\arraystretch}{1.8}
+\begin{tabular}{l|c|c|c}
+\toprule
+ & $S(x)$ & $S'(x)$ & $S''(x)$ \\
+\midrule
+\textbf{Natural}
+  & ---
+  & ---
+  & $S''(x_0) = 0,\; S''(x_n) = 0$ \\
+\textbf{Clamped}
+  & ---
+  & $S'(x_0) = s_0,\; S'(x_n) = s_n$
+  & --- \\
+\textbf{Periodic}
+  & ---\textsuperscript{*}
+  & $S'(x_0) = S'(x_n)$
+  & $S''(x_0) = S''(x_n)$ \\
+\bottomrule
+\end{tabular}
+\caption{Boundary conditions by spline type. A ``---'' indicates no
+extra constraint is imposed on that derivative order at the endpoints.\\
+\textsuperscript{*}Periodic splines require $S(x_0) = S(x_n)$ (i.e.\ $y_0 = y_n$)
+as a precondition on the input data, but this is not a boundary equation
+in the tridiagonal system---it is already satisfied by the interpolation conditions.}
+\label{tab:bc}
+\end{table}
+
+\paragraph{Natural spline.}
+Set $z_0 = z_n = 0$ (zero curvature at endpoints). This reduces the system
+to $n-1$ equations in $n-1$ unknowns $(z_1, \ldots, z_{n-1})$, a standard
+tridiagonal system solved by Thomas or PCR.
+
+\paragraph{Clamped spline.}
+Prescribe the first derivatives $S'(x_0) = s_0$ and $S'(x_n) = s_n$.
+The condition $S_0'(x_0) = s_0$ gives:
+\[
+\frac{h_0}{3}\,z_0 + \frac{h_0}{6}\,z_1
+= \frac{y_1 - y_0}{h_0} - s_0,
+\]
+and $S_{n-1}'(x_n) = s_n$ gives:
+\[
+\frac{h_{n-1}}{6}\,z_{n-1} + \frac{h_{n-1}}{3}\,z_n
+= s_n - \frac{y_n - y_{n-1}}{h_{n-1}}.
+\]
+These become the first and last rows, yielding an $(n+1)\times(n+1)$
+tridiagonal system.
+
+\paragraph{Periodic spline.}
+Enforce $S'(x_0) = S'(x_n)$ and $S''(x_0) = S''(x_n)$, i.e.\ $z_0 = z_n$.
+This wraps the tridiagonal system into a \textbf{cyclic tridiagonal} system,
+which can be solved via the Sherman--Morrison formula (reducing it to two
+standard tridiagonal solves).
+
+\subsection{Why PCR fits well}
+
+\begin{itemize}
+\item The spline tridiagonal system is \textbf{diagonally dominant}:
+  $b_j = 2(h_{j-1} + h_j) > h_{j-1} + h_j \geq |a_j| + |c_j|$,
+  ensuring numerical stability without pivoting.
+\item For \textbf{batched} spline fitting (thousands of independent splines),
+  each spline produces one small tridiagonal system. These map directly
+  to the rows of the batched PCR kernel.
+\item Typical spline sizes (tens to hundreds of knots) fit comfortably
+  in shared memory, enabling the shmem PCR variant.
+\end{itemize}
+
+\section{Summary}
+
+\begin{enumerate}
+\item PCR eliminates both neighbours simultaneously from every equation.
+\item After each step, coupling distance doubles: $1 \to 2 \to 4 \to \cdots$
+\item After $\lceil \log_2 n \rceil$ steps, every equation is decoupled.
+\item All updates within a step are independent $\Rightarrow$ GPU-parallel.
+\item Trade-off: $O(n \log n)$ work vs.\ $O(\log n)$ depth.
+\end{enumerate}
+
+\end{document}
