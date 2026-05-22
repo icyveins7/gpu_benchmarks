@@ -6,12 +6,6 @@
 
 #include <cstdint>
 
-enum SplineType {
-  SPLINE_TYPE_NATURAL,
-  SPLINE_TYPE_CLAMPED,
-  SPLINE_TYPE_PERIODIC
-};
-
 namespace cuspline {
 
 /**
@@ -187,13 +181,19 @@ arrange_clamped_spline_blockwide(const T *x, const T *y, const int length,
  * @param y        y-values, length N
  * @param length   N, the number of real data points
  * @param xPeriod  the period: x_{N} would be x_0 + xPeriod
- * @param params   output tridiagonal coefficients (N equations)
+ * @param out_a    Output sub-diagonal coefficients (length N)
+ * @param out_b    Output diagonal coefficients (length N)
+ * @param out_c    Output super-diagonal coefficients (length N)
+ * @param out_rhs  Output RHS coefficients (length N)
+ *
+ * Output arrays are separate from PCR workspace because the cyclic solver
+ * needs to reuse the coefficients across two PCR solves.
  */
 template <typename T>
 __device__ void
 arrange_periodic_spline_blockwide(const T *x, const T *y, const int length,
-                                  const T xPeriod,
-                                  cutridiag::tridiag_pcr_scratch<T> &params) {
+                                  const T xPeriod, T *out_a, T *out_b, T *out_c,
+                                  T *out_rhs) {
   // N real points, N intervals (last one wraps), N unknowns z_0 .. z_{N-1}
   // with z_N = z_0 by periodicity
   int N = length;
@@ -207,15 +207,15 @@ arrange_periodic_spline_blockwide(const T *x, const T *y, const int length,
     // h_{t-1}, with h_{-1} = hLast
     T leftWidth = (t > 0) ? xWidth(x, N, t - 1) : hLast;
 
-    params.buf0_a[t] = leftWidth;
-    params.buf0_b[t] = T(2) * (leftWidth + rightWidth);
-    params.buf0_c[t] = rightWidth;
+    out_a[t] = leftWidth;
+    out_b[t] = T(2) * (leftWidth + rightWidth);
+    out_c[t] = rightWidth;
 
     // y neighbours wrap: y_{-1} = y_{N-1}, y_{N} = y_0
     T yLeft = (t > 0) ? y[t - 1] : y[N - 1];
     T yRight = (t < N - 1) ? y[t + 1] : y[0];
 
-    params.buf0_rhs[t] =
+    out_rhs[t] =
         T(6) * ((yRight - y[t]) / rightWidth - (y[t] - yLeft) / leftWidth);
   }
 }
@@ -231,8 +231,14 @@ arrange_periodic_spline_blockwide(const T *x, const T *y, const int length,
  * @param x       Input x-coordinates, strided (row blk starts at blk*stride)
  * @param y       Input y-values, same layout
  * @param splines Output CubicSpline array, N-1 per row (same stride)
- * @param buf0_a, buf0_b, buf0_c, buf0_rhs  PCR workspace buffer 0
- * @param buf1_a, buf1_b, buf1_c, buf1_rhs  PCR workspace buffer 1
+ * @param buf0_a    PCR workspace buffer 0, sub-diagonal
+ * @param buf0_b    PCR workspace buffer 0, diagonal
+ * @param buf0_c    PCR workspace buffer 0, super-diagonal
+ * @param buf0_rhs  PCR workspace buffer 0, RHS
+ * @param buf1_a    PCR workspace buffer 1, sub-diagonal
+ * @param buf1_b    PCR workspace buffer 1, diagonal
+ * @param buf1_c    PCR workspace buffer 1, super-diagonal
+ * @param buf1_rhs  PCR workspace buffer 1, RHS
  * @param num_points_in_row  Number of data points N per row
  * @param stride_elements_per_row  Stride between rows in all arrays
  * @param num_rows  Total number of rows
@@ -289,8 +295,14 @@ __global__ void natural_spline_blockwise_kernel(
  * @param x       Input x-coordinates, strided (row blk starts at blk*stride)
  * @param y       Input y-values, same layout
  * @param splines Output CubicSpline array, N-1 per row (same stride)
- * @param buf0_a, buf0_b, buf0_c, buf0_rhs  PCR workspace buffer 0
- * @param buf1_a, buf1_b, buf1_c, buf1_rhs  PCR workspace buffer 1
+ * @param buf0_a    PCR workspace buffer 0, sub-diagonal
+ * @param buf0_b    PCR workspace buffer 0, diagonal
+ * @param buf0_c    PCR workspace buffer 0, super-diagonal
+ * @param buf0_rhs  PCR workspace buffer 0, RHS
+ * @param buf1_a    PCR workspace buffer 1, sub-diagonal
+ * @param buf1_b    PCR workspace buffer 1, diagonal
+ * @param buf1_c    PCR workspace buffer 1, super-diagonal
+ * @param buf1_rhs  PCR workspace buffer 1, RHS
  * @param num_points_in_row  Number of data points N per row
  * @param stride_elements_per_row  Stride between rows in all arrays
  * @param num_rows  Total number of rows
@@ -334,6 +346,83 @@ __global__ void clamped_spline_blockwise_kernel(
       set_spline_coeffs_from_tridiag_solution(splines[off + i], x[off + i],
                                               xWidth(&x[off], N, i), y[off + i],
                                               y[off + i + 1], zi, zi1);
+    }
+    __syncthreads();
+  }
+}
+
+/**
+ * @brief Kernel: fit periodic cubic splines for multiple rows.
+ * One CUDA block per row. Each row has N data points (no duplicated endpoint),
+ * producing N CubicSpline<T> intervals (the last wraps back to x[0]+xPeriod).
+ *
+ * Uses the cyclic tridiagonal solver (Sherman-Morrison), which requires
+ * separate input arrays that survive across two PCR solves. Therefore the
+ * caller must provide:
+ *   - arr_a/b/c/rhs: storage for the arranged cyclic tridiagonal coefficients
+ *   - buf0/buf1: PCR double-buffer workspace
+ *   - z_out: output array for the solved z values
+ *
+ * @param x       Input x-coordinates, strided (row blk starts at blk*stride)
+ * @param y       Input y-values, same layout
+ * @param splines Output CubicSpline array, N per row (same stride)
+ * @param arr_a    Arranged coeff storage, sub-diagonal (separate from
+ * workspace)
+ * @param arr_b    Arranged coeff storage, diagonal
+ * @param arr_c    Arranged coeff storage, super-diagonal
+ * @param arr_rhs  Arranged coeff storage, RHS
+ * @param buf0_a    PCR workspace buffer 0, sub-diagonal
+ * @param buf0_b    PCR workspace buffer 0, diagonal
+ * @param buf0_c    PCR workspace buffer 0, super-diagonal
+ * @param buf0_rhs  PCR workspace buffer 0, RHS
+ * @param buf1_a    PCR workspace buffer 1, sub-diagonal
+ * @param buf1_b    PCR workspace buffer 1, diagonal
+ * @param buf1_c    PCR workspace buffer 1, super-diagonal
+ * @param buf1_rhs  PCR workspace buffer 1, RHS
+ * @param z_out   Output array for solved z values (length >= stride*num_rows)
+ * @param num_points_in_row  Number of data points N per row
+ * @param stride_elements_per_row  Stride between rows in all arrays
+ * @param num_rows  Total number of rows
+ * @param xPeriod  The period length
+ */
+template <typename T>
+__global__ void periodic_spline_blockwise_kernel(
+    const T *x, const T *y, CubicSpline<T> *splines, T *arr_a, T *arr_b,
+    T *arr_c, T *arr_rhs, T *buf0_a, T *buf0_b, T *buf0_c, T *buf0_rhs,
+    T *buf1_a, T *buf1_b, T *buf1_c, T *buf1_rhs, T *z_out,
+    const size_t *num_points_in_row, const int stride_elements_per_row,
+    const int num_rows, T xPeriod) {
+
+  for (int blk = blockIdx.x; blk < num_rows; blk += gridDim.x) {
+    int off = blk * stride_elements_per_row;
+    int N = num_points_in_row[blk];
+
+    // Arrange the cyclic tridiag system into arr_* arrays
+    arrange_periodic_spline_blockwide(&x[off], &y[off], N, xPeriod, &arr_a[off],
+                                      &arr_b[off], &arr_c[off], &arr_rhs[off]);
+    __syncthreads();
+
+    // Solve the cyclic system using Sherman-Morrison
+    // arr_* are the persistent input arrays; buf0/buf1 are PCR workspace
+    cutridiag::tridiag_pcr_scratch<T> ws_params = {
+        &buf0_a[off],   &buf0_b[off],   &buf0_c[off],
+        &buf0_rhs[off], &buf1_a[off],   &buf1_b[off],
+        &buf1_c[off],   &buf1_rhs[off], (size_t)N};
+    cutridiag::cyclic_tridiag_blockwide_pcr<T>(ws_params, &arr_a[off],
+                                               &arr_b[off], &arr_c[off],
+                                               &arr_rhs[off], &z_out[off]);
+
+    // Periodic BC: the solver produces all N values z_0..z_{N-1} in z_out.
+    // There are N intervals: N-1 normal ones plus the wrap-around interval.
+    T hLast = xPeriod - (x[off + N - 1] - x[off]);
+    for (int i = threadIdx.x; i < N; i += blockDim.x) {
+      T zi = z_out[off + i];
+      T zi1 = z_out[off + (i + 1) % N];
+      T h = (i < N - 1) ? xWidth(&x[off], N, i) : hLast;
+      T yi = y[off + i];
+      T yi1 = (i < N - 1) ? y[off + i + 1] : y[off];
+      set_spline_coeffs_from_tridiag_solution(splines[off + i], x[off + i], h,
+                                              yi, yi1, zi, zi1);
     }
     __syncthreads();
   }

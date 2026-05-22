@@ -152,5 +152,84 @@ int main(int argc, char *argv[]) {
       printf("-------------\n");
   }
 
+  // ============================================
+  // ============== PERIODIC ====================
+  // ============================================
+
+  printf("\n--- Periodic spline test ---\n");
+
+  // For periodic splines, y must wrap: y(x[0] + xPeriod) == y(x[0]).
+  // Generate periodic data: y = sin(2*pi*x / xPeriod)
+  Real xPeriod = Real(N); // period = N so x goes from 0..N-1
+  for (int row = 0; row < NUM_ROWS; ++row) {
+    int off = row * N;
+    for (int i = 0; i < N; ++i) {
+      hx[off + i] = Real(i);
+      hy[off + i] =
+          sin(Real(2) * Real(M_PI) * Real(i) / Real(N)) + randf();
+    }
+  }
+
+  if (verbose) {
+    printf("Periodic data (xPeriod=%.4f):\n", xPeriod);
+    for (int row = 0; row < NUM_ROWS; ++row) {
+      int off = row * N;
+      printf("Row %d data:\n  x = {", row);
+      for (int i = 0; i < N; ++i)
+        printf("%s%.8f", i ? ", " : "", hx[off + i]);
+      printf("}\n  y = {");
+      for (int i = 0; i < N; ++i)
+        printf("%s%.8f", i ? ", " : "", hy[off + i]);
+      printf("}\n");
+    }
+  }
+
+  // Re-upload modified data
+  dx = hx;
+  dy = hy;
+
+  // Periodic produces N intervals per row (including wrap-around)
+  thrust::device_vector<CubicSpline<Real>> dsplines_periodic(NUM_ROWS * N);
+
+  // Cyclic solver needs separate input arrays (survive across 2 PCR solves)
+  TridiagPCRWorkspace<Real> ws_arr(NUM_ROWS, N); // arranged coefficients
+  thrust::device_vector<Real> dz_out(NUM_ROWS * N); // z output
+
+  timer.start("gpuPeriodicSpline");
+  periodic_spline_blockwise_kernel<Real><<<NUM_ROWS, NUM_THREADS>>>(
+      dx.data().get(), dy.data().get(), dsplines_periodic.data().get(),
+      ws_arr.buf0_a_ptr(), ws_arr.buf0_b_ptr(), ws_arr.buf0_c_ptr(),
+      ws_arr.buf0_rhs_ptr(), ws.buf0_a_ptr(), ws.buf0_b_ptr(),
+      ws.buf0_c_ptr(), ws.buf0_rhs_ptr(), ws.buf1_a_ptr(), ws.buf1_b_ptr(),
+      ws.buf1_c_ptr(), ws.buf1_rhs_ptr(), dz_out.data().get(),
+      dlen.data().get(), N, NUM_ROWS, xPeriod);
+  cudaDeviceSynchronize();
+  timer.stop();
+
+  thrust::host_vector<CubicSpline<Real>> hsplines_periodic = dsplines_periodic;
+
+  for (int row = 0; row < NUM_ROWS; ++row) {
+    int off = row * N;
+    if (verbose)
+      printf("Periodic Row %d:\n", row);
+    for (int i = 0; i < N; ++i) {
+      const auto &s = hsplines_periodic[off + i];
+      if (verbose) {
+        printf(
+            "  [%2d] x=[%+.4f, %+.4f]  a=%+.6f  b=%+.6f  c=%+.6f  d=%+.6f\n",
+            i, s.xmin, s.xmax, s.a, s.b, s.c, s.d);
+
+        // Continuity: S_i(xmax) should equal y[i+1] (wrapping for last)
+        Real yEnd = s.evaluate(s.xmax);
+        int inext = (i + 1) % N;
+        printf("       S(%+.4f) = %+.10f  y[%d] = %+.10f  diff = %e\n",
+               s.xmax, yEnd, inext, hy[off + inext],
+               fabs(yEnd - hy[off + inext]));
+      }
+    }
+    if (verbose)
+      printf("-------------\n");
+  }
+
   return 0;
 }

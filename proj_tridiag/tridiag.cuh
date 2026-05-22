@@ -102,10 +102,12 @@ template <typename T> struct TridiagPCRWorkspace {
  * @brief Core PCR reduction loop for a single block.
  * NOTE: Assumes buf0 already contains the initial a, b, c, rhs data.
  * Onus is on the caller to populate this beforehand. See tridiag_pcr_params.
+ * The reason why this is done is to (possibly) save 1 extra read/write from a
+ * separate buffer.
  *
  * Performs the reduction in-place across buf0/buf1 (double-buffering).
  *
- * On return, rFinal[i]/bFinal[i] gives the solution x[i]. The caller is
+ * NOTE: On return, rFinal[i]/bFinal[i] gives the solution x[i]. The caller is
  * responsible for performing this division, e.g.:
  *   out[i] = rFinal[i] / bFinal[i];   // standard solve
  *   out[i] -= k * rFinal[i] / bFinal[i]; // accumulate (Sherman-Morrison)
@@ -113,8 +115,14 @@ template <typename T> struct TridiagPCRWorkspace {
  * Since the output is the caller's responsibility, __syncthreads() is *NOT*
  * automatically executed at the end, so the caller must syncthreads if needed.
  *
- * @param buf0_a, buf0_b, buf0_c, buf0_rhs  First buffer set
- * @param buf1_a, buf1_b, buf1_c, buf1_rhs  Second buffer set
+ * @param buf0_a    First buffer set, sub-diagonal (contains input at start)
+ * @param buf0_b    First buffer set, diagonal (contains input at start)
+ * @param buf0_c    First buffer set, super-diagonal (contains input at start)
+ * @param buf0_rhs  First buffer set, RHS (contains input at start)
+ * @param buf1_a    Second buffer set, sub-diagonal
+ * @param buf1_b    Second buffer set, diagonal
+ * @param buf1_c    Second buffer set, super-diagonal
+ * @param buf1_rhs  Second buffer set, RHS
  * @param n        Number of equations
  * @param rFinal   [out] pointer to the final rhs buffer after reduction
  * @param bFinal   [out] pointer to the final b buffer after reduction
@@ -190,45 +198,6 @@ pcr_reduce_blockwide(T *buf0_a, T *buf0_b, T *buf0_c, T *buf0_rhs, T *buf1_a,
 }
 
 /**
- * @brief PCR tridiagonal solver within a single block.
- * Uses block-stride loops, so length may exceed blockDim.x.
- * Copies the input arrays (a,b,c,rhs) into buf0, then performs PCR.
- *
- * @tparam T Type of data, see tridiag_pcr_params
- * @param params PCR double-buffer workspace
- * @param a, b, c, rhs  Input tridiagonal coefficients (length >= n)
- * @param out    Output array of length >= n
- */
-template <typename T>
-__device__ void tridiag_blockwide_pcr(tridiag_pcr_scratch<T> &params,
-                                      const T *a, const T *b, const T *c,
-                                      const T *rhs, T *out) {
-
-  int n = params.length;
-
-  // Copy inputs into buf0
-  for (int i = threadIdx.x; i < n; i += blockDim.x) {
-    params.buf0_a[i] = a[i];
-    params.buf0_b[i] = b[i];
-    params.buf0_c[i] = c[i];
-    params.buf0_rhs[i] = rhs[i];
-  }
-  __syncthreads();
-
-  T *rFinal, *bFinal;
-  pcr_reduce_blockwide<T>(params.buf0_a, params.buf0_b, params.buf0_c,
-                          params.buf0_rhs, params.buf1_a, params.buf1_b,
-                          params.buf1_c, params.buf1_rhs, n, rFinal, bFinal);
-
-  for (int i = threadIdx.x; i < n; i += blockDim.x) {
-    out[i] = rFinal[i] / bFinal[i];
-  }
-
-  // We syncthreads here since this function may be called repeatedly
-  __syncthreads();
-}
-
-/**
  * @brief Standard tridiagonal solver kernel (global memory variant).
  *
  * @example For a 4x4 system:
@@ -247,12 +216,26 @@ __global__ void tridiag_blockwise_pcr_kernel(
 
   for (int blk = blockIdx.x; blk < num_rows; blk += gridDim.x) {
     int off = blk * stride_elements_per_row;
-    tridiag_pcr_scratch<T> params = {
-        &buf0_a[off],   &buf0_b[off],   &buf0_c[off],
-        &buf0_rhs[off], &buf1_a[off],   &buf1_b[off],
-        &buf1_c[off],   &buf1_rhs[off], num_elements_in_row[blk]};
-    tridiag_blockwide_pcr<T>(params, &a[off], &b[off], &c[off], &rhs[off],
-                             &u[off]);
+    int n = num_elements_in_row[blk];
+
+    // Copy inputs into buf0
+    for (int i = threadIdx.x; i < n; i += blockDim.x) {
+      buf0_a[off + i] = a[off + i];
+      buf0_b[off + i] = b[off + i];
+      buf0_c[off + i] = c[off + i];
+      buf0_rhs[off + i] = rhs[off + i];
+    }
+    __syncthreads();
+
+    T *rFinal, *bFinal;
+    pcr_reduce_blockwide<T>(&buf0_a[off], &buf0_b[off], &buf0_c[off],
+                            &buf0_rhs[off], &buf1_a[off], &buf1_b[off],
+                            &buf1_c[off], &buf1_rhs[off], n, rFinal, bFinal);
+
+    for (int i = threadIdx.x; i < n; i += blockDim.x) {
+      u[off + i] = rFinal[i] / bFinal[i];
+    }
+    __syncthreads();
   }
 }
 
@@ -282,10 +265,23 @@ __global__ void tridiag_blockwise_pcr_shmem_kernel(
     int off = blk * stride_elements_per_row;
     int n = num_elements_in_row[blk];
 
-    tridiag_pcr_scratch<T> params = {buf0_a, buf0_b, buf0_c,   buf0_rhs, buf1_a,
-                                     buf1_b, buf1_c, buf1_rhs, (size_t)n};
-    tridiag_blockwide_pcr<T>(params, &a[off], &b[off], &c[off], &rhs[off],
-                             &u[off]);
+    // Copy inputs into shmem buf0
+    for (int i = threadIdx.x; i < n; i += blockDim.x) {
+      buf0_a[i] = a[off + i];
+      buf0_b[i] = b[off + i];
+      buf0_c[i] = c[off + i];
+      buf0_rhs[i] = rhs[off + i];
+    }
+    __syncthreads();
+
+    T *rFinal, *bFinal;
+    pcr_reduce_blockwide<T>(buf0_a, buf0_b, buf0_c, buf0_rhs, buf1_a, buf1_b,
+                            buf1_c, buf1_rhs, n, rFinal, bFinal);
+
+    for (int i = threadIdx.x; i < n; i += blockDim.x) {
+      u[off + i] = rFinal[i] / bFinal[i];
+    }
+    __syncthreads();
   }
 }
 
@@ -299,9 +295,20 @@ __global__ void tridiag_blockwise_pcr_shmem_kernel(
  * a[0] = beta (top-right corner, row 0's unused sub-diagonal)
  * c[n-1] = alpha (bottom-left corner, row n-1's unused super-diagonal)
  *
- * @param params  PCR double-buffer workspace
- * @param a, b, c, rhs  Input tridiagonal coefficients (length >= n)
- * @param out     Output array (length >= n), receives final result
+ * NOTE: a, b, c, rhs must reside in memory separate from the PCR
+ * workspace (params.buf0/buf1). The Sherman-Morrison method requires two
+ * PCR solves with the same modified matrix A'. The original coefficients
+ * are re-read before the second solve, so they must not be overwritten by
+ * the first PCR reduction.
+ *
+ * @param params  PCR double-buffer workspace (destroyed during solve)
+ * @param a    Input sub-diagonal coefficients (length >= n, must NOT alias
+ * params)
+ * @param b    Input diagonal coefficients (length >= n, must NOT alias params)
+ * @param c    Input super-diagonal coefficients (length >= n, must NOT alias
+ * params)
+ * @param rhs  Input RHS (length >= n, must NOT alias params)
+ * @param out  Output array (length >= n), receives final result
  */
 template <typename T>
 __device__ void cyclic_tridiag_blockwide_pcr(tridiag_pcr_scratch<T> &params,
