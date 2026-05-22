@@ -56,10 +56,10 @@ int main(int argc, char *argv[]) {
       int off = row * N;
       printf("Row %d data:\n  x = {", row);
       for (int i = 0; i < N; ++i)
-        printf("%s%.4f", i ? ", " : "", hx[off + i]);
+        printf("%s%.8f", i ? ", " : "", hx[off + i]);
       printf("}\n  y = {");
       for (int i = 0; i < N; ++i)
-        printf("%s%.4f", i ? ", " : "", hy[off + i]);
+        printf("%s%.8f", i ? ", " : "", hy[off + i]);
       printf("}\n");
     }
   }
@@ -99,6 +99,50 @@ int main(int argc, char *argv[]) {
                i, s.xmin, s.xmax, s.a, s.b, s.c, s.d);
 
         // Verify continuity: S_i(xmax) should equal y[i+1]
+        Real yEnd = s.evaluate(s.xmax);
+        printf("       S(%+.4f) = %+.10f  y[%d] = %+.10f  diff = %e\n", s.xmax,
+               yEnd, i + 1, hy[off + i + 1], fabs(yEnd - hy[off + i + 1]));
+      }
+    }
+    if (verbose)
+      printf("-------------\n");
+  }
+
+  // ============================================
+  // ============== CLAMPED =====================
+  // ============================================
+
+  printf("\n--- Clamped spline test ---\n");
+
+  Real slopeLeft = Real(0.5);   // prescribed slope at x[0]
+  Real slopeRight = Real(-0.3); // prescribed slope at x[N-1]
+
+  thrust::device_vector<CubicSpline<Real>> dsplines_clamped(NUM_ROWS * N);
+
+  // Clamped needs N equations, so workspace must fit N (already does since ws
+  // was sized for N)
+  timer.start("gpuClampedSpline");
+  clamped_spline_blockwise_kernel<Real><<<NUM_ROWS, NUM_THREADS>>>(
+      dx.data().get(), dy.data().get(), dsplines_clamped.data().get(),
+      ws.buf0_a_ptr(), ws.buf0_b_ptr(), ws.buf0_c_ptr(), ws.buf0_rhs_ptr(),
+      ws.buf1_a_ptr(), ws.buf1_b_ptr(), ws.buf1_c_ptr(), ws.buf1_rhs_ptr(),
+      dlen.data().get(), N, NUM_ROWS, slopeLeft, slopeRight);
+  cudaDeviceSynchronize();
+  timer.stop();
+
+  thrust::host_vector<CubicSpline<Real>> hsplines_clamped = dsplines_clamped;
+
+  for (int row = 0; row < NUM_ROWS; ++row) {
+    int off = row * N;
+    if (verbose)
+      printf("Clamped Row %d (slopeLeft=%.4f, slopeRight=%.4f):\n", row,
+             slopeLeft, slopeRight);
+    for (int i = 0; i < N - 1; ++i) {
+      const auto &s = hsplines_clamped[off + i];
+      if (verbose) {
+        printf("  [%2d] x=[%+.4f, %+.4f]  a=%+.6f  b=%+.6f  c=%+.6f  d=%+.6f\n",
+               i, s.xmin, s.xmax, s.a, s.b, s.c, s.d);
+
         Real yEnd = s.evaluate(s.xmax);
         printf("       S(%+.4f) = %+.10f  y[%d] = %+.10f  diff = %e\n", s.xmax,
                yEnd, i + 1, hy[off + i + 1], fabs(yEnd - hy[off + i + 1]));

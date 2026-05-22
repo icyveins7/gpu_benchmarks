@@ -1,63 +1,22 @@
-"""
-Validate GPU natural spline output against scipy.interpolate.CubicSpline.
-
-Reproduces the same data generation as splines.cu (srand(42), same formula)
-and compares the per-interval (a, b, c, d) coefficients.
-"""
-
 import numpy as np
 from scipy.interpolate import CubicSpline
-import ctypes
 
-# Reproduce C's rand() with srand(42) using a simple LCG (glibc)
-class CRand:
-    def __init__(self, seed):
-        self.state = seed
+# Set your data here
+x = np.array([0.0, 1.0, 2.0, 3.0]) # , 4.0])
+y = np.array([0.00334699, 0.51242196, 0.91053456, 1.03974365]) # , 0.3])
 
-    def rand(self):
-        self.state = (self.state * 1103515245 + 12345) & 0x7FFFFFFF
-        return self.state
+print("--- Natural spline ---")
+cs = CubicSpline(x, y, bc_type='natural')
 
-    def randf(self):
-        return 0.1 * self.rand() / 0x7FFFFFFF
+for i in range(len(x) - 1):
+    a, b, c, d = cs.c[3, i], cs.c[2, i], cs.c[1, i], cs.c[0, i]
+    print(f"[{i}] x=[{x[i]:.4f}, {x[i+1]:.4f}]  a={a:+.10f}  b={b:+.10f}  c={c:+.10f}  d={d:+.10f}")
 
+print("\n--- Clamped spline ---")
+slopeLeft = 0.5
+slopeRight = -0.3
+cs_clamped = CubicSpline(x, y, bc_type=((1, slopeLeft), (1, slopeRight)))
 
-def main():
-    NUM_ROWS = 2
-    N = 10
-
-    rng = CRand(42)
-
-    for row in range(NUM_ROWS):
-        x = np.array([float(i) for i in range(N)])
-        y = np.array([np.sin(i * 0.5) + rng.randf() for i in range(N)])
-
-        print(f"Row {row} data:")
-        print(f"  x = {{{', '.join(f'{v:.4f}' for v in x)}}}")
-        print(f"  y = {{{', '.join(f'{v:.4f}' for v in y)}}}")
-
-        cs = CubicSpline(x, y, bc_type='natural')
-
-        # cs.c shape is (4, N-1): [cubic, quadratic, linear, constant]
-        # Our convention: S(x) = a + b*t + c*t^2 + d*t^3, t = x - xmin
-        # scipy convention: same but stored as cs.c[3]=a, cs.c[2]=b, cs.c[1]=c, cs.c[0]=d
-        print(f"Row {row} spline coefficients (scipy):")
-        for i in range(N - 1):
-            a = cs.c[3, i]
-            b = cs.c[2, i]
-            c = cs.c[1, i]
-            d = cs.c[0, i]
-            print(f"  [{i:2d}] x=[{x[i]:+.4f}, {x[i+1]:+.4f}]"
-                  f"  a={a:+.6f}  b={b:+.6f}  c={c:+.6f}  d={d:+.6f}")
-
-            # Continuity check
-            h = x[i + 1] - x[i]
-            yEnd = a + h * (b + h * (c + h * d))
-            print(f"       S({x[i+1]:+.4f}) = {yEnd:+.10f}"
-                  f"  y[{i+1}] = {y[i+1]:+.10f}"
-                  f"  diff = {abs(yEnd - y[i+1]):.6e}")
-        print("-------------")
-
-
-if __name__ == "__main__":
-    main()
+for i in range(len(x) - 1):
+    a, b, c, d = cs_clamped.c[3, i], cs_clamped.c[2, i], cs_clamped.c[1, i], cs_clamped.c[0, i]
+    print(f"[{i}] x=[{x[i]:.4f}, {x[i+1]:.4f}]  a={a:+.10f}  b={b:+.10f}  c={c:+.10f}  d={d:+.10f}")

@@ -41,6 +41,28 @@ template <typename T> struct CubicSpline {
 };
 
 /**
+ * @brief Compute one CubicSpline's coefficients from the tridiag solution.
+ * @param s      Output spline for this interval
+ * @param xi     Left x-coordinate
+ * @param h      Interval width (x_{i+1} - x_i)
+ * @param yi     Left y-value
+ * @param yi1    Right y-value
+ * @param zi     Second derivative at left knot
+ * @param zi1    Second derivative at right knot
+ */
+template <typename T>
+__device__ void set_spline_coeffs_from_tridiag_solution(CubicSpline<T> &s, T xi,
+                                                        T h, T yi, T yi1, T zi,
+                                                        T zi1) {
+  s.xmin = xi;
+  s.xmax = xi + h;
+  s.a = yi;
+  s.b = (yi1 - yi) / h - h * zi1 / T(6) - h * zi / T(3);
+  s.c = zi / T(2);
+  s.d = (zi1 - zi) / (T(6) * h);
+}
+
+/**
  * @brief Computes the width of the i'th interval for an array of x-coordinates.
  *
  * @detail The i'th interval is defined as the distance from x[i] to x[i+1].
@@ -243,20 +265,75 @@ __global__ void natural_spline_blockwise_kernel(
         params.buf1_a, params.buf1_b, params.buf1_c, params.buf1_rhs, M, rFinal,
         bFinal);
 
-    // z_1..z_{N-2} are in rFinal/bFinal; z_0 = z_{N-1} = 0 (natural BC)
-    // Compute N-1 CubicSpline coefficients
+    // Natural BC: z_0 = z_{N-1} = 0. The solver only produces M = N-2
+    // interior values z_1..z_{N-2}, stored in rFinal[0..M-1].
+    // So for interval i, zi maps to rFinal[i-1] and zi1 to rFinal[i],
+    // with boundary cases returning 0.
     for (int i = threadIdx.x; i < N - 1; i += blockDim.x) {
       T zi = (i > 0 && i <= M) ? rFinal[i - 1] / bFinal[i - 1] : T(0);
       T zi1 = (i + 1 > 0 && i + 1 <= M) ? rFinal[i] / bFinal[i] : T(0);
-      T h = xWidth(&x[off], N, i);
+      set_spline_coeffs_from_tridiag_solution(splines[off + i], x[off + i],
+                                              xWidth(&x[off], N, i), y[off + i],
+                                              y[off + i + 1], zi, zi1);
+    }
+    __syncthreads();
+  }
+}
 
-      CubicSpline<T> &s = splines[off + i];
-      s.xmin = x[off + i];
-      s.xmax = x[off + i] + h;
-      s.a = y[off + i];
-      s.b = (y[off + i + 1] - y[off + i]) / h - h * zi1 / T(6) - h * zi / T(3);
-      s.c = zi / T(2);
-      s.d = (zi1 - zi) / (T(6) * h);
+/**
+ * @brief Kernel: fit clamped cubic splines for multiple rows.
+ * One CUDA block per row. Each row has num_points_in_row[blk] data points,
+ * producing N-1 CubicSpline<T> intervals per row.
+ * N equations for N unknowns z_0..z_{N-1}.
+ *
+ * @param x       Input x-coordinates, strided (row blk starts at blk*stride)
+ * @param y       Input y-values, same layout
+ * @param splines Output CubicSpline array, N-1 per row (same stride)
+ * @param buf0_a, buf0_b, buf0_c, buf0_rhs  PCR workspace buffer 0
+ * @param buf1_a, buf1_b, buf1_c, buf1_rhs  PCR workspace buffer 1
+ * @param num_points_in_row  Number of data points N per row
+ * @param stride_elements_per_row  Stride between rows in all arrays
+ * @param num_rows  Total number of rows
+ * @param slopeLeft   Prescribed slope at the left endpoint
+ * @param slopeRight  Prescribed slope at the right endpoint
+ */
+template <typename T>
+__global__ void clamped_spline_blockwise_kernel(
+    const T *x, const T *y, CubicSpline<T> *splines, T *buf0_a, T *buf0_b,
+    T *buf0_c, T *buf0_rhs, T *buf1_a, T *buf1_b, T *buf1_c, T *buf1_rhs,
+    const size_t *num_points_in_row, const int stride_elements_per_row,
+    const int num_rows, T slopeLeft, T slopeRight) {
+
+  for (int blk = blockIdx.x; blk < num_rows; blk += gridDim.x) {
+    int off = blk * stride_elements_per_row;
+    int N = num_points_in_row[blk];
+    int M = N; // number of equations
+
+    cutridiag::tridiag_pcr_scratch<T> params = {
+        &buf0_a[off],   &buf0_b[off],   &buf0_c[off],
+        &buf0_rhs[off], &buf1_a[off],   &buf1_b[off],
+        &buf1_c[off],   &buf1_rhs[off], (size_t)M};
+
+    // Arrange writes N equations directly into buf0
+    arrange_clamped_spline_blockwide(&x[off], &y[off], N, params, slopeLeft,
+                                     slopeRight);
+    __syncthreads();
+
+    // Solve
+    T *rFinal, *bFinal;
+    cutridiag::pcr_reduce_blockwide<T>(
+        params.buf0_a, params.buf0_b, params.buf0_c, params.buf0_rhs,
+        params.buf1_a, params.buf1_b, params.buf1_c, params.buf1_rhs, M, rFinal,
+        bFinal);
+
+    // Clamped BC: the solver produces all N values z_0..z_{N-1} directly
+    // in rFinal[0..N-1], so zi and zi1 index straight in.
+    for (int i = threadIdx.x; i < N - 1; i += blockDim.x) {
+      T zi = rFinal[i] / bFinal[i];
+      T zi1 = rFinal[i + 1] / bFinal[i + 1];
+      set_spline_coeffs_from_tridiag_solution(splines[off + i], x[off + i],
+                                              xWidth(&x[off], N, i), y[off + i],
+                                              y[off + i + 1], zi, zi1);
     }
     __syncthreads();
   }
