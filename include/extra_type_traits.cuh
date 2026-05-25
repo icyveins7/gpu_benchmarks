@@ -24,5 +24,11 @@ template <> struct cuda_vec2<int> {
 template <> struct cuda_vec2<unsigned int> {
   using type = uint2;
 };
+template <> struct cuda_vec2<short> {
+  using type = short2;
+};
+template <> struct cuda_vec2<unsigned short> {
+  using type = ushort2;
+};
 
 template <typename T> using cuda_vec2_t = typename cuda_vec2<T>::type;

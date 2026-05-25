@@ -130,6 +130,20 @@ target_sources(
   ${PROJECT_SOURCE_DIR}/events_vs_nvtx.cu
 )
 
+# --------------------
+set_source_files_properties(basic_stream_compaction.cu PROPERTIES LANGUAGE CUDA)
+add_executable(basic_stream_compaction)
+
+target_include_directories(basic_stream_compaction
+                           PRIVATE ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
+                           )
+
+target_sources(
+  basic_stream_compaction PRIVATE
+  ${PROJECT_SOURCE_DIR}/basic_stream_compaction.cu
+  ${PROJECT_SOURCE_DIR}/../src/containers/streams.cu
+)
+
 # # -------------------- Tests
 # if (GTEST_FOUND)
 #   message("Enabling tests for proj_basicops")
