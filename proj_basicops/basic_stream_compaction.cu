@@ -90,8 +90,8 @@ int main() {
         d_in.cimage(), (Tdata)1, d_out.data().get(), d_count.data().get());
 
     // D2H
-    d_count = h_count;
-    d_out = h_out;
+    h_count = d_count;
+    h_out = d_out;
 
     nvtxRangePop();
 
