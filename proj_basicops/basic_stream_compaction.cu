@@ -1,3 +1,4 @@
+#include <cstdlib>
 #include <iostream>
 
 #include "block_and_grid_sizing.cuh"
@@ -59,13 +60,21 @@ __global__ void copy_compacted_list_via_mapped_host_pointer_kernel(
   }
 }
 
-int main() {
-  printf("Stream compaction via custom kernel\n");
-
+int main(int argc, char *argv[]) {
   using Tidx = int16_t;
   using Tdata = int8_t;
 
-  containers::DeviceImageStorage<Tdata, Tidx> d_in(15000, 15000);
+  Tidx imgW = 15000, imgH = 15000;
+  if (argc >= 3) {
+    imgW = (Tidx)std::atoi(argv[1]);
+    imgH = (Tidx)std::atoi(argv[2]);
+  } else if (argc == 2) {
+    imgW = imgH = (Tidx)std::atoi(argv[1]);
+  }
+  printf("Stream compaction via custom kernel (%d x %d)\n", (int)imgW,
+         (int)imgH);
+
+  containers::DeviceImageStorage<Tdata, Tidx> d_in(imgW, imgH);
   thrust::pinned_host_vector<Tdata> h_in(d_in.width * d_in.height);
   for (int i = 0; i < d_in.width * d_in.height; ++i) {
     h_in[i] = std::rand() % 2;
