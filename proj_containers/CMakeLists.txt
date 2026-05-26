@@ -19,6 +19,18 @@ target_sources(
   ${CMAKE_CURRENT_SOURCE_DIR}/../src/containers/streams.cu
 )
 # --------------------
+add_executable(events_and_streams_example)
+target_include_directories(events_and_streams_example
+                           PRIVATE ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
+                           )
+target_sources(
+  events_and_streams_example PRIVATE
+  ${PROJECT_SOURCE_DIR}/events_and_streams_example.cu
+  ${CMAKE_CURRENT_SOURCE_DIR}/../src/containers/streams.cu
+  ${CMAKE_CURRENT_SOURCE_DIR}/../src/containers/events.cu
+)
+
+# --------------------
 set_source_files_properties(bitset_speed.cu PROPERTIES LANGUAGE CUDA)
 add_executable(bitset_speed)
 

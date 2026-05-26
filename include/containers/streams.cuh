@@ -24,6 +24,13 @@ public:
    */
   cudaStream_t &operator()();
 
+  /**
+   * @brief Convenience method to do cudaStreamWaitEvent().
+   *
+   * @param event Event to wait on
+   */
+  void wait(cudaEvent_t &event);
+
 private:
   cudaStream_t m_stream;
 };

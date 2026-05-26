@@ -12,4 +12,8 @@ void CudaStream::sync() { cudaStreamSynchronize(m_stream); }
 
 cudaStream_t &CudaStream::operator()() { return m_stream; }
 
+void CudaStream::wait(cudaEvent_t &event) {
+  cudaStreamWaitEvent(m_stream, event, 0);
+}
+
 } // namespace containers
