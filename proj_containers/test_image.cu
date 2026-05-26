@@ -52,6 +52,47 @@ TEST(ContainersImage, LargeImage) {
   EXPECT_EQ(img.row(reqRow), dimg.vec.data().get() + elementOffset) << errStr;
 }
 
+template <typename T> __global__ void addOneKernel(containers::Image<T> img) {
+  int x = blockIdx.x * blockDim.x + threadIdx.x;
+  int y = blockIdx.y * blockDim.y + threadIdx.y;
+  if (x < img.width && y < img.height) {
+    img.at(y, x) += 1;
+  }
+}
+
+TEST(ContainersPinnedHostImageStorage, TiledToDeviceAndBack) {
+  const int fullW = 4, fullH = 4;
+  const int tileW = 2, tileH = 2;
+
+  // Host image initialized to 0
+  containers::PinnedHostImageStorage<int> h_img(fullW, fullH);
+  thrust::sequence(h_img.vec.begin(), h_img.vec.end());
+
+  // Device tile
+  containers::DeviceImageStorage<int> d_tile(tileW, tileH);
+
+  // Iterate over the 4 tiles
+  for (int tr = 0; tr < fullH; tr += tileH) {
+    for (int tc = 0; tc < fullW; tc += tileW) {
+      // Copy tile from host to device
+      h_img.toDeviceFromROI(d_tile, tr, tc, tileH, tileW);
+
+      // Run kernel: add +1
+      dim3 tpb(tileW, tileH);
+      addOneKernel<int><<<1, tpb>>>(d_tile.image());
+
+      // Copy results back to host at same location
+      d_tile.toHostROI(h_img, tr, tc, tileH, tileW);
+    }
+  }
+  cudaDeviceSynchronize();
+
+  // Every element should be exactly 1
+  for (int i = 0; i < fullW * fullH; ++i) {
+    EXPECT_EQ(h_img.vec[i], i + 1) << "Mismatch at index " << i;
+  }
+}
+
 TEST(ContainersImageTile, BasicChecks) {
   unsigned int width = 4, height = 4;
   std::vector<int> vec(width * height);

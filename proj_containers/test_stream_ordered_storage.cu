@@ -60,7 +60,7 @@ TEST(ContainersStreamOrderedDeviceStorage, VectorOfVectors) {
 TEST(ContainersStreamOrderedDeviceImageStorage, BasicChecks) {
   containers::CudaStream stream;
   containers::StreamOrderedDeviceImageStorage<float> img(10, 10, stream());
-  ASSERT_EQ(10, img.width());
-  ASSERT_EQ(10, img.height());
+  ASSERT_EQ(10, img.width);
+  ASSERT_EQ(10, img.height);
   ASSERT_EQ(img.stream(), stream());
 }

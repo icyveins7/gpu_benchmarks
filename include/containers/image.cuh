@@ -7,6 +7,7 @@
 #include <thrust/device_vector.h>
 #include <thrust/host_vector.h>
 
+#include "pinnedalloc.cuh"
 #include "stream_ordered_storage.cuh"
 
 namespace containers {
@@ -393,18 +394,95 @@ template <typename Tdata, typename Tidx = int> struct DeviceImageStorage {
   Image<const Tdata, Tidx> cimage() const {
     return Image<const Tdata, Tidx>(vec.data().get(), width, height);
   }
+
+  /**
+   * @brief Copies the entire device image to a host image storage of the same
+   * dimensions. Both source and destination must have matching width and
+   * height. See PinnedHostImageStorage::toDevice() for the reverse.
+   *
+   * @tparam Thoststorage Host storage type (e.g. PinnedHostImageStorage)
+   * @param dst Destination host storage; must have the same width and height
+   * @param stream CUDA stream for the async copy
+   */
+  template <typename Thoststorage>
+  void toHost(Thoststorage &dst, cudaStream_t stream = 0) const {
+    // Check that destination matches exactly
+    if (dst.width != this->width || dst.height != this->height) {
+      throw std::runtime_error(
+          "DeviceImageStorage::toHost: Destination size mismatch.");
+    }
+
+    cudaError_t err = cudaMemcpyAsync(
+        dst.vec.data().get(), this->vec.data().get(),
+        (size_t)width * height * sizeof(Tdata), cudaMemcpyDeviceToHost, stream);
+    if (err != cudaSuccess) {
+      char const *errstr = cudaGetErrorString(err);
+      throw std::runtime_error("DeviceImageStorage::toHost: "
+                               "cudaMemcpyAsync failed with error " +
+                               std::string(errstr));
+    }
+  }
+
+  /**
+   * @brief Copies the entire device image into a sub-region (ROI) of a larger
+   * host image storage. The device storage dimensions must match numRows x
+   * numCols exactly. In typical usage, the host pinned memory is the larger
+   * image, and the device memory is the carved-out ROI / tile.
+   * See PinnedHostImageStorage::toDeviceFromROI() for the reverse.
+   *
+   * @tparam Thoststorage Host storage type (e.g. PinnedHostImageStorage)
+   * @param dst Destination host storage (the larger image)
+   * @param dstStartRow Starting row in the destination to write into
+   * @param dstStartCol Starting column in the destination to write into
+   * @param numRows Number of rows to copy (must match this->height)
+   * @param numCols Number of columns to copy (must match this->width)
+   * @param stream CUDA stream for the async copy
+   */
+  template <typename Thoststorage>
+  void toHostROI(Thoststorage &dst, Tidx dstStartRow, Tidx dstStartCol,
+                 Tidx numRows, Tidx numCols, cudaStream_t stream = 0) const {
+    // Check that source matches the requested sub-region
+    if (this->width != numCols || this->height != numRows) {
+      throw std::runtime_error(
+          "DeviceImageStorage::toHost: Source size mismatch. "
+          "Source must match exactly the requested sub-region.");
+    }
+    // Bounds check on the destination
+    if (dstStartRow < 0 || dstStartCol < 0 ||
+        dstStartRow + numRows > dst.height ||
+        dstStartCol + numCols > dst.width) {
+      throw std::runtime_error("DeviceImageStorage::toHost: Sub-region "
+                               "exceeds destination bounds.");
+    }
+
+    Tdata *dstPtr =
+        dst.vec.data().get() + (size_t)dstStartRow * dst.width + dstStartCol;
+    const Tdata *src = this->vec.data().get();
+
+    cudaError_t err = cudaMemcpy2DAsync(
+        dstPtr, dst.width * sizeof(Tdata), src, numCols * sizeof(Tdata),
+        numCols * sizeof(Tdata), numRows, cudaMemcpyDeviceToHost, stream);
+    if (err != cudaSuccess) {
+      char const *errstr = cudaGetErrorString(err);
+      throw std::runtime_error("DeviceImageStorage::toHost: "
+                               "cudaMemcpy2DAsync failed with error " +
+                               std::string(errstr));
+    }
+  }
 };
 
 template <typename Tdata, typename Tidx = int>
-class StreamOrderedDeviceImageStorage
+struct StreamOrderedDeviceImageStorage
     : public StreamOrderedDeviceStorage<Tdata> {
-public:
+  Tidx width;
+  Tidx height;
+
   StreamOrderedDeviceImageStorage() = delete;
-  StreamOrderedDeviceImageStorage(const Tidx width, const Tidx height,
+  StreamOrderedDeviceImageStorage(const Tidx _width, const Tidx _height,
                                   const cudaStream_t stream)
-      : StreamOrderedDeviceStorage<Tdata>((size_t)width * (size_t)height,
+      : StreamOrderedDeviceStorage<Tdata>((size_t)_width * (size_t)_height,
                                           stream),
-        m_width(width), m_height(height) {}
+        width(_width), height(_height) {}
 
   // No copy/move semantics whatsoever
   StreamOrderedDeviceImageStorage(const StreamOrderedDeviceImageStorage &) =
@@ -415,20 +493,134 @@ public:
   StreamOrderedDeviceImageStorage &
   operator=(StreamOrderedDeviceImageStorage &&) = delete;
 
-  Tidx width() const { return m_width; }
-  Tidx height() const { return m_height; }
-
   Image<Tdata, Tidx> image() {
-    return Image<Tdata, Tidx>(this->m_data, m_width, m_height);
+    return Image<Tdata, Tidx>(this->m_data, width, height);
   }
 
   Image<const Tdata, Tidx> cimage() const {
-    return Image<const Tdata, Tidx>(this->m_data, m_width, m_height);
+    return Image<const Tdata, Tidx>(this->m_data, width, height);
+  }
+};
+
+template <typename Tdata, typename Tidx = int> struct PinnedHostImageStorage {
+  thrust::pinned_host_vector<Tdata> vec;
+  Tidx width;
+  Tidx height;
+
+  PinnedHostImageStorage() : width(0), height(0) {}
+  PinnedHostImageStorage(const Tidx _width, const Tidx _height)
+      : vec(_width * _height), width(_width), height(_height) {}
+
+  /**
+   * @brief Resizes the underlying pinned_host_vector to the specified
+   * dimensions and updates the internal width/height tracking; implicitly calls
+   * the .resize() so its effects are identical.
+   *
+   * @param _width New width
+   * @param _height New height
+   */
+  void resize(const Tidx _width, const Tidx _height) {
+    vec.resize(_width * _height);
+    width = _width;
+    height = _height;
   }
 
-protected:
-  Tidx m_width;
-  Tidx m_height;
+  /**
+   * @brief Primary useful method. Returns a new Image struct that encloses the
+   * pointer alone, allowing it to be passed to a kernel by value.
+   *
+   * @return Image struct
+   */
+  Image<Tdata, Tidx> image() {
+    return Image<Tdata, Tidx>(vec.data().get(), width, height);
+  }
+
+  /**
+   * @brief Primary useful method. Returns a new const Image struct that
+   * encloses the pointer alone, allowing it to be passed to a kernel by value.
+   *
+   * @return Const Image struct
+   */
+  Image<const Tdata, Tidx> cimage() const {
+    return Image<const Tdata, Tidx>(vec.data().get(), width, height);
+  }
+
+  /**
+   * @brief Copies the entire pinned host image to a device image storage of
+   * the same dimensions. Both source and destination must have matching width
+   * and height.
+   * See DeviceImageStorage::toHost() for the reverse.
+   *
+   * @tparam Tdevicestorage Device storage type (e.g. DeviceImageStorage)
+   * @param dst Destination device storage; must have the same width and height
+   * @param stream CUDA stream for the async copy
+   */
+  template <typename Tdevicestorage>
+  void toDevice(Tdevicestorage &dst, cudaStream_t stream = 0) const {
+    // Check that destination matches exactly
+    if (dst.width != this->width || dst.height != this->height) {
+      throw std::runtime_error(
+          "PinnedHostImageStorage::toDevice: Destination size mismatch.");
+    }
+
+    cudaError_t err = cudaMemcpyAsync(
+        dst.vec.data().get(), this->vec.data().get(),
+        (size_t)width * height * sizeof(Tdata), cudaMemcpyHostToDevice, stream);
+    if (err != cudaSuccess) {
+      char const *errstr = cudaGetErrorString(err);
+      throw std::runtime_error("PinnedHostImageStorage::toDevice: "
+                               "cudaMemcpyAsync failed with error " +
+                               std::string(errstr));
+    }
+  }
+
+  /**
+   * @brief Copies a sub-region (ROI) of the pinned host image to a device
+   * image storage. The destination dimensions must match numRows x numCols
+   * exactly. In typical usage, the host pinned memory is the larger image, and
+   * the device memory is the carved-out ROI / tile.
+   * See DeviceImageStorage::toHostROI() for the reverse.
+   *
+   * @tparam Tdevicestorage Device storage type (e.g. DeviceImageStorage)
+   * @param dst Destination device storage (the tile); must match numRows x
+   * numCols
+   * @param srcStartRow Starting row in the source (this) to read from
+   * @param srcStartCol Starting column in the source (this) to read from
+   * @param numRows Number of rows to copy (must match dst.height)
+   * @param numCols Number of columns to copy (must match dst.width)
+   * @param stream CUDA stream for the async copy
+   */
+  template <typename Tdevicestorage>
+  void toDeviceFromROI(Tdevicestorage &dst, Tidx srcStartRow, Tidx srcStartCol,
+                       Tidx numRows, Tidx numCols,
+                       cudaStream_t stream = 0) const {
+    // Check that destination matches the requested sub-region
+    if (dst.width != numCols || dst.height != numRows) {
+      throw std::runtime_error(
+          "PinnedHostImageStorage::toDevice: Destination size mismatch. "
+          "Destination must match exactly; resize first if required.");
+    }
+    // Bounds check on the source
+    if (srcStartRow < 0 || srcStartCol < 0 || srcStartRow + numRows > height ||
+        srcStartCol + numCols > width) {
+      throw std::runtime_error("PinnedHostImageStorage::toDevice: Sub-region "
+                               "exceeds source bounds.");
+    }
+
+    const Tdata *src =
+        this->vec.data().get() + (size_t)srcStartRow * width + srcStartCol;
+    Tdata *dstPtr = dst.vec.data().get();
+
+    cudaError_t err = cudaMemcpy2DAsync(
+        dstPtr, numCols * sizeof(Tdata), src, width * sizeof(Tdata),
+        numCols * sizeof(Tdata), numRows, cudaMemcpyHostToDevice, stream);
+    if (err != cudaSuccess) {
+      char const *errstr = cudaGetErrorString(err);
+      throw std::runtime_error("PinnedHostImageStorage::toDevice: "
+                               "cudaMemcpy2DAsync failed with error " +
+                               std::string(errstr));
+    }
+  }
 };
 
 } // namespace containers
