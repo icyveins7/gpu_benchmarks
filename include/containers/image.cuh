@@ -500,6 +500,83 @@ struct StreamOrderedDeviceImageStorage
   Image<const Tdata, Tidx> cimage() const {
     return Image<const Tdata, Tidx>(this->m_data, width, height);
   }
+
+  /**
+   * @brief Copies the entire device image to a host image storage of the same
+   * dimensions. Both source and destination must have matching width and
+   * height. See PinnedHostImageStorage::toDevice() for the reverse.
+   *
+   * @tparam Thoststorage Host storage type (e.g. PinnedHostImageStorage)
+   * @param dst Destination host storage; must have the same width and height
+   * @param stream CUDA stream for the async copy
+   */
+  template <typename Thoststorage>
+  void toHost(Thoststorage &dst, cudaStream_t stream = 0) const {
+    // Check that destination matches exactly
+    if (dst.width != this->width || dst.height != this->height) {
+      throw std::runtime_error(
+          "StreamOrderedDeviceImageStorage::toHost: Destination size "
+          "mismatch.");
+    }
+
+    cudaError_t err = cudaMemcpyAsync(dst.vec.data().get(), this->m_data,
+                                      (size_t)width * height * sizeof(Tdata),
+                                      cudaMemcpyDeviceToHost, stream);
+    if (err != cudaSuccess) {
+      char const *errstr = cudaGetErrorString(err);
+      throw std::runtime_error("StreamOrderedDeviceImageStorage::toHost: "
+                               "cudaMemcpyAsync failed with error " +
+                               std::string(errstr));
+    }
+  }
+
+  /**
+   * @brief Copies the entire device image into a sub-region (ROI) of a larger
+   * host image storage. The device storage dimensions must match numRows x
+   * numCols exactly. In typical usage, the host pinned memory is the larger
+   * image, and the device memory is the carved-out ROI / tile.
+   * See PinnedHostImageStorage::toDeviceFromROI() for the reverse.
+   *
+   * @tparam Thoststorage Host storage type (e.g. PinnedHostImageStorage)
+   * @param dst Destination host storage (the larger image)
+   * @param dstStartRow Starting row in the destination to write into
+   * @param dstStartCol Starting column in the destination to write into
+   * @param numRows Number of rows to copy (must match this->height)
+   * @param numCols Number of columns to copy (must match this->width)
+   * @param stream CUDA stream for the async copy
+   */
+  template <typename Thoststorage>
+  void toHostROI(Thoststorage &dst, Tidx dstStartRow, Tidx dstStartCol,
+                 Tidx numRows, Tidx numCols, cudaStream_t stream = 0) const {
+    // Check that source matches the requested sub-region
+    if (this->width != numCols || this->height != numRows) {
+      throw std::runtime_error(
+          "StreamOrderedDeviceImageStorage::toHostROI: Source size mismatch. "
+          "Source must match exactly the requested sub-region.");
+    }
+    // Bounds check on the destination
+    if (dstStartRow < 0 || dstStartCol < 0 ||
+        dstStartRow + numRows > dst.height ||
+        dstStartCol + numCols > dst.width) {
+      throw std::runtime_error(
+          "StreamOrderedDeviceImageStorage::toHostROI: Sub-region "
+          "exceeds destination bounds.");
+    }
+
+    Tdata *dstPtr =
+        dst.vec.data().get() + (size_t)dstStartRow * dst.width + dstStartCol;
+    const Tdata *src = this->m_data;
+
+    cudaError_t err = cudaMemcpy2DAsync(
+        dstPtr, dst.width * sizeof(Tdata), src, numCols * sizeof(Tdata),
+        numCols * sizeof(Tdata), numRows, cudaMemcpyDeviceToHost, stream);
+    if (err != cudaSuccess) {
+      char const *errstr = cudaGetErrorString(err);
+      throw std::runtime_error("StreamOrderedDeviceImageStorage::toHostROI: "
+                               "cudaMemcpy2DAsync failed with error " +
+                               std::string(errstr));
+    }
+  }
 };
 
 template <typename Tdata, typename Tidx = int> struct PinnedHostImageStorage {
@@ -564,7 +641,7 @@ template <typename Tdata, typename Tidx = int> struct PinnedHostImageStorage {
     }
 
     cudaError_t err = cudaMemcpyAsync(
-        dst.vec.data().get(), this->vec.data().get(),
+        dst.image().data, this->vec.data().get(),
         (size_t)width * height * sizeof(Tdata), cudaMemcpyHostToDevice, stream);
     if (err != cudaSuccess) {
       char const *errstr = cudaGetErrorString(err);
@@ -609,7 +686,7 @@ template <typename Tdata, typename Tidx = int> struct PinnedHostImageStorage {
 
     const Tdata *src =
         this->vec.data().get() + (size_t)srcStartRow * width + srcStartCol;
-    Tdata *dstPtr = dst.vec.data().get();
+    Tdata *dstPtr = dst.image().data;
 
     cudaError_t err = cudaMemcpy2DAsync(
         dstPtr, numCols * sizeof(Tdata), src, width * sizeof(Tdata),

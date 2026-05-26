@@ -105,7 +105,7 @@ if (GTEST_FOUND)
   gtest_discover_tests(test_bitset)
 
   # --------------------
-  add_executable(test_image test_image.cu)
+  add_executable(test_image test_image.cu ${CMAKE_SOURCE_DIR}/src/containers/streams.cu)
   target_link_libraries(test_image GTest::gtest_main)
   gtest_discover_tests(test_image)
 
