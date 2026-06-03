@@ -623,6 +623,49 @@ template <typename Tdata, typename Tidx = int> struct PinnedHostImageStorage {
   }
 
   /**
+   * @brief Returns an Image whose data pointer is the device-mapped pointer
+   * for this pinned host allocation. The returned Image can be passed directly
+   * to kernels for zero-copy access (reads and writes go through the PCIe bus).
+   * Requires that the CUDA device supports mapped host memory.
+   *
+   * @return Image struct with a device-mapped pointer
+   */
+  Image<Tdata, Tidx> mappedImage() {
+    Tdata *d_mapped = nullptr;
+    cudaError_t err =
+        cudaHostGetDevicePointer(&d_mapped, vec.data().get(), 0);
+    if (err != cudaSuccess) {
+      throw std::runtime_error(
+          "PinnedHostImageStorage::mappedImage: "
+          "cudaHostGetDevicePointer failed with error " +
+          std::string(cudaGetErrorString(err)));
+    }
+    return Image<Tdata, Tidx>(d_mapped, width, height);
+  }
+
+  /**
+   * @brief Returns a const Image whose data pointer is the device-mapped
+   * pointer for this pinned host allocation. The returned Image can be passed
+   * directly to kernels for zero-copy read access.
+   * Requires that the CUDA device supports mapped host memory.
+   *
+   * @return Const Image struct with a device-mapped pointer
+   */
+  Image<const Tdata, Tidx> mappedCImage() const {
+    Tdata *d_mapped = nullptr;
+    cudaError_t err =
+        cudaHostGetDevicePointer(&d_mapped,
+                                 const_cast<Tdata *>(vec.data().get()), 0);
+    if (err != cudaSuccess) {
+      throw std::runtime_error(
+          "PinnedHostImageStorage::mappedCImage: "
+          "cudaHostGetDevicePointer failed with error " +
+          std::string(cudaGetErrorString(err)));
+    }
+    return Image<const Tdata, Tidx>(d_mapped, width, height);
+  }
+
+  /**
    * @brief Copies the entire pinned host image to a device image storage of
    * the same dimensions. Both source and destination must have matching width
    * and height.

@@ -53,10 +53,10 @@ __global__ void keep_index_matching_value_tile_kernel(
 template <typename Tdata, typename Tidx = int16_t>
 __global__ void copy_compacted_list_via_mapped_host_pointer_kernel(
     const cuda_vec2_t<Tidx> *outlist, const unsigned int *outcount,
-    cuda_vec2_t<Tidx> *h_outlist) {
+    containers::Image<cuda_vec2_t<Tidx>> h_outimg) {
   for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < (int)*outcount;
        i += blockDim.x * gridDim.x) {
-    h_outlist[i] = outlist[i];
+    h_outimg.data[i] = outlist[i];
   }
 }
 
@@ -83,7 +83,7 @@ int main(int argc, char *argv[]) {
 
   thrust::pinned_host_vector<unsigned> h_count(1);
   thrust::device_vector<unsigned> d_count(1);
-  thrust::pinned_host_vector<cuda_vec2_t<Tidx>> h_out(h_in.size());
+  containers::PinnedHostImageStorage<cuda_vec2_t<Tidx>> h_out(h_in.size(), 1);
   thrust::device_vector<cuda_vec2_t<Tidx>> d_out(h_in.size());
 
   for (int i = 0; i < 3; ++i) {
@@ -100,7 +100,7 @@ int main(int argc, char *argv[]) {
 
     // D2H
     h_count = d_count;
-    h_out = d_out;
+    h_out.vec = d_out;
 
     nvtxRangePop();
 
@@ -147,7 +147,7 @@ int main(int argc, char *argv[]) {
               d_counts.data().get() + s);
 
       // D2H
-      cudaMemcpyAsync(h_out.data().get() + startRow * d_in.width,
+      cudaMemcpyAsync(h_out.vec.data().get() + startRow * d_in.width,
                       d_out.data().get() + startRow * d_in.width,
                       numRowsUsed * tileCols * sizeof(cuda_vec2_t<Tidx>),
                       cudaMemcpyDeviceToHost, stream());
@@ -167,16 +167,7 @@ int main(int argc, char *argv[]) {
   }
 
   // ==== Mapping host pinned pointer to kernel-usable pointer =======
-  cuda_vec2_t<Tidx> *d_mapped_h_out;
-  cudaError_t err =
-      cudaHostGetDevicePointer(&d_mapped_h_out, h_out.data().get(), 0);
-  if (err != cudaSuccess) {
-    printf("Failed to get device pointer for pinned host vector: %s\n",
-           cudaGetErrorName(err));
-    return 1;
-  } else {
-    printf("Got device pointer for pinned host vector\n");
-  }
+  auto mapped_h_out = h_out.mappedImage();
 
   for (int i = 0; i < 3; ++i) {
     nvtxRangePush("multistream_with_mapped_host");
@@ -215,7 +206,7 @@ int main(int argc, char *argv[]) {
         copy_compacted_list_via_mapped_host_pointer_kernel<Tdata, Tidx>
             <<<blks, tpb, 0, stream()>>>(
                 d_out.data().get() + startRow * d_in.width,
-                d_counts.data().get() + s, d_mapped_h_out);
+                d_counts.data().get() + s, mapped_h_out);
       }
     }
 
