@@ -306,15 +306,15 @@ __global__ void natural_spline_blockwise_kernel(
  * @param num_points_in_row  Number of data points N per row
  * @param stride_elements_per_row  Stride between rows in all arrays
  * @param num_rows  Total number of rows
- * @param slopeLeft   Prescribed slope at the left endpoint
- * @param slopeRight  Prescribed slope at the right endpoint
+ * @param slopeLeft   Prescribed slopes at the left endpoint, one per row
+ * @param slopeRight  Prescribed slopes at the right endpoint, one per row
  */
 template <typename T>
 __global__ void clamped_spline_blockwise_kernel(
     const T *x, const T *y, CubicSpline<T> *splines, T *buf0_a, T *buf0_b,
     T *buf0_c, T *buf0_rhs, T *buf1_a, T *buf1_b, T *buf1_c, T *buf1_rhs,
     const size_t *num_points_in_row, const int stride_elements_per_row,
-    const int num_rows, T slopeLeft, T slopeRight) {
+    const int num_rows, const T *slopeLeft, const T *slopeRight) {
 
   for (int blk = blockIdx.x; blk < num_rows; blk += gridDim.x) {
     int off = blk * stride_elements_per_row;
@@ -327,8 +327,8 @@ __global__ void clamped_spline_blockwise_kernel(
         &buf1_c[off],   &buf1_rhs[off], (size_t)M};
 
     // Arrange writes N equations directly into buf0
-    arrange_clamped_spline_blockwide(&x[off], &y[off], N, params, slopeLeft,
-                                     slopeRight);
+    arrange_clamped_spline_blockwide(&x[off], &y[off], N, params,
+                                     slopeLeft[blk], slopeRight[blk]);
     __syncthreads();
 
     // Solve
@@ -383,7 +383,7 @@ __global__ void clamped_spline_blockwise_kernel(
  * @param num_points_in_row  Number of data points N per row
  * @param stride_elements_per_row  Stride between rows in all arrays
  * @param num_rows  Total number of rows
- * @param xPeriod  The period length
+ * @param xPeriod  The period length, one per row
  */
 template <typename T>
 __global__ void periodic_spline_blockwise_kernel(
@@ -391,14 +391,15 @@ __global__ void periodic_spline_blockwise_kernel(
     T *arr_c, T *arr_rhs, T *buf0_a, T *buf0_b, T *buf0_c, T *buf0_rhs,
     T *buf1_a, T *buf1_b, T *buf1_c, T *buf1_rhs, T *z_out,
     const size_t *num_points_in_row, const int stride_elements_per_row,
-    const int num_rows, T xPeriod) {
+    const int num_rows, const T *xPeriod) {
 
   for (int blk = blockIdx.x; blk < num_rows; blk += gridDim.x) {
     int off = blk * stride_elements_per_row;
     int N = num_points_in_row[blk];
+    T period = xPeriod[blk];
 
     // Arrange the cyclic tridiag system into arr_* arrays
-    arrange_periodic_spline_blockwide(&x[off], &y[off], N, xPeriod, &arr_a[off],
+    arrange_periodic_spline_blockwide(&x[off], &y[off], N, period, &arr_a[off],
                                       &arr_b[off], &arr_c[off], &arr_rhs[off]);
     __syncthreads();
 
@@ -414,7 +415,7 @@ __global__ void periodic_spline_blockwise_kernel(
 
     // Periodic BC: the solver produces all N values z_0..z_{N-1} in z_out.
     // There are N intervals: N-1 normal ones plus the wrap-around interval.
-    T hLast = xPeriod - (x[off + N - 1] - x[off]);
+    T hLast = period - (x[off + N - 1] - x[off]);
     for (int i = threadIdx.x; i < N; i += blockDim.x) {
       T zi = z_out[off + i];
       T zi1 = z_out[off + (i + 1) % N];

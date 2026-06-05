@@ -114,8 +114,14 @@ int main(int argc, char *argv[]) {
 
   printf("\n--- Clamped spline test ---\n");
 
-  Real slopeLeft = Real(0.5);   // prescribed slope at x[0]
-  Real slopeRight = Real(-0.3); // prescribed slope at x[N-1]
+  // Per-row clamped slopes
+  thrust::host_vector<Real> hSlopeLeft(NUM_ROWS), hSlopeRight(NUM_ROWS);
+  for (int row = 0; row < NUM_ROWS; ++row) {
+    hSlopeLeft[row] = Real(0.5);   // prescribed slope at x[0]
+    hSlopeRight[row] = Real(-0.3); // prescribed slope at x[N-1]
+  }
+  thrust::device_vector<Real> dSlopeLeft = hSlopeLeft;
+  thrust::device_vector<Real> dSlopeRight = hSlopeRight;
 
   thrust::device_vector<CubicSpline<Real>> dsplines_clamped(NUM_ROWS * N);
 
@@ -126,7 +132,8 @@ int main(int argc, char *argv[]) {
       dx.data().get(), dy.data().get(), dsplines_clamped.data().get(),
       ws.buf0_a_ptr(), ws.buf0_b_ptr(), ws.buf0_c_ptr(), ws.buf0_rhs_ptr(),
       ws.buf1_a_ptr(), ws.buf1_b_ptr(), ws.buf1_c_ptr(), ws.buf1_rhs_ptr(),
-      dlen.data().get(), N, NUM_ROWS, slopeLeft, slopeRight);
+      dlen.data().get(), N, NUM_ROWS, dSlopeLeft.data().get(),
+      dSlopeRight.data().get());
   cudaDeviceSynchronize();
   timer.stop();
 
@@ -136,7 +143,7 @@ int main(int argc, char *argv[]) {
     int off = row * N;
     if (verbose)
       printf("Clamped Row %d (slopeLeft=%.4f, slopeRight=%.4f):\n", row,
-             slopeLeft, slopeRight);
+             hSlopeLeft[row], hSlopeRight[row]);
     for (int i = 0; i < N - 1; ++i) {
       const auto &s = hsplines_clamped[off + i];
       if (verbose) {
@@ -160,7 +167,11 @@ int main(int argc, char *argv[]) {
 
   // For periodic splines, y must wrap: y(x[0] + xPeriod) == y(x[0]).
   // Generate periodic data: y = sin(2*pi*x / xPeriod)
-  Real xPeriod = Real(N); // period = N so x goes from 0..N-1
+  // Per-row periods
+  thrust::host_vector<Real> hXPeriod(NUM_ROWS);
+  for (int row = 0; row < NUM_ROWS; ++row) {
+    hXPeriod[row] = Real(N); // period = N so x goes from 0..N-1
+  }
   for (int row = 0; row < NUM_ROWS; ++row) {
     int off = row * N;
     for (int i = 0; i < N; ++i) {
@@ -171,7 +182,7 @@ int main(int argc, char *argv[]) {
   }
 
   if (verbose) {
-    printf("Periodic data (xPeriod=%.4f):\n", xPeriod);
+    printf("Periodic data (xPeriod=%.4f):\n", hXPeriod[0]);
     for (int row = 0; row < NUM_ROWS; ++row) {
       int off = row * N;
       printf("Row %d data:\n  x = {", row);
@@ -194,6 +205,7 @@ int main(int argc, char *argv[]) {
   // Cyclic solver needs separate input arrays (survive across 2 PCR solves)
   TridiagPCRWorkspace<Real> ws_arr(NUM_ROWS, N); // arranged coefficients
   thrust::device_vector<Real> dz_out(NUM_ROWS * N); // z output
+  thrust::device_vector<Real> dXPeriod = hXPeriod;
 
   timer.start("gpuPeriodicSpline");
   periodic_spline_blockwise_kernel<Real><<<NUM_ROWS, NUM_THREADS>>>(
@@ -202,7 +214,7 @@ int main(int argc, char *argv[]) {
       ws_arr.buf0_rhs_ptr(), ws.buf0_a_ptr(), ws.buf0_b_ptr(),
       ws.buf0_c_ptr(), ws.buf0_rhs_ptr(), ws.buf1_a_ptr(), ws.buf1_b_ptr(),
       ws.buf1_c_ptr(), ws.buf1_rhs_ptr(), dz_out.data().get(),
-      dlen.data().get(), N, NUM_ROWS, xPeriod);
+      dlen.data().get(), N, NUM_ROWS, dXPeriod.data().get());
   cudaDeviceSynchronize();
   timer.stop();
 
