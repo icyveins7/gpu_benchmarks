@@ -493,6 +493,25 @@ struct StreamOrderedDeviceImageStorage
   StreamOrderedDeviceImageStorage &
   operator=(StreamOrderedDeviceImageStorage &&) = delete;
 
+  // Hide 1D base-class methods that would desync width/height
+  void initialize(size_t, cudaStream_t) = delete;
+  void resizeWithoutCopy(size_t) = delete;
+
+  /**
+   * @brief 2D-aware resize. Expands the underlying buffer if needed to fit
+   * _width * _height elements; does not copy existing contents.
+   * See StreamOrderedDeviceStorage::resizeWithoutCopy().
+   *
+   * @param _width New width
+   * @param _height New height
+   */
+  void resizeWithoutCopy(const Tidx _width, const Tidx _height) {
+    StreamOrderedDeviceStorage<Tdata>::resizeWithoutCopy(
+        (size_t)_width * (size_t)_height);
+    width = _width;
+    height = _height;
+  }
+
   Image<Tdata, Tidx> image() {
     return Image<Tdata, Tidx>(this->m_data, width, height);
   }

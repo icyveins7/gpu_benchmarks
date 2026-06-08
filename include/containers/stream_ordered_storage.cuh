@@ -15,8 +15,10 @@ namespace containers {
  * The use-case of cudaMallocAsync is usually to reuse scratch memory that has
  * been cudaFreeAsync-ed previously. This incurs almost no runtime cost when the
  * memory previously allocated and freed is sufficient to service the current
- * request. As such, resizing the array is not really the mindset to have for
- * this class, and is intentionally left out for now.
+ * request. Resizing is only supported to expand the buffer to meet a larger
+ * requirement (see resizeWithoutCopy); unlike std::vector, no copy of existing
+ * contents is performed during reallocation, since the typical use-case is
+ * scratch workspace where prior contents are irrelevant.
  *
  * @example A common use-case is to actively scope a kernel launch and simply
  construct this at the beginning of the scope for scratch workspace.
@@ -62,10 +64,7 @@ public:
   }
 
   ~StreamOrderedDeviceStorage() {
-#ifndef NDEBUG
-    printf("StreamOrderedDeviceStorage: cudaFreeAsync of %zu bytes\n", m_size);
-#endif
-    cudaError_t err = cudaFreeAsync(m_data, m_stream);
+    cudaError_t err = dealloc();
     if (err != cudaSuccess) {
       // Since dtors are noexcept, we simply print the error
       // The only sensible error will come when either the stream or the
@@ -90,13 +89,16 @@ public:
     other.m_capacity = 0;
   }
   StreamOrderedDeviceStorage &operator=(StreamOrderedDeviceStorage &&other) {
-    m_capacity = other.m_capacity;
-    m_size = other.m_size;
-    m_data = other.m_data;
-    m_stream = other.m_stream;
-    other.m_data = nullptr;
-    other.m_size = 0;
-    other.m_capacity = 0;
+    if (this != &other) {
+      dealloc(); // free existing allocation before taking ownership
+      m_capacity = other.m_capacity;
+      m_size = other.m_size;
+      m_data = other.m_data;
+      m_stream = other.m_stream;
+      other.m_data = nullptr;
+      other.m_size = 0;
+      other.m_capacity = 0;
+    }
     return *this;
   };
 
@@ -124,6 +126,30 @@ public:
     alloc();
   }
 
+  /**
+   * @brief Run-time re-allocation. This is intended to resize the buffer to fit
+   * a requirement, and hence does not perform the copy of existing contents
+   * (which may have incurred an unnecessary kernel).
+   *
+   * @param size Required size. If smaller than existing capacity, no
+   * re-allocation happens.
+   */
+  void resizeWithoutCopy(size_t size) {
+    if (m_stream == 0)
+      throw std::runtime_error(
+          "resizeWithoutCopy called on uninitialized storage");
+    if (size <= m_capacity) {
+      m_size = size;
+    } else {
+      if (dealloc() != cudaSuccess) {
+        throw std::runtime_error("cudaFreeAsync failed during resize");
+      }
+      m_size = size;
+      m_capacity = size;
+      alloc();
+    }
+  }
+
 protected:
   size_t m_capacity;
   size_t m_size;
@@ -133,15 +159,25 @@ protected:
   void alloc() {
 #ifndef NDEBUG
     printf("StreamOrderedDeviceStorage: cudaMallocAsync of %zu bytes\n",
-           m_size);
+           m_capacity * sizeof(T));
 #endif
-    cudaError_t err = cudaMallocAsync(&m_data, sizeof(T) * m_size, m_stream);
+    cudaError_t err =
+        cudaMallocAsync(&m_data, sizeof(T) * m_capacity, m_stream);
     if (err != cudaSuccess) {
       throw std::runtime_error(
           "cudaMallocAsync failed with size " +
-          std::to_string(m_size * sizeof(T)) + " and stream " +
+          std::to_string(m_capacity * sizeof(T)) + " and stream " +
           std::to_string(reinterpret_cast<uint64_t>(m_stream)));
     }
+  }
+
+  cudaError_t dealloc() {
+#ifndef NDEBUG
+    printf("StreamOrderedDeviceStorage: cudaFreeAsync of %zu bytes\n",
+           m_capacity * sizeof(T));
+#endif
+    cudaError_t err = cudaFreeAsync(m_data, m_stream);
+    return err;
   }
 };
 
