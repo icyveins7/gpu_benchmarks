@@ -69,6 +69,9 @@ int main(int argc, char *argv[]) {
   cubw::DeviceScan::InclusiveSumByKey<FwdKeyIter, const DataT *, DataT *>
       fwdScan(totalSize);
 
+  printf("Total forward scan cub workspace size: %zu\n",
+         fwdScan.d_temp_storage.size());
+
   nvtxRangePushA("forward_scan");
   // repeat for warmup/nsys profile timing accuracy
   for (int iter = 0; iter < 2; ++iter) {
@@ -91,6 +94,8 @@ int main(int argc, char *argv[]) {
                                       thrust::reverse_iterator<const DataT *>,
                                       thrust::reverse_iterator<DataT *>>
       bwdScan(totalSize);
+  printf("Total backward scan cub workspace size: %zu\n",
+         bwdScan.d_temp_storage.size());
 
   nvtxRangePushA("backward_scan");
   // repeat for warmup/nsys profile timing accuracy
