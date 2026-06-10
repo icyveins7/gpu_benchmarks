@@ -6,6 +6,9 @@
 
 #include <thrust/device_vector.h>
 
+#include <type_traits>
+
+#include <containers/stream_ordered_storage.cuh>
 #include <containers/streams.cuh>
 
 namespace cubw {
@@ -14,9 +17,14 @@ namespace cubw {
 Wrapper for CUB; primarily Device-wide primitives
 */
 
+template <bool StreamOrdered = false>
 struct CubWrapper {
 public:
-  thrust::device_vector<char> d_temp_storage;
+  using storage_t = std::conditional_t<StreamOrdered,
+      containers::StreamOrderedDeviceStorage<char>,
+      thrust::device_vector<char>>;
+
+  storage_t d_temp_storage;
 
   virtual size_t getStorageBytes(size_t num_items) = 0;
 
@@ -27,9 +35,24 @@ public:
 protected:
   CubWrapper() = default;
 
-  void resizeStorage(size_t num_items) {
-    d_temp_storage.resize(getStorageBytes(num_items));
-  };
+  void resizeStorage(size_t num_items, cudaStream_t stream = 0) {
+    size_t bytes = getStorageBytes(num_items);
+    if constexpr (StreamOrdered) {
+      if (d_temp_storage.data() == nullptr)
+        d_temp_storage.initialize(bytes, stream);
+      else
+        d_temp_storage.resizeWithoutCopy(bytes);
+    } else {
+      d_temp_storage.resize(bytes);
+    }
+  }
+
+  void *storagePtr() {
+    if constexpr (StreamOrdered)
+      return d_temp_storage.data();
+    else
+      return d_temp_storage.data().get();
+  }
 };
 
 // ===========================
@@ -57,11 +80,18 @@ __global__ void SortKeysCDP_kernel(void *d_temp_storage,
   }
 }
 
-template <typename KeyT, typename NumItemsT>
-struct SortKeys : public CubWrapper {
+template <typename KeyT, typename NumItemsT, bool StreamOrdered = false>
+struct SortKeys : public CubWrapper<StreamOrdered> {
   SortKeys() {}
-  SortKeys(NumItemsT num_items) : CubWrapper() {
-    resizeStorage((size_t)num_items);
+
+  template <bool S = StreamOrdered, std::enable_if_t<!S, int> = 0>
+  SortKeys(NumItemsT num_items) {
+    this->resizeStorage((size_t)num_items);
+  }
+
+  template <bool S = StreamOrdered, std::enable_if_t<S, int> = 0>
+  SortKeys(NumItemsT num_items, cudaStream_t stream) {
+    this->resizeStorage((size_t)num_items, stream);
   }
 
   size_t getStorageBytes(size_t num_items) override {
@@ -77,7 +107,7 @@ struct SortKeys : public CubWrapper {
                    int end_bit = sizeof(KeyT) * 8) {
     size_t temp_storage_bytes = this->d_temp_storage.size();
     return cub::DeviceRadixSort::SortKeys(
-        this->d_temp_storage.data().get(),
+        this->storagePtr(),
         temp_storage_bytes, // we only do this because it expects a ref
         d_keys_in, d_keys_out, num_items, begin_bit, end_bit, stream);
   }
@@ -88,7 +118,7 @@ struct SortKeys : public CubWrapper {
 
     size_t temp_storage_bytes = this->d_temp_storage.size();
     SortKeysCDP_kernel<KeyT, NumItemsT><<<1, 1, 0, stream>>>(
-        this->d_temp_storage.data().get(), temp_storage_bytes, d_keys_in,
+        this->storagePtr(), temp_storage_bytes, d_keys_in,
         d_keys_out, d_num_items, begin_bit, end_bit);
 
     cudaError_t err = cudaGetLastError();
@@ -105,11 +135,18 @@ struct SortKeys : public CubWrapper {
 namespace DeviceMergeSort {
 
 template <typename KeyInputIteratorT, typename KeyIteratorT, typename OffsetT,
-          typename CompareOpT>
-struct SortKeysCopy : public CubWrapper {
+          typename CompareOpT, bool StreamOrdered = false>
+struct SortKeysCopy : public CubWrapper<StreamOrdered> {
   SortKeysCopy() {}
-  SortKeysCopy(OffsetT num_items) : CubWrapper() {
-    resizeStorage((size_t)num_items);
+
+  template <bool S = StreamOrdered, std::enable_if_t<!S, int> = 0>
+  SortKeysCopy(OffsetT num_items) {
+    this->resizeStorage((size_t)num_items);
+  }
+
+  template <bool S = StreamOrdered, std::enable_if_t<S, int> = 0>
+  SortKeysCopy(OffsetT num_items, cudaStream_t stream) {
+    this->resizeStorage((size_t)num_items, stream);
   }
 
   size_t getStorageBytes(size_t num_items) override {
@@ -129,18 +166,25 @@ struct SortKeysCopy : public CubWrapper {
                    cudaStream_t stream = 0) {
     size_t temp_storage_bytes = this->d_temp_storage.size();
     return cub::DeviceMergeSort::SortKeysCopy(
-        this->d_temp_storage.data().get(), temp_storage_bytes, d_keys_in,
+        this->storagePtr(), temp_storage_bytes, d_keys_in,
         d_keys_out, num_items, compare_op, stream);
   }
 };
 
 template <typename KeyInputIteratorT, typename ValueInputIteratorT,
           typename KeyIteratorT, typename ValueIteratorT, typename OffsetT,
-          typename CompareOpT>
-struct SortPairsCopy : public CubWrapper {
+          typename CompareOpT, bool StreamOrdered = false>
+struct SortPairsCopy : public CubWrapper<StreamOrdered> {
   SortPairsCopy() {}
-  SortPairsCopy(OffsetT num_items) : CubWrapper() {
-    resizeStorage((size_t)num_items);
+
+  template <bool S = StreamOrdered, std::enable_if_t<!S, int> = 0>
+  SortPairsCopy(OffsetT num_items) {
+    this->resizeStorage((size_t)num_items);
+  }
+
+  template <bool S = StreamOrdered, std::enable_if_t<S, int> = 0>
+  SortPairsCopy(OffsetT num_items, cudaStream_t stream) {
+    this->resizeStorage((size_t)num_items, stream);
   }
 
   size_t getStorageBytes(size_t num_items) override {
@@ -163,7 +207,7 @@ struct SortPairsCopy : public CubWrapper {
                    cudaStream_t stream = 0) {
     size_t temp_storage_bytes = this->d_temp_storage.size();
     return cub::DeviceMergeSort::SortPairsCopy(
-        this->d_temp_storage.data().get(), temp_storage_bytes, d_keys_in,
+        this->storagePtr(), temp_storage_bytes, d_keys_in,
         d_values_in, d_keys_out, d_values_out, num_items, compare_op, stream);
   }
 };
@@ -175,10 +219,20 @@ struct SortPairsCopy : public CubWrapper {
 // ===========================
 namespace DeviceSelect {
 
-template <typename IteratorT, typename NumSelectedIteratorT, typename SelectOp>
-struct IfInPlace : public CubWrapper {
+template <typename IteratorT, typename NumSelectedIteratorT, typename SelectOp,
+          bool StreamOrdered = false>
+struct IfInPlace : public CubWrapper<StreamOrdered> {
   IfInPlace() {}
-  IfInPlace(int num_items) : CubWrapper() { resizeStorage((size_t)num_items); }
+
+  template <bool S = StreamOrdered, std::enable_if_t<!S, int> = 0>
+  IfInPlace(int num_items) {
+    this->resizeStorage((size_t)num_items);
+  }
+
+  template <bool S = StreamOrdered, std::enable_if_t<S, int> = 0>
+  IfInPlace(int num_items, cudaStream_t stream) {
+    this->resizeStorage((size_t)num_items, stream);
+  }
 
   size_t getStorageBytes(size_t num_items) override {
     size_t temp_storage_bytes = 0;
@@ -195,17 +249,27 @@ struct IfInPlace : public CubWrapper {
                    ::cuda::std::int64_t num_items, SelectOp select_op,
                    cudaStream_t stream = 0) {
     size_t temp_storage_bytes = this->d_temp_storage.size();
-    return cub::DeviceSelect::If(this->d_temp_storage.data().get(),
+    return cub::DeviceSelect::If(this->storagePtr(),
                                  temp_storage_bytes, d_in, d_num_selected,
                                  num_items, select_op, stream);
   }
 };
 
 template <typename InputIteratorT, typename OutputIteratorT,
-          typename NumSelectedIteratorT, typename SelectOp>
-struct If : public CubWrapper {
+          typename NumSelectedIteratorT, typename SelectOp,
+          bool StreamOrdered = false>
+struct If : public CubWrapper<StreamOrdered> {
   If() {}
-  If(int num_items) : CubWrapper() { resizeStorage((size_t)num_items); }
+
+  template <bool S = StreamOrdered, std::enable_if_t<!S, int> = 0>
+  If(int num_items) {
+    this->resizeStorage((size_t)num_items);
+  }
+
+  template <bool S = StreamOrdered, std::enable_if_t<S, int> = 0>
+  If(int num_items, cudaStream_t stream) {
+    this->resizeStorage((size_t)num_items, stream);
+  }
 
   size_t getStorageBytes(size_t num_items) override {
     size_t temp_storage_bytes = 0;
@@ -224,7 +288,7 @@ struct If : public CubWrapper {
                    ::cuda::std::int64_t num_items, SelectOp select_op,
                    cudaStream_t stream = 0) {
     size_t temp_storage_bytes = this->d_temp_storage.size();
-    return cub::DeviceSelect::If(this->d_temp_storage.data().get(),
+    return cub::DeviceSelect::If(this->storagePtr(),
                                  temp_storage_bytes, d_in, d_out,
                                  d_num_selected, num_items, select_op, stream);
   }
@@ -240,11 +304,18 @@ namespace DeviceScan {
 template <typename KeysInputIteratorT, typename ValuesInputIteratorT,
           typename ValuesOutputIteratorT,
           typename EqualityOpT = ::cuda::std::equal_to<>,
-          typename NumItemsT = uint32_t>
-struct InclusiveSumByKey : public CubWrapper {
+          typename NumItemsT = uint32_t, bool StreamOrdered = false>
+struct InclusiveSumByKey : public CubWrapper<StreamOrdered> {
   InclusiveSumByKey() {}
-  InclusiveSumByKey(NumItemsT num_items) : CubWrapper() {
-    resizeStorage((size_t)num_items);
+
+  template <bool S = StreamOrdered, std::enable_if_t<!S, int> = 0>
+  InclusiveSumByKey(NumItemsT num_items) {
+    this->resizeStorage((size_t)num_items);
+  }
+
+  template <bool S = StreamOrdered, std::enable_if_t<S, int> = 0>
+  InclusiveSumByKey(NumItemsT num_items, cudaStream_t stream) {
+    this->resizeStorage((size_t)num_items, stream);
   }
 
   size_t getStorageBytes(size_t num_items) override {
@@ -268,16 +339,24 @@ struct InclusiveSumByKey : public CubWrapper {
     size_t temp_storage_bytes = this->d_temp_storage.size();
 
     return cub::DeviceScan::InclusiveSumByKey(
-        this->d_temp_storage.data().get(), temp_storage_bytes, d_keys_in,
+        this->storagePtr(), temp_storage_bytes, d_keys_in,
         d_values_in, d_values_out, num_items, equality_op, stream);
   }
 };
 
-template <typename InputIteratorT, typename OutputIteratorT, typename NumItemsT>
-struct ExclusiveSum : public CubWrapper {
+template <typename InputIteratorT, typename OutputIteratorT, typename NumItemsT,
+          bool StreamOrdered = false>
+struct ExclusiveSum : public CubWrapper<StreamOrdered> {
   ExclusiveSum() {}
-  ExclusiveSum(NumItemsT num_items) : CubWrapper() {
-    resizeStorage((size_t)num_items);
+
+  template <bool S = StreamOrdered, std::enable_if_t<!S, int> = 0>
+  ExclusiveSum(NumItemsT num_items) {
+    this->resizeStorage((size_t)num_items);
+  }
+
+  template <bool S = StreamOrdered, std::enable_if_t<S, int> = 0>
+  ExclusiveSum(NumItemsT num_items, cudaStream_t stream) {
+    this->resizeStorage((size_t)num_items, stream);
   }
 
   size_t getStorageBytes(size_t num_items) override {
@@ -293,17 +372,24 @@ struct ExclusiveSum : public CubWrapper {
   cudaError_t exec(InputIteratorT d_in, OutputIteratorT d_out,
                    NumItemsT num_items, cudaStream_t stream = 0) {
     size_t temp_storage_bytes = this->d_temp_storage.size();
-    return cub::DeviceScan::ExclusiveSum(this->d_temp_storage.data().get(),
+    return cub::DeviceScan::ExclusiveSum(this->storagePtr(),
                                          temp_storage_bytes, d_in, d_out,
                                          num_items, stream);
   }
 };
 
-template <typename IteratorT, typename NumItemsT>
-struct ExclusiveSumInPlace : public CubWrapper {
+template <typename IteratorT, typename NumItemsT, bool StreamOrdered = false>
+struct ExclusiveSumInPlace : public CubWrapper<StreamOrdered> {
   ExclusiveSumInPlace() {}
-  ExclusiveSumInPlace(NumItemsT num_items) : CubWrapper() {
-    resizeStorage((size_t)num_items);
+
+  template <bool S = StreamOrdered, std::enable_if_t<!S, int> = 0>
+  ExclusiveSumInPlace(NumItemsT num_items) {
+    this->resizeStorage((size_t)num_items);
+  }
+
+  template <bool S = StreamOrdered, std::enable_if_t<S, int> = 0>
+  ExclusiveSumInPlace(NumItemsT num_items, cudaStream_t stream) {
+    this->resizeStorage((size_t)num_items, stream);
   }
 
   size_t getStorageBytes(size_t num_items) override {
@@ -318,7 +404,7 @@ struct ExclusiveSumInPlace : public CubWrapper {
   cudaError_t exec(IteratorT d_inout, NumItemsT num_items,
                    cudaStream_t stream = 0) {
     size_t temp_storage_bytes = this->d_temp_storage.size();
-    return cub::DeviceScan::ExclusiveSum(this->d_temp_storage.data().get(),
+    return cub::DeviceScan::ExclusiveSum(this->storagePtr(),
                                          temp_storage_bytes, d_inout, num_items,
                                          stream);
   }
@@ -333,11 +419,18 @@ namespace DeviceSegmentedReduce {
 
 template <typename InputIteratorT, typename OutputIteratorT,
           typename BeginOffsetIteratorT, typename EndOffsetIteratorT,
-          typename ReductionOpT, typename T>
-struct Reduce : public CubWrapper {
+          typename ReductionOpT, typename T, bool StreamOrdered = false>
+struct Reduce : public CubWrapper<StreamOrdered> {
   Reduce() {}
-  Reduce(int num_segments) : CubWrapper() {
-    resizeStorage((size_t)num_segments);
+
+  template <bool S = StreamOrdered, std::enable_if_t<!S, int> = 0>
+  Reduce(int num_segments) {
+    this->resizeStorage((size_t)num_segments);
+  }
+
+  template <bool S = StreamOrdered, std::enable_if_t<S, int> = 0>
+  Reduce(int num_segments, cudaStream_t stream) {
+    this->resizeStorage((size_t)num_segments, stream);
   }
 
   size_t getStorageBytes(size_t num_segments) override {
@@ -361,7 +454,7 @@ struct Reduce : public CubWrapper {
                    T initialValue, cudaStream_t stream = 0) {
     size_t temp_storage_bytes = this->d_temp_storage.size();
     return cub::DeviceSegmentedReduce::Reduce(
-        this->d_temp_storage.data().get(), temp_storage_bytes, d_in, d_out,
+        this->storagePtr(), temp_storage_bytes, d_in, d_out,
         num_segments, d_begin_offsets, d_end_offsets, reduction_op,
         initialValue, stream);
   }
@@ -376,11 +469,18 @@ namespace DeviceRunLengthEncode {
 
 template <typename InputIteratorT, typename UniqueOutputIteratorT,
           typename LengthsOutputIteratorT, typename NumRunsOutputIteratorT,
-          typename NumItemsT>
-struct Encode : public CubWrapper {
+          typename NumItemsT, bool StreamOrdered = false>
+struct Encode : public CubWrapper<StreamOrdered> {
   Encode() {}
-  Encode(NumItemsT num_items) : CubWrapper() {
-    resizeStorage((size_t)num_items);
+
+  template <bool S = StreamOrdered, std::enable_if_t<!S, int> = 0>
+  Encode(NumItemsT num_items) {
+    this->resizeStorage((size_t)num_items);
+  }
+
+  template <bool S = StreamOrdered, std::enable_if_t<S, int> = 0>
+  Encode(NumItemsT num_items, cudaStream_t stream) {
+    this->resizeStorage((size_t)num_items, stream);
   }
 
   size_t getStorageBytes(size_t num_items) override {
@@ -402,7 +502,7 @@ struct Encode : public CubWrapper {
                    cudaStream_t stream = 0) {
     size_t temp_storage_bytes = this->d_temp_storage.size();
     return cub::DeviceRunLengthEncode::Encode(
-        this->d_temp_storage.data().get(), temp_storage_bytes, d_in,
+        this->storagePtr(), temp_storage_bytes, d_in,
         d_unique_out, d_lengths_out, d_num_runs_out, num_items, stream);
   }
 };
