@@ -116,6 +116,19 @@ target_sources(
   ${PROJECT_SOURCE_DIR}/pinned_alloc.cu
 )
 
+# --------------------
+set_source_files_properties(${PROJECT_SOURCE_DIR}/forward_vs_backward_scans.cu PROPERTIES LANGUAGE CUDA)
+add_executable(forward_vs_backward_scans)
+
+target_include_directories(forward_vs_backward_scans
+                           PRIVATE ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
+                           )
+
+target_sources(
+  forward_vs_backward_scans PRIVATE
+  ${PROJECT_SOURCE_DIR}/forward_vs_backward_scans.cu
+)
+
 # -------------------- Tests
 if (GTEST_FOUND)
   message("Enabling tests for proj_containers")
