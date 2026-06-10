@@ -106,6 +106,15 @@ target_sources(
   ${CMAKE_SOURCE_DIR}/src/containers/streams.cu
 )
 
+# --------------------
+add_executable(pinned_alloc)
+target_include_directories(pinned_alloc
+                           PRIVATE ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
+                           )
+target_sources(
+  pinned_alloc PRIVATE
+  ${PROJECT_SOURCE_DIR}/pinned_alloc.cu
+)
 
 # -------------------- Tests
 if (GTEST_FOUND)
