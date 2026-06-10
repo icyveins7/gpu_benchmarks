@@ -190,6 +190,32 @@ TEST(CubwStreamOrdered, DeviceScanInclusiveSumByKey) {
   ASSERT_EQ(h[7], 26);
 }
 
+TEST(CubwStreamOrdered, DeviceScanInclusiveScanByKey) {
+  containers::CudaStream stream;
+  thrust::device_vector<int> d_keys{0, 0, 0, 0, 1, 1, 1, 1};
+  thrust::device_vector<int> d_vals{8, 6, 7, 5, 3, 0, 9, 8};
+  thrust::device_vector<int> d_out(8);
+
+  cubw::DeviceScan::InclusiveScanByKey<int *, int *, int *, CustomMin,
+                                       ::cuda::std::equal_to<>, uint32_t, true>
+      scan(8, stream());
+  scan.exec(d_keys.data().get(), d_vals.data().get(), d_out.data().get(),
+            CustomMin{}, 8, ::cuda::std::equal_to<>{}, stream());
+
+  stream.sync();
+  thrust::host_vector<int> h = d_out;
+  // Group 0: running min of {8, 6, 7, 5} -> {8, 6, 6, 5}
+  ASSERT_EQ(h[0], 8);
+  ASSERT_EQ(h[1], 6);
+  ASSERT_EQ(h[2], 6);
+  ASSERT_EQ(h[3], 5);
+  // Group 1: running min of {3, 0, 9, 8} -> {3, 0, 0, 0}
+  ASSERT_EQ(h[4], 3);
+  ASSERT_EQ(h[5], 0);
+  ASSERT_EQ(h[6], 0);
+  ASSERT_EQ(h[7], 0);
+}
+
 TEST(CubwStreamOrdered, DeviceSegmentedReduceReduce) {
   containers::CudaStream stream;
   thrust::device_vector<int> d_in{3, 1, 4, 1, 5, 9, 2, 6};

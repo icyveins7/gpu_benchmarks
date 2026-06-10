@@ -17,12 +17,12 @@ namespace cubw {
 Wrapper for CUB; primarily Device-wide primitives
 */
 
-template <bool StreamOrdered = false>
-struct CubWrapper {
+template <bool StreamOrdered = false> struct CubWrapper {
 public:
-  using storage_t = std::conditional_t<StreamOrdered,
-      containers::StreamOrderedDeviceStorage<char>,
-      thrust::device_vector<char>>;
+  using storage_t =
+      std::conditional_t<StreamOrdered,
+                         containers::StreamOrderedDeviceStorage<char>,
+                         thrust::device_vector<char>>;
 
   storage_t d_temp_storage;
 
@@ -117,9 +117,9 @@ struct SortKeys : public CubWrapper<StreamOrdered> {
                 int end_bit = sizeof(KeyT) * 8) {
 
     size_t temp_storage_bytes = this->d_temp_storage.size();
-    SortKeysCDP_kernel<KeyT, NumItemsT><<<1, 1, 0, stream>>>(
-        this->storagePtr(), temp_storage_bytes, d_keys_in,
-        d_keys_out, d_num_items, begin_bit, end_bit);
+    SortKeysCDP_kernel<KeyT, NumItemsT>
+        <<<1, 1, 0, stream>>>(this->storagePtr(), temp_storage_bytes, d_keys_in,
+                              d_keys_out, d_num_items, begin_bit, end_bit);
 
     cudaError_t err = cudaGetLastError();
     if (err != cudaSuccess)
@@ -166,8 +166,8 @@ struct SortKeysCopy : public CubWrapper<StreamOrdered> {
                    cudaStream_t stream = 0) {
     size_t temp_storage_bytes = this->d_temp_storage.size();
     return cub::DeviceMergeSort::SortKeysCopy(
-        this->storagePtr(), temp_storage_bytes, d_keys_in,
-        d_keys_out, num_items, compare_op, stream);
+        this->storagePtr(), temp_storage_bytes, d_keys_in, d_keys_out,
+        num_items, compare_op, stream);
   }
 };
 
@@ -207,8 +207,8 @@ struct SortPairsCopy : public CubWrapper<StreamOrdered> {
                    cudaStream_t stream = 0) {
     size_t temp_storage_bytes = this->d_temp_storage.size();
     return cub::DeviceMergeSort::SortPairsCopy(
-        this->storagePtr(), temp_storage_bytes, d_keys_in,
-        d_values_in, d_keys_out, d_values_out, num_items, compare_op, stream);
+        this->storagePtr(), temp_storage_bytes, d_keys_in, d_values_in,
+        d_keys_out, d_values_out, num_items, compare_op, stream);
   }
 };
 
@@ -249,9 +249,8 @@ struct IfInPlace : public CubWrapper<StreamOrdered> {
                    ::cuda::std::int64_t num_items, SelectOp select_op,
                    cudaStream_t stream = 0) {
     size_t temp_storage_bytes = this->d_temp_storage.size();
-    return cub::DeviceSelect::If(this->storagePtr(),
-                                 temp_storage_bytes, d_in, d_num_selected,
-                                 num_items, select_op, stream);
+    return cub::DeviceSelect::If(this->storagePtr(), temp_storage_bytes, d_in,
+                                 d_num_selected, num_items, select_op, stream);
   }
 };
 
@@ -288,9 +287,9 @@ struct If : public CubWrapper<StreamOrdered> {
                    ::cuda::std::int64_t num_items, SelectOp select_op,
                    cudaStream_t stream = 0) {
     size_t temp_storage_bytes = this->d_temp_storage.size();
-    return cub::DeviceSelect::If(this->storagePtr(),
-                                 temp_storage_bytes, d_in, d_out,
-                                 d_num_selected, num_items, select_op, stream);
+    return cub::DeviceSelect::If(this->storagePtr(), temp_storage_bytes, d_in,
+                                 d_out, d_num_selected, num_items, select_op,
+                                 stream);
   }
 };
 
@@ -339,8 +338,50 @@ struct InclusiveSumByKey : public CubWrapper<StreamOrdered> {
     size_t temp_storage_bytes = this->d_temp_storage.size();
 
     return cub::DeviceScan::InclusiveSumByKey(
-        this->storagePtr(), temp_storage_bytes, d_keys_in,
-        d_values_in, d_values_out, num_items, equality_op, stream);
+        this->storagePtr(), temp_storage_bytes, d_keys_in, d_values_in,
+        d_values_out, num_items, equality_op, stream);
+  }
+};
+
+template <typename KeysInputIteratorT, typename ValuesInputIteratorT,
+          typename ValuesOutputIteratorT, typename ScanOpT,
+          typename EqualityOpT = ::cuda::std::equal_to<>,
+          typename NumItemsT = uint32_t, bool StreamOrdered = false>
+struct InclusiveScanByKey : public CubWrapper<StreamOrdered> {
+  InclusiveScanByKey() {}
+
+  template <bool S = StreamOrdered, std::enable_if_t<!S, int> = 0>
+  InclusiveScanByKey(NumItemsT num_items) {
+    this->resizeStorage((size_t)num_items);
+  }
+
+  template <bool S = StreamOrdered, std::enable_if_t<S, int> = 0>
+  InclusiveScanByKey(NumItemsT num_items, cudaStream_t stream) {
+    this->resizeStorage((size_t)num_items, stream);
+  }
+
+  size_t getStorageBytes(size_t num_items) override {
+    size_t temp_storage_bytes = 0;
+    ScanOpT scan_op{};
+    EqualityOpT equality_op{};
+    KeysInputIteratorT inputkeys{};
+    ValuesInputIteratorT input{};
+    ValuesOutputIteratorT output{};
+    cub::DeviceScan::InclusiveScanByKey(nullptr, temp_storage_bytes, inputkeys,
+                                        input, output, scan_op, num_items,
+                                        equality_op);
+    return temp_storage_bytes;
+  }
+
+  cudaError_t exec(KeysInputIteratorT d_keys_in,
+                   ValuesInputIteratorT d_values_in,
+                   ValuesOutputIteratorT d_values_out, ScanOpT scan_op,
+                   NumItemsT num_items, EqualityOpT equality_op = EqualityOpT(),
+                   cudaStream_t stream = 0) {
+    size_t temp_storage_bytes = this->d_temp_storage.size();
+    return cub::DeviceScan::InclusiveScanByKey(
+        this->storagePtr(), temp_storage_bytes, d_keys_in, d_values_in,
+        d_values_out, scan_op, num_items, equality_op, stream);
   }
 };
 
@@ -372,9 +413,8 @@ struct ExclusiveSum : public CubWrapper<StreamOrdered> {
   cudaError_t exec(InputIteratorT d_in, OutputIteratorT d_out,
                    NumItemsT num_items, cudaStream_t stream = 0) {
     size_t temp_storage_bytes = this->d_temp_storage.size();
-    return cub::DeviceScan::ExclusiveSum(this->storagePtr(),
-                                         temp_storage_bytes, d_in, d_out,
-                                         num_items, stream);
+    return cub::DeviceScan::ExclusiveSum(this->storagePtr(), temp_storage_bytes,
+                                         d_in, d_out, num_items, stream);
   }
 };
 
@@ -404,9 +444,8 @@ struct ExclusiveSumInPlace : public CubWrapper<StreamOrdered> {
   cudaError_t exec(IteratorT d_inout, NumItemsT num_items,
                    cudaStream_t stream = 0) {
     size_t temp_storage_bytes = this->d_temp_storage.size();
-    return cub::DeviceScan::ExclusiveSum(this->storagePtr(),
-                                         temp_storage_bytes, d_inout, num_items,
-                                         stream);
+    return cub::DeviceScan::ExclusiveSum(this->storagePtr(), temp_storage_bytes,
+                                         d_inout, num_items, stream);
   }
 };
 
@@ -454,9 +493,8 @@ struct Reduce : public CubWrapper<StreamOrdered> {
                    T initialValue, cudaStream_t stream = 0) {
     size_t temp_storage_bytes = this->d_temp_storage.size();
     return cub::DeviceSegmentedReduce::Reduce(
-        this->storagePtr(), temp_storage_bytes, d_in, d_out,
-        num_segments, d_begin_offsets, d_end_offsets, reduction_op,
-        initialValue, stream);
+        this->storagePtr(), temp_storage_bytes, d_in, d_out, num_segments,
+        d_begin_offsets, d_end_offsets, reduction_op, initialValue, stream);
   }
 };
 
@@ -502,8 +540,8 @@ struct Encode : public CubWrapper<StreamOrdered> {
                    cudaStream_t stream = 0) {
     size_t temp_storage_bytes = this->d_temp_storage.size();
     return cub::DeviceRunLengthEncode::Encode(
-        this->storagePtr(), temp_storage_bytes, d_in,
-        d_unique_out, d_lengths_out, d_num_runs_out, num_items, stream);
+        this->storagePtr(), temp_storage_bytes, d_in, d_unique_out,
+        d_lengths_out, d_num_runs_out, num_items, stream);
   }
 };
 
