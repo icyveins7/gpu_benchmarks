@@ -5,11 +5,12 @@
 #include <iostream>
 
 struct NaiveScanOp {
-  __device__ int8_t operator()(int8_t a, int8_t b) { return a < b ? a : b; }
+  __device__ int8_t operator()(int8_t a, int8_t b) { return b < a ? b : a; }
 };
 
 struct PackedScanOp {
-  __device__ int32_t operator()(int32_t a, int32_t b) {
+  __device__ uint32_t operator()(uint32_t a, uint32_t b) {
+    // TODO: this is still kinda wrong
     // extract last byte from a
     int8_t a_end = a & 0xFF;
     // extract all bytes from b
@@ -18,12 +19,22 @@ struct PackedScanOp {
     int8_t b2 = (b & 0x0000FF00) >> 8;
     int8_t b3 = (b & 0x000000FF);
 
-    int8_t r0 = a_end < b0 ? a_end : b0;
-    int8_t r1 = b0 < b1 ? b0 : b1;
-    int8_t r2 = b1 < b2 ? b1 : b2;
-    int8_t r3 = b2 < b3 ? b2 : b3;
+    int8_t r0 = b0 < a_end ? b0 : a_end;
+    int8_t r1 = b1 < b0 ? b1 : b0;
+    int8_t r2 = b2 < b1 ? b2 : b1;
+    int8_t r3 = b3 < b2 ? b3 : b2;
     return (r0 << 24) | (r1 << 16) | (r2 << 8) | r3;
   }
+
+  // __device__ uint32_t operator()(uint32_t a, uint32_t b) {
+  //   // extract last byte from a
+  //   int8_t a_end = a & 0xFF;
+  //
+  //   // custom blending
+  //   uint32_t left = a_end << 24 | b >> 8;
+  //   unsigned int mask = __vcmpgts4(b, left);
+  //   return (mask & left) | (~mask & b);
+  // }
 };
 
 int main(int argc, char *argv[]) {
@@ -69,6 +80,7 @@ int main(int argc, char *argv[]) {
 
     if (width <= 8 && height <= 8) {
       d_out.toHost(h_in);
+      cudaDeviceSynchronize();
       auto out = h_in.cimage();
       for (int i = 0; i < height; ++i) {
         for (int j = 0; j < width; ++j) {
@@ -81,18 +93,20 @@ int main(int argc, char *argv[]) {
   }
 
   {
+    using Tpacked = uint32_t;
     Tidx packedWidth = width / 4;
     auto rowKeys = thrust::make_transform_iterator(
         thrust::make_counting_iterator(0),
         cubw::helpers::IndexToRowFunctor<Tidx>{(Tidx)(packedWidth)});
-    cubw::DeviceScan::InclusiveScanByKey<decltype(rowKeys), int32_t *, int8_t *,
+    cubw::DeviceScan::InclusiveScanByKey<decltype(rowKeys), Tpacked *, int8_t *,
                                          PackedScanOp>
         scan(packedWidth * height);
-    scan.exec(rowKeys, (int32_t *)d_in.vec.data().get(), d_out.vec.data().get(),
+    scan.exec(rowKeys, (Tpacked *)d_in.vec.data().get(), d_out.vec.data().get(),
               PackedScanOp{}, packedWidth * height);
 
     if (width <= 8 && height <= 8) {
       d_out.toHost(h_in);
+      cudaDeviceSynchronize();
       auto out = h_in.cimage();
       for (int i = 0; i < height; ++i) {
         for (int j = 0; j < width; ++j) {
