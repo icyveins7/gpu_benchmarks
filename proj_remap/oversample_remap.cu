@@ -1,6 +1,9 @@
-#include <cmath>
 #include <fstream>
 #include <iostream>
+
+#define _USE_MATH_DEFINES
+#include <cmath>
+#include <numeric>
 
 #include "containers/image.cuh"
 #include "oversampleKernels.cuh"

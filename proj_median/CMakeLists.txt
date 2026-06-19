@@ -6,6 +6,7 @@ DESCRIPTION "Kernels to perform medians"
   LANGUAGES CXX CUDA)
 
 # --------------------
+if(NOT WIN32)
 set_source_files_properties(medianExample.cu PROPERTIES LANGUAGE CUDA)
 add_executable(medianExample)
 
@@ -18,6 +19,7 @@ target_sources(
   medianExample PRIVATE
   ${PROJECT_SOURCE_DIR}/medianExample.cu
 )
+endif()
 
 # -------------------- Tests
 # if (GTEST_FOUND)

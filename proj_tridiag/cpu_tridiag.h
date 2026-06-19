@@ -1,4 +1,5 @@
 #include <stdexcept>
+#include <string>
 
 /**
  * @brief Lifted from Numerical Recipes.

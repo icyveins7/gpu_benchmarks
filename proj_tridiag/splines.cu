@@ -1,3 +1,4 @@
+#define _USE_MATH_DEFINES
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -176,8 +177,7 @@ int main(int argc, char *argv[]) {
     int off = row * N;
     for (int i = 0; i < N; ++i) {
       hx[off + i] = Real(i);
-      hy[off + i] =
-          sin(Real(2) * Real(M_PI) * Real(i) / Real(N)) + randf();
+      hy[off + i] = sin(Real(2) * Real(M_PI) * Real(i) / Real(N)) + randf();
     }
   }
 
@@ -203,7 +203,7 @@ int main(int argc, char *argv[]) {
   thrust::device_vector<CubicSpline<Real>> dsplines_periodic(NUM_ROWS * N);
 
   // Cyclic solver needs separate input arrays (survive across 2 PCR solves)
-  TridiagPCRWorkspace<Real> ws_arr(NUM_ROWS, N); // arranged coefficients
+  TridiagPCRWorkspace<Real> ws_arr(NUM_ROWS, N);    // arranged coefficients
   thrust::device_vector<Real> dz_out(NUM_ROWS * N); // z output
   thrust::device_vector<Real> dXPeriod = hXPeriod;
 
@@ -211,10 +211,10 @@ int main(int argc, char *argv[]) {
   periodic_spline_blockwise_kernel<Real><<<NUM_ROWS, NUM_THREADS>>>(
       dx.data().get(), dy.data().get(), dsplines_periodic.data().get(),
       ws_arr.buf0_a_ptr(), ws_arr.buf0_b_ptr(), ws_arr.buf0_c_ptr(),
-      ws_arr.buf0_rhs_ptr(), ws.buf0_a_ptr(), ws.buf0_b_ptr(),
-      ws.buf0_c_ptr(), ws.buf0_rhs_ptr(), ws.buf1_a_ptr(), ws.buf1_b_ptr(),
-      ws.buf1_c_ptr(), ws.buf1_rhs_ptr(), dz_out.data().get(),
-      dlen.data().get(), N, NUM_ROWS, dXPeriod.data().get());
+      ws_arr.buf0_rhs_ptr(), ws.buf0_a_ptr(), ws.buf0_b_ptr(), ws.buf0_c_ptr(),
+      ws.buf0_rhs_ptr(), ws.buf1_a_ptr(), ws.buf1_b_ptr(), ws.buf1_c_ptr(),
+      ws.buf1_rhs_ptr(), dz_out.data().get(), dlen.data().get(), N, NUM_ROWS,
+      dXPeriod.data().get());
   cudaDeviceSynchronize();
   timer.stop();
 
@@ -227,16 +227,14 @@ int main(int argc, char *argv[]) {
     for (int i = 0; i < N; ++i) {
       const auto &s = hsplines_periodic[off + i];
       if (verbose) {
-        printf(
-            "  [%2d] x=[%+.4f, %+.4f]  a=%+.6f  b=%+.6f  c=%+.6f  d=%+.6f\n",
-            i, s.xmin, s.xmax, s.a, s.b, s.c, s.d);
+        printf("  [%2d] x=[%+.4f, %+.4f]  a=%+.6f  b=%+.6f  c=%+.6f  d=%+.6f\n",
+               i, s.xmin, s.xmax, s.a, s.b, s.c, s.d);
 
         // Continuity: S_i(xmax) should equal y[i+1] (wrapping for last)
         Real yEnd = s.evaluate(s.xmax);
         int inext = (i + 1) % N;
-        printf("       S(%+.4f) = %+.10f  y[%d] = %+.10f  diff = %e\n",
-               s.xmax, yEnd, inext, hy[off + inext],
-               fabs(yEnd - hy[off + inext]));
+        printf("       S(%+.4f) = %+.10f  y[%d] = %+.10f  diff = %e\n", s.xmax,
+               yEnd, inext, hy[off + inext], fabs(yEnd - hy[off + inext]));
       }
     }
     if (verbose)

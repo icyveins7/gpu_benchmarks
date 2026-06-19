@@ -6,27 +6,27 @@ project(
   LANGUAGES CXX CUDA)
 
 # --------------------
-if (CUDAToolkit_VERSION VERSION_LESS "13.0")
-set_source_files_properties(floodfillnpp.cu PROPERTIES LANGUAGE CUDA)
-add_executable(floodfillnpp)
-
-target_include_directories(floodfillnpp
-                           PRIVATE ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
-                           )
-
-target_link_libraries(
-  floodfillnpp
-  PRIVATE
-  CUDA::nppc_static
-  CUDA::nppif_static
-  CUDA::culibos
-)
-
-target_sources(
-  floodfillnpp PRIVATE
-  ${PROJECT_SOURCE_DIR}/floodfillnpp.cu
-)
-endif()
+# if (CUDAToolkit_VERSION VERSION_LESS "13.0")
+# set_source_files_properties(floodfillnpp.cu PROPERTIES LANGUAGE CUDA)
+# add_executable(floodfillnpp)
+#
+# target_include_directories(floodfillnpp
+#                            PRIVATE ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
+#                            )
+#
+# target_link_libraries(
+#   floodfillnpp
+#   PRIVATE
+#   CUDA::nppc_static
+#   CUDA::nppif_static
+#   CUDA::culibos
+# )
+#
+# target_sources(
+#   floodfillnpp PRIVATE
+#   ${PROJECT_SOURCE_DIR}/floodfillnpp.cu
+# )
+# endif()
 
 # # -------------------- Tests
 # if (GTEST_FOUND)

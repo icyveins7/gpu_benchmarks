@@ -1,4 +1,5 @@
 #include <cub/cub.cuh>
+#include <cuda/std/cmath>
 #include <thrust/device_vector.h>
 #include <thrust/host_vector.h>
 
@@ -17,7 +18,7 @@ template <typename T> __global__ void readNanKernel(const T *x, int len) {
     NOTE: BIG STUPID MISTAKE. DO NOT USE == (ABOVE) to CHECK FOR NANS. IT WILL
     FAIL.
     */
-    if (std::isnan(x[i])) {
+    if (cuda::std::isnan(x[i])) {
       printf("%d NAN via isnan\n", i);
     }
   }
