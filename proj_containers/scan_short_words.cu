@@ -1,0 +1,108 @@
+#include "containers/cubwrappers.cuh"
+#include "containers/image.cuh"
+#include <cstdint>
+#include <cstdlib>
+#include <iostream>
+
+struct NaiveScanOp {
+  __device__ int8_t operator()(int8_t a, int8_t b) { return a < b ? a : b; }
+};
+
+struct PackedScanOp {
+  __device__ int32_t operator()(int32_t a, int32_t b) {
+    // extract last byte from a
+    int8_t a_end = a & 0xFF;
+    // extract all bytes from b
+    int8_t b0 = (b & 0xFF000000) >> 24;
+    int8_t b1 = (b & 0x00FF0000) >> 16;
+    int8_t b2 = (b & 0x0000FF00) >> 8;
+    int8_t b3 = (b & 0x000000FF);
+
+    int8_t r0 = a_end < b0 ? a_end : b0;
+    int8_t r1 = b0 < b1 ? b0 : b1;
+    int8_t r2 = b1 < b2 ? b1 : b2;
+    int8_t r3 = b2 < b3 ? b2 : b3;
+    return (r0 << 24) | (r1 << 16) | (r2 << 8) | r3;
+  }
+};
+
+int main(int argc, char *argv[]) {
+  printf("Maximising scan speed\n");
+
+  int width = 16384, height = 16384;
+  if (argc >= 3) {
+    width = atoi(argv[1]);
+    height = atoi(argv[2]);
+  }
+  printf("width: %d, height: %d\n", width, height);
+
+  containers::PinnedHostImageStorage<int8_t> h_in(width, height);
+  for (int i = 0; i < width * height; ++i) {
+    h_in.vec[i] = std::rand() % 8;
+  }
+  if (width <= 8 && height <= 8) {
+    auto in = h_in.cimage();
+    for (int i = 0; i < height; ++i) {
+      for (int j = 0; j < width; ++j) {
+        printf("%hhd ", in.at(i, j));
+      }
+      printf("\n");
+    }
+    printf("----------\n");
+  }
+
+  containers::DeviceImageStorage<int8_t> d_in(width, height);
+  h_in.toDevice(d_in);
+  containers::DeviceImageStorage<int8_t> d_out(width, height);
+
+  using Tidx = int16_t;
+
+  {
+    auto rowKeys = thrust::make_transform_iterator(
+        thrust::make_counting_iterator(0),
+        cubw::helpers::IndexToRowFunctor<Tidx>{(Tidx)width});
+    cubw::DeviceScan::InclusiveScanByKey<decltype(rowKeys), int8_t *, int8_t *,
+                                         NaiveScanOp>
+        scan(width * height);
+    scan.exec(rowKeys, d_in.vec.data().get(), d_out.vec.data().get(),
+              NaiveScanOp{}, width * height);
+
+    if (width <= 8 && height <= 8) {
+      d_out.toHost(h_in);
+      auto out = h_in.cimage();
+      for (int i = 0; i < height; ++i) {
+        for (int j = 0; j < width; ++j) {
+          printf("%hhd ", out.at(i, j));
+        }
+        printf("\n");
+      }
+      printf("----------\n");
+    }
+  }
+
+  {
+    Tidx packedWidth = width / 4;
+    auto rowKeys = thrust::make_transform_iterator(
+        thrust::make_counting_iterator(0),
+        cubw::helpers::IndexToRowFunctor<Tidx>{(Tidx)(packedWidth)});
+    cubw::DeviceScan::InclusiveScanByKey<decltype(rowKeys), int32_t *, int8_t *,
+                                         PackedScanOp>
+        scan(packedWidth * height);
+    scan.exec(rowKeys, (int32_t *)d_in.vec.data().get(), d_out.vec.data().get(),
+              PackedScanOp{}, packedWidth * height);
+
+    if (width <= 8 && height <= 8) {
+      d_out.toHost(h_in);
+      auto out = h_in.cimage();
+      for (int i = 0; i < height; ++i) {
+        for (int j = 0; j < width; ++j) {
+          printf("%hhd ", out.at(i, j));
+        }
+        printf("\n");
+      }
+      printf("----------\n");
+    }
+  }
+
+  return 0;
+}

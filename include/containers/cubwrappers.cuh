@@ -547,4 +547,59 @@ struct Encode : public CubWrapper<StreamOrdered> {
 
 } // namespace DeviceRunLengthEncode
 
+// ===========================
+// Helpers
+// ===========================
+namespace helpers {
+
+/**
+ * @brief Common transform functor to turn a counting iterator into a row index
+ * based on a width. Useful for segmented calls like InclusiveScanByKey.
+ * Intended to be used with a thrust::make_transform_iterator.
+ *
+ * @example
+ * For a 2x2 image, a counting_iterator
+ * 0 1
+ * 2 3
+ * becomes
+ * 0 0
+ * 1 1
+ *
+ * @tparam T Type used for indices
+ */
+template <typename T> struct IndexToRowFunctor {
+  T width = 0;
+
+  __host__ __device__ __forceinline__ T operator()(T index) const {
+    return index / width;
+  }
+};
+
+/**
+ * @brief Common transform functor to turn a counting iterator into a reversed
+ * row index based on a width. Useful for segmented calls like
+ * InclusiveScanByKey, but backwards (speed is equivalent to forwards scan since
+ * still coalesced). Intended to be used with a thrust::make_transform_iterator.
+ *
+ * @example
+ * For a 2x2 image, a counting_iterator
+ * 3 2
+ * 1 0
+ * becomes
+ * 0 0
+ * 1 1
+ *
+ * @tparam T Type used for indices
+ */
+template <typename T> struct ReverseIndexToRowFunctor {
+  T width;
+  T total; // height * width of image
+
+  __host__ __device__ __forceinline__ T operator()(T i) const {
+    return (total - 1 - i) / width;
+  }
+};
+
+} // namespace helpers
+
 } // namespace cubw

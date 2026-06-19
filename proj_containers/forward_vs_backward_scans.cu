@@ -21,18 +21,8 @@ was likely noise).
 
 #include <containers/cubwrappers.cuh>
 
-struct IndexToRowFunctor {
-  int width;
-  __host__ __device__ int operator()(int i) const { return i / width; }
-};
-
-struct ReverseIndexToRowFunctor {
-  int width;
-  int total;
-  __host__ __device__ int operator()(int i) const {
-    return (total - 1 - i) / width;
-  }
-};
+using IndexToRowFunctor = cubw::helpers::IndexToRowFunctor<int>;
+using ReverseIndexToRowFunctor = cubw::helpers::ReverseIndexToRowFunctor<int>;
 
 using FwdKeyIter = thrust::transform_iterator<IndexToRowFunctor,
                                               thrust::counting_iterator<int>>;

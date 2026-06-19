@@ -128,6 +128,18 @@ target_sources(
   forward_vs_backward_scans PRIVATE
   ${PROJECT_SOURCE_DIR}/forward_vs_backward_scans.cu
 )
+# --------------------
+set_source_files_properties(${PROJECT_SOURCE_DIR}/scan_short_words.cu PROPERTIES LANGUAGE CUDA)
+add_executable(scan_short_words)
+
+target_include_directories(scan_short_words
+                           PRIVATE ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
+                           )
+
+target_sources(
+  scan_short_words PRIVATE
+  ${PROJECT_SOURCE_DIR}/scan_short_words.cu
+)
 
 # -------------------- Tests
 if (GTEST_FOUND)
