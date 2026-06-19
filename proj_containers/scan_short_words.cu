@@ -1,3 +1,9 @@
+/*
+ * NOTE: this entire file's premise is wrong!
+ * Packed scan cannot be done this way. It will produce incorrect results.
+ *
+ */
+
 #include "containers/cubwrappers.cuh"
 #include "containers/image.cuh"
 #include <cstdint>
@@ -10,20 +16,22 @@ struct NaiveScanOp {
 
 struct PackedScanOp {
   __device__ uint32_t operator()(uint32_t a, uint32_t b) {
-    // TODO: this is still kinda wrong
-    // extract last byte from a
-    int8_t a_end = a & 0xFF;
+    // this doesn't work! it's wrong
     // extract all bytes from b
-    int8_t b0 = (b & 0xFF000000) >> 24;
-    int8_t b1 = (b & 0x00FF0000) >> 16;
-    int8_t b2 = (b & 0x0000FF00) >> 8;
-    int8_t b3 = (b & 0x000000FF);
+    int8_t b0 = (b & 0x000000FF);
+    int8_t b1 = (b & 0x0000FF00) >> 8;
+    int8_t b2 = (b & 0x00FF0000) >> 16;
+    int8_t b3 = (b & 0xFF000000) >> 24;
 
-    int8_t r0 = b0 < a_end ? b0 : a_end;
-    int8_t r1 = b1 < b0 ? b1 : b0;
-    int8_t r2 = b2 < b1 ? b2 : b1;
-    int8_t r3 = b3 < b2 ? b3 : b2;
-    return (r0 << 24) | (r1 << 16) | (r2 << 8) | r3;
+    // extract last byte from a
+    int8_t a0 = (int8_t)(a & 0xFF);
+
+    int8_t r0 = b0 < a0 ? b0 : a0;
+    int8_t r1 = b1 < r0 ? b1 : r0;
+    int8_t r2 = b2 < r1 ? b2 : r1;
+    int8_t r3 = b3 < r2 ? b3 : r2;
+    return (uint32_t)(r3 << 24) | (uint32_t)(r2 << 16) | (uint32_t)(r1 << 8) |
+           (uint32_t)r0;
   }
 
   // __device__ uint32_t operator()(uint32_t a, uint32_t b) {
