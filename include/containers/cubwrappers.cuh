@@ -639,6 +639,41 @@ template <typename T> auto makeRowIndexIterator(T width) {
 }
 
 /**
+ * @brief Transform functor that maps a flat element index to its column number.
+ * Produces column keys for use with segmented CUB/Thrust calls like
+ * InclusiveScanByKey, where each column is an independent segment.
+ *
+ * @example
+ * For a 2x2 image (width=2), a counting_iterator
+ * 0 1
+ * 2 3
+ * becomes col keys
+ * 0 1
+ * 0 1
+ *
+ * @tparam T Integer index type
+ */
+template <typename T> struct IndexToColFunctor {
+  static_assert(std::is_integral_v<T>, "T must be an integer type");
+  T width = 0; // width of image
+
+  __host__ __device__ __forceinline__ T operator()(T index) const {
+    return index % width;
+  }
+};
+
+/**
+ * @brief Returns a transform_iterator that maps flat element indices to column
+ * keys, suitable as the key iterator for segmented CUB/Thrust calls.
+ *
+ * @param width Width of the image
+ */
+template <typename T> auto makeColIndexIterator(T width) {
+  return thrust::make_transform_iterator(thrust::make_counting_iterator<T>(0),
+                                         IndexToColFunctor<T>{width});
+}
+
+/**
  * @brief Transform functor that maps a flat index over a subset of selected
  * rows to a flat memory index into the full image. Selects every row_stride-th
  * row (rows 0, row_stride, 2*row_stride, ...). Suitable for use with
