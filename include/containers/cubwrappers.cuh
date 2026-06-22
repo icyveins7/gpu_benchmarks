@@ -5,6 +5,9 @@
 #include <cuda/std/functional>
 
 #include <thrust/device_vector.h>
+#include <thrust/iterator/counting_iterator.h>
+#include <thrust/iterator/permutation_iterator.h>
+#include <thrust/iterator/transform_iterator.h>
 
 #include <type_traits>
 
@@ -553,27 +556,116 @@ struct Encode : public CubWrapper<StreamOrdered> {
 namespace helpers {
 
 /**
- * @brief Common transform functor to turn a counting iterator into a row index
- * based on a width. Useful for segmented calls like InclusiveScanByKey.
- * Intended to be used with a thrust::make_transform_iterator.
+ * @brief Transform functor that maps a flat element index to its row number.
+ * Produces segment keys for use with segmented CUB/Thrust calls like
+ * InclusiveScanByKey, where each row is an independent segment.
  *
  * @example
- * For a 2x2 image, a counting_iterator
+ * For a 2x2 image (width=2), a counting_iterator
  * 0 1
  * 2 3
- * becomes
+ * becomes row keys
  * 0 0
  * 1 1
  *
- * @tparam T Type used for indices
+ * @tparam T Integer index type
  */
 template <typename T> struct IndexToRowFunctor {
-  T width = 0;
+  static_assert(std::is_integral_v<T>, "T must be an integer type");
+  T width = 0; // width of image
 
   __host__ __device__ __forceinline__ T operator()(T index) const {
     return index / width;
   }
 };
+
+/**
+ * @brief Returns a transform_iterator that maps flat element indices to row
+ * keys, suitable as the key iterator for segmented CUB/Thrust calls.
+ *
+ * @detail The result of this function is an iterator that can be passed
+ * directly to the key input iterator of segmented CUB calls like
+ * InclusiveScanByKey.
+ *
+ * @param width Width of the image
+ */
+template <typename T> auto makeRowIndexIterator(T width) {
+  return thrust::make_transform_iterator(thrust::make_counting_iterator<T>(0),
+                                         IndexToRowFunctor<T>{width});
+}
+
+/**
+ * @brief Transform functor that maps a flat index over a subset of selected
+ * rows to a flat memory index into the full image. Selects every row_stride-th
+ * row (rows 0, row_stride, 2*row_stride, ...). Suitable for use with
+ * thrust::make_permutation_iterator to read/write those rows.
+ *
+ * @example
+ * For width=10, row_stride=4 (accessing rows 0, 4, 8, ...):
+ * selected row 0 (indices  0- 9) → flat offsets  0- 9
+ * selected row 1 (indices 10-19) → flat offsets 40-49
+ * selected row 2 (indices 20-29) → flat offsets 80-89
+ *
+ * @tparam T Integer index type
+ */
+template <typename T> struct IndexToRowStridedIndexFunctor {
+  static_assert(std::is_integral_v<T>, "T must be an integer type");
+  T width = 0; // width of image
+  T row_stride =
+      0; // every row_stride-th row is selected (e.g. 4 → rows 0,4,8,...)
+
+  __host__ __device__ __forceinline__ T operator()(T index) const {
+    return (index / width) * row_stride * width + (index % width);
+  }
+};
+
+/**
+ * @brief Returns a transform_iterator that maps flat indices over selected rows
+ * to flat memory indices into the full image, suitable as the index argument to
+ * thrust::make_permutation_iterator.
+ *
+ * @param width     Width of the image
+ * @param row_stride Every row_stride-th row is selected (e.g. 4 → rows
+ * 0,4,8,...)
+ */
+template <typename T> auto makeRowStridedIndexIterator(T width, T row_stride) {
+  return thrust::make_transform_iterator(
+      thrust::make_counting_iterator<T>(0),
+      IndexToRowStridedIndexFunctor<T>{width, row_stride});
+}
+
+/**
+ * @brief Returns a permutation_iterator over @p ptr that accesses every
+ * row_stride-th row of the image. Convenience wrapper around
+ * makeRowStridedIndexIterator.
+ *
+ * @example
+ * For a 4x3 image (M=4 rows, N=3 cols) with row_stride=2,
+ * makeRowStridedIterator(ptr, 3, 2) accesses rows 0 and 2:
+ *
+ *   row 0: [  0,  1,  2 ]  ← iter[0], iter[1], iter[2]
+ *   row 1: [  3,  4,  5 ]
+ *   row 2: [  6,  7,  8 ]  ← iter[3], iter[4], iter[5]
+ *   row 3: [  9, 10, 11 ]
+ *
+ * For InclusiveScanByKey over those 2 selected rows (6 elements total),
+ * this is the value iterator. The matching key iterator, which resets the
+ * scan at each row boundary, is makeRowIndexIterator:
+ *
+ *   auto vals = makeRowStridedIterator(ptr, 3, 2);
+ *   auto keys = makeRowIndexIterator<int>(3);   // keys: 0 0 0 1 1 1
+ *   cubw::DeviceScan::InclusiveScanByKey<...> scan(6);
+ *   scan.exec(keys, vals, out, 6);
+ *
+ * @param ptr        Pointer to the start of the image
+ * @param width      Width of the image (N)
+ * @param row_stride Every row_stride-th row is selected (e.g. 4 → rows 0,4,8,...)
+ */
+template <typename Ptr, typename T>
+auto makeRowStridedIterator(Ptr ptr, T width, T row_stride) {
+  return thrust::make_permutation_iterator(ptr,
+                                           makeRowStridedIndexIterator(width, row_stride));
+}
 
 /**
  * @brief Common transform functor to turn a counting iterator into a reversed

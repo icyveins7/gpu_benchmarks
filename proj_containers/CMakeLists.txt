@@ -179,4 +179,9 @@ if (GTEST_FOUND)
   add_executable(test_cubwrappers_streamorderedstorage test_cubwrappers_streamorderedstorage.cu ${CMAKE_SOURCE_DIR}/src/containers/streams.cu)
   target_link_libraries(test_cubwrappers_streamorderedstorage GTest::gtest_main)
   gtest_discover_tests(test_cubwrappers_streamorderedstorage)
+
+  # --------------------
+  add_executable(test_cubwrappers_conveniencefunctors test_cubwrappers_conveniencefunctors.cu)
+  target_link_libraries(test_cubwrappers_conveniencefunctors GTest::gtest_main)
+  gtest_discover_tests(test_cubwrappers_conveniencefunctors)
 endif()
