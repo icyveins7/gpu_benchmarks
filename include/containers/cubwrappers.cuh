@@ -388,6 +388,50 @@ struct InclusiveScanByKey : public CubWrapper<StreamOrdered> {
   }
 };
 
+template <typename KeysInputIteratorT, typename ValuesInputIteratorT,
+          typename ValuesOutputIteratorT, typename ScanOpT, typename InitValueT,
+          typename EqualityOpT = ::cuda::std::equal_to<>,
+          typename NumItemsT = uint32_t, bool StreamOrdered = false>
+struct ExclusiveScanByKey : public CubWrapper<StreamOrdered> {
+  ExclusiveScanByKey() {}
+
+  template <bool S = StreamOrdered, std::enable_if_t<!S, int> = 0>
+  ExclusiveScanByKey(NumItemsT num_items) {
+    this->resizeStorage((size_t)num_items);
+  }
+
+  template <bool S = StreamOrdered, std::enable_if_t<S, int> = 0>
+  ExclusiveScanByKey(NumItemsT num_items, cudaStream_t stream) {
+    this->resizeStorage((size_t)num_items, stream);
+  }
+
+  size_t getStorageBytes(size_t num_items) override {
+    size_t temp_storage_bytes = 0;
+    ScanOpT scan_op{};
+    InitValueT init_value{};
+    EqualityOpT equality_op{};
+    KeysInputIteratorT inputkeys{};
+    ValuesInputIteratorT input{};
+    ValuesOutputIteratorT output{};
+    cub::DeviceScan::ExclusiveScanByKey(nullptr, temp_storage_bytes, inputkeys,
+                                        input, output, scan_op, init_value,
+                                        num_items, equality_op);
+    return temp_storage_bytes;
+  }
+
+  cudaError_t exec(KeysInputIteratorT d_keys_in,
+                   ValuesInputIteratorT d_values_in,
+                   ValuesOutputIteratorT d_values_out, ScanOpT scan_op,
+                   InitValueT init_value, NumItemsT num_items,
+                   EqualityOpT equality_op = EqualityOpT(),
+                   cudaStream_t stream = 0) {
+    size_t temp_storage_bytes = this->d_temp_storage.size();
+    return cub::DeviceScan::ExclusiveScanByKey(
+        this->storagePtr(), temp_storage_bytes, d_keys_in, d_values_in,
+        d_values_out, scan_op, init_value, num_items, equality_op, stream);
+  }
+};
+
 template <typename InputIteratorT, typename OutputIteratorT, typename NumItemsT,
           bool StreamOrdered = false>
 struct ExclusiveSum : public CubWrapper<StreamOrdered> {
@@ -659,12 +703,13 @@ template <typename T> auto makeRowStridedIndexIterator(T width, T row_stride) {
  *
  * @param ptr        Pointer to the start of the image
  * @param width      Width of the image (N)
- * @param row_stride Every row_stride-th row is selected (e.g. 4 → rows 0,4,8,...)
+ * @param row_stride Every row_stride-th row is selected (e.g. 4 → rows
+ * 0,4,8,...)
  */
 template <typename Ptr, typename T>
 auto makeRowStridedIterator(Ptr ptr, T width, T row_stride) {
-  return thrust::make_permutation_iterator(ptr,
-                                           makeRowStridedIndexIterator(width, row_stride));
+  return thrust::make_permutation_iterator(
+      ptr, makeRowStridedIndexIterator(width, row_stride));
 }
 
 /**
