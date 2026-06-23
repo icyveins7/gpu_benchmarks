@@ -51,9 +51,13 @@ So even after combining b and c into {0,2}, idx=0>=0 still signals a reset:
 
 #include <cstdint>
 #include <cstdio>
+#include <random>
 #include <vector>
 
+#include "cxxopts.hpp"
+
 #include "thrust/iterator/transform_iterator.h"
+#include "thrust/iterator/transform_output_iterator.h"
 #include "thrust/iterator/zip_iterator.h"
 
 template <typename Tflag> struct FlagAndIndex {
@@ -118,6 +122,93 @@ void printSegments(const Tflag *in_flags, const FlagAndIndex<Tflag> *scan_out,
   }
 }
 
+struct Segment {
+  int row;
+  int startcol;
+  int endcol;
+};
+
+template <typename Tflag, bool AllowWraparound = false> struct ToSegment {
+  containers::Image<FlagAndIndex<Tflag>> scan_out;
+
+  ToSegment() : scan_out(nullptr, 0, 0) {}
+  ToSegment(containers::Image<FlagAndIndex<Tflag>> out) : scan_out(out) {}
+
+  // NOTE: this entire function depends on the SelectOp below, with the
+  // AllowWraparound template being identical.
+  __host__ __device__ Segment
+  operator()(const thrust::tuple<int, int> &t) const {
+    int row = thrust::get<0>(t);
+    int col = thrust::get<1>(t);
+    // It is safe to just do this wraparound calculation all the time,
+    // since the SelectOp would not produce an output for non wraparound
+    // segments if disabled.
+    int prevCol = col == 0 ? scan_out.width - 1 : col - 1;
+    int startcol = scan_out.at(row, prevCol).idx;
+    if constexpr (AllowWraparound) {
+      // If idx < 0, there was no valid starting '1' to the left in the linear
+      // scan. The segment wraps around: the start is the last '1' in the row.
+      if (startcol < 0) {
+        startcol = scan_out.at(row, scan_out.width - 1).idx;
+        // usually 'nicer' if we present it as strictly increasing from left to
+        // right boundaries
+        startcol = startcol > col ? startcol - scan_out.width : startcol;
+      }
+    }
+    return {row, startcol, col};
+  }
+};
+
+template <typename Tflag, bool AllowWraparound = false> struct SelectOp {
+  containers::Image<Tflag> original;
+  containers::Image<FlagAndIndex<Tflag>> scan_out;
+
+  SelectOp() : original(nullptr, 0, 0), scan_out(nullptr, 0, 0) {}
+  SelectOp(containers::Image<Tflag> orig,
+           containers::Image<FlagAndIndex<Tflag>> out)
+      : original(orig), scan_out(out) {}
+
+  __host__ __device__ bool
+  operator()(const thrust::tuple<int, int> &idx) const {
+    auto row = thrust::get<0>(idx);
+    auto col = thrust::get<1>(idx);
+
+    int prevCol = col - 1;
+    Tflag originalFlag = original.at(row, col);
+    // Only look at the segment edges
+    if (originalFlag != 1)
+      return false;
+
+    if constexpr (AllowWraparound) {
+      prevCol = prevCol < 0 ? prevCol + original.width : prevCol;
+      // Read the prevCol flag, which is by definition always in bounds
+      Tflag prevColFlag = scan_out.at(row, prevCol).flag;
+      // This may either be 2 already
+      // e.g. 0 2 1 ......
+      // in which case it is already a 'valid open' segment
+      if (prevColFlag == 2) {
+        return true;
+      }
+      // or it may be an 'unknown open' segment at the front
+      // e.g. 0 0 1 ..... 1 2 0
+      // which could be 'validated' at the back
+      else if (scan_out.at(row, prevCol).idx < 0) {
+        // Then we need to check the last index
+        return scan_out.at(row, scan_out.width - 1).flag == 2;
+      }
+    }
+    // Logic for inner-only segments
+    else {
+      if (col >= 0 && prevCol >= 0 && scan_out.at(row, prevCol).flag == 2 &&
+          scan_out.at(row, prevCol).idx >= 0) {
+        return true;
+      } else {
+        return false;
+      }
+    }
+  }
+};
+
 int main(int argc, char *argv[]) {
   printf("Scans 1-2-1\n");
 
@@ -128,28 +219,48 @@ int main(int argc, char *argv[]) {
   bool assoc = testAssociativity(ScanOp<Tflag>{}, testVals);
   printf("ScanOp associative: %s\n", assoc ? "yes" : "no");
 
-  int rows = 3;
-  int cols = 8;
   // clang-format off
-  // Sections marked * have a wraparound.
-  thrust::pinned_host_vector<Tflag> h_flags = {
-    1, 2, 1, 2, 0, 1, 0, 1, // [0:2], [2:5]
-    0, 1, 0, 2, 1, 2, 0, 0, // [1:4], [4:1]*
-    0, 2, 1, 2, 1, 0, 0, 0  // [2:4], [4:2]*
-  };
+  cxxopts::Options options("scan_121", "1-2-1 segment scan");
+  options.add_options()
+    ("r,rows", "Number of rows",    cxxopts::value<int>()->default_value("4"))
+    ("c,cols", "Number of columns", cxxopts::value<int>()->default_value("8"))
+    ("h,help", "Print usage")
+  ;
   // clang-format on
-  if ((int)h_flags.size() != rows * cols) {
-    throw std::runtime_error("Mismatched flags dimensions, " +
-                             std::to_string(h_flags.size()) +
-                             " != " + std::to_string(rows * cols));
+  auto result = options.parse(argc, argv);
+  if (result.count("help")) {
+    printf("%s\n", options.help().c_str());
+    return 0;
   }
 
-  containers::DeviceImageStorage<Tflag> d_flags;
+  int rows = result["rows"].as<int>();
+  int cols = result["cols"].as<int>();
+  bool randomize = result.count("rows") || result.count("cols");
+
+  thrust::pinned_host_vector<Tflag> h_flags(rows * cols);
+  if (randomize) {
+    std::mt19937 rng(42);
+    std::uniform_int_distribution<int> dist(0, 2);
+    for (auto &f : h_flags)
+      f = (Tflag)dist(rng);
+  } else {
+    // clang-format off
+    // Sections marked * have a wraparound.
+    h_flags = {
+      1, 2, 1, 2, 0, 1, 0, 1, // [0:2], [2:5]
+      0, 1, 0, 2, 1, 2, 0, 0, // [1:4], [4:1]*
+      0, 2, 1, 2, 1, 0, 0, 0, // [2:4], [4:2]*
+      0, 2, 1, 2, 1, 0, 0, 1  // [2:4], [4:7], [7:2]*
+    };
+    // clang-format on
+  }
+
+  containers::DeviceImageStorage<Tflag> d_flags(cols, rows);
   d_flags.vec = h_flags;
 
-  containers::DeviceImageStorage<FlagAndIndex<Tflag>> d_out(rows, cols);
+  containers::DeviceImageStorage<FlagAndIndex<Tflag>> d_out(cols, rows);
 
-  // Create iterators
+  // Create scan iterators
   auto values_iter = thrust::make_transform_iterator(
       thrust::make_zip_iterator(d_flags.vec.data().get(),
                                 cubw::helpers::makeColIndexIterator(cols)),
@@ -164,11 +275,11 @@ int main(int argc, char *argv[]) {
       scanner(rows * cols);
   scanner.exec(keys_iter, values_iter, out_iter, ScanOp<Tflag>{}, rows * cols);
 
-  containers::PinnedHostImageStorage<FlagAndIndex<Tflag>> h_out(rows, cols);
+  containers::PinnedHostImageStorage<FlagAndIndex<Tflag>> h_out(cols, rows);
   d_out.toHost(h_out);
 
   cudaDeviceSynchronize();
-  if (rows == 3 && cols == 8) {
+  if (rows * cols <= 64) {
     for (int i = 0; i < rows; ++i) {
       for (int j = 0; j < cols; ++j) {
         printf("%2d ", h_flags[i * cols + j]);
@@ -198,6 +309,36 @@ int main(int argc, char *argv[]) {
       printSegments<Tflag>(h_flags.data().get() + i * cols,
                            h_out.vec.data().get() + i * cols, cols);
       printf("-----------------------\n");
+    }
+  }
+
+  // Create selector iterators
+  thrust::device_vector<Segment> d_select_output(rows * cols);
+  thrust::device_vector<unsigned int> d_select_count(1);
+  auto select_in_iter =
+      thrust::make_zip_iterator(cubw::helpers::makeRowIndexIterator(cols),
+                                cubw::helpers::makeColIndexIterator(cols));
+  auto select_out_iter = thrust::make_transform_output_iterator(
+      d_select_output.data().get(), ToSegment<Tflag, true>{d_out.image()});
+  auto selectOp = SelectOp<Tflag, true>{d_flags.image(), d_out.image()};
+
+  cubw::DeviceSelect::If<decltype(select_in_iter), decltype(select_out_iter),
+                         decltype(d_select_count.data().get()),
+                         SelectOp<Tflag, true>>
+      selector(rows * cols);
+
+  selector.exec(select_in_iter, select_out_iter, d_select_count.data().get(),
+                rows * cols, selectOp);
+
+  cudaDeviceSynchronize();
+  thrust::pinned_host_vector<unsigned int> h_select_count = d_select_count;
+  thrust::host_vector<Segment> h_select_output = d_select_output;
+  printf("Select count: %u\n", h_select_count[0]);
+
+  if (rows * cols <= 64) {
+    for (int i = 0; i < (int)h_select_count[0]; ++i) {
+      auto &s = h_select_output[i];
+      printf("row=%d [%d:%d]\n", s.row, s.startcol, s.endcol);
     }
   }
 
