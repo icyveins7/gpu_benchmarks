@@ -140,6 +140,18 @@ target_sources(
   scan_short_words PRIVATE
   ${PROJECT_SOURCE_DIR}/scan_short_words.cu
 )
+# --------------------
+set_source_files_properties(${PROJECT_SOURCE_DIR}/scan_121.cu PROPERTIES LANGUAGE CUDA)
+add_executable(scan_121)
+
+target_include_directories(scan_121
+                           PRIVATE ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
+                           )
+
+target_sources(
+  scan_121 PRIVATE
+  ${PROJECT_SOURCE_DIR}/scan_121.cu
+)
 
 # -------------------- Tests
 if (GTEST_FOUND)
