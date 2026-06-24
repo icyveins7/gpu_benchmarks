@@ -612,13 +612,15 @@ namespace helpers {
  * 0 0
  * 1 1
  *
- * @tparam T Integer index type
+ * @tparam Trow   Integer type; choose type that can hold max rows/columns
+ * @tparam Tcount Integer type; choose type that can hold max elements
  */
-template <typename T> struct IndexToRowFunctor {
-  static_assert(std::is_integral_v<T>, "T must be an integer type");
-  T width = 0; // width of image
+template <typename Trow, typename Tcount = int32_t> struct IndexToRowFunctor {
+  static_assert(std::is_integral_v<Trow>, "Trow must be an integer type");
+  static_assert(std::is_integral_v<Tcount>, "Tcount must be an integer type");
+  Trow width = 0; // width of image
 
-  __host__ __device__ __forceinline__ T operator()(T index) const {
+  __host__ __device__ __forceinline__ Trow operator()(Tcount index) const {
     return index / width;
   }
 };
@@ -631,11 +633,15 @@ template <typename T> struct IndexToRowFunctor {
  * directly to the key input iterator of segmented CUB calls like
  * InclusiveScanByKey.
  *
+ * @tparam Trow   Integer type; choose type that can hold max rows/columns
+ * @tparam Tcount Integer type; choose type that can hold max elements
  * @param width Width of the image
  */
-template <typename T> auto makeRowIndexIterator(T width) {
-  return thrust::make_transform_iterator(thrust::make_counting_iterator<T>(0),
-                                         IndexToRowFunctor<T>{width});
+template <typename Trow, typename Tcount = int32_t>
+auto makeRowIndexIterator(Trow width) {
+  return thrust::make_transform_iterator(
+      thrust::make_counting_iterator<Tcount>(0),
+      IndexToRowFunctor<Trow, Tcount>{width});
 }
 
 /**
@@ -651,13 +657,15 @@ template <typename T> auto makeRowIndexIterator(T width) {
  * 0 1
  * 0 1
  *
- * @tparam T Integer index type
+ * @tparam Tcol Integer index type; choose type that can hold max columns
+ * @tparam Tcount Integer index type; choose type that can hold max elements
  */
-template <typename T> struct IndexToColFunctor {
-  static_assert(std::is_integral_v<T>, "T must be an integer type");
-  T width = 0; // width of image
+template <typename Tcol, typename Tcount = int32_t> struct IndexToColFunctor {
+  static_assert(std::is_integral_v<Tcol>, "T must be an integer type");
+  static_assert(std::is_integral_v<Tcount>, "Tcount must be an integer type");
+  Tcol width = 0; // width of image
 
-  __host__ __device__ __forceinline__ T operator()(T index) const {
+  __host__ __device__ __forceinline__ Tcol operator()(Tcount index) const {
     return index % width;
   }
 };
@@ -666,11 +674,15 @@ template <typename T> struct IndexToColFunctor {
  * @brief Returns a transform_iterator that maps flat element indices to column
  * keys, suitable as the key iterator for segmented CUB/Thrust calls.
  *
+ * @tparam Tcol   Integer type; choose type that can hold max columns
+ * @tparam Tcount Integer type; choose type that can hold max elements
  * @param width Width of the image
  */
-template <typename T> auto makeColIndexIterator(T width) {
-  return thrust::make_transform_iterator(thrust::make_counting_iterator<T>(0),
-                                         IndexToColFunctor<T>{width});
+template <typename Tcol, typename Tcount = int32_t>
+auto makeColIndexIterator(Tcol width) {
+  return thrust::make_transform_iterator(
+      thrust::make_counting_iterator<Tcount>(0),
+      IndexToColFunctor<Tcol, Tcount>{width});
 }
 
 /**
@@ -685,15 +697,18 @@ template <typename T> auto makeColIndexIterator(T width) {
  * selected row 1 (indices 10-19) → flat offsets 40-49
  * selected row 2 (indices 20-29) → flat offsets 80-89
  *
- * @tparam T Integer index type
+ * @tparam Trow   Integer type; choose type that can hold max rows/columns
+ * @tparam Tcount Integer type; choose type that can hold max elements
  */
-template <typename T> struct IndexToRowStridedIndexFunctor {
-  static_assert(std::is_integral_v<T>, "T must be an integer type");
-  T width = 0; // width of image
-  T row_stride =
+template <typename Trow, typename Tcount = int32_t>
+struct IndexToRowStridedIndexFunctor {
+  static_assert(std::is_integral_v<Trow>, "T must be an integer type");
+  static_assert(std::is_integral_v<Tcount>, "Tcount must be an integer type");
+  Trow width = 0; // width of image
+  Trow row_stride =
       0; // every row_stride-th row is selected (e.g. 4 → rows 0,4,8,...)
 
-  __host__ __device__ __forceinline__ T operator()(T index) const {
+  __host__ __device__ __forceinline__ Tcount operator()(Tcount index) const {
     return (index / width) * row_stride * width + (index % width);
   }
 };
@@ -703,14 +718,17 @@ template <typename T> struct IndexToRowStridedIndexFunctor {
  * to flat memory indices into the full image, suitable as the index argument to
  * thrust::make_permutation_iterator.
  *
+ * @tparam Trow   Integer type; choose type that can hold max rows/columns
+ * @tparam Tcount Integer type; choose type that can hold max elements
  * @param width     Width of the image
  * @param row_stride Every row_stride-th row is selected (e.g. 4 → rows
  * 0,4,8,...)
  */
-template <typename T> auto makeRowStridedIndexIterator(T width, T row_stride) {
+template <typename Trow, typename Tcount = int32_t>
+auto makeRowStridedIndexIterator(Trow width, Trow row_stride) {
   return thrust::make_transform_iterator(
-      thrust::make_counting_iterator<T>(0),
-      IndexToRowStridedIndexFunctor<T>{width, row_stride});
+      thrust::make_counting_iterator<Tcount>(0),
+      IndexToRowStridedIndexFunctor<Trow, Tcount>{width, row_stride});
 }
 
 /**
@@ -736,15 +754,18 @@ template <typename T> auto makeRowStridedIndexIterator(T width, T row_stride) {
  *   cubw::DeviceScan::InclusiveScanByKey<...> scan(6);
  *   scan.exec(keys, vals, out, 6);
  *
+ * @tparam Ptr    Pointer type to the image data
+ * @tparam Trow   Integer type; choose type that can hold max rows/columns
+ * @tparam Tcount Integer type; choose type that can hold max elements
  * @param ptr        Pointer to the start of the image
  * @param width      Width of the image (N)
  * @param row_stride Every row_stride-th row is selected (e.g. 4 → rows
  * 0,4,8,...)
  */
-template <typename Ptr, typename T>
-auto makeRowStridedIterator(Ptr ptr, T width, T row_stride) {
+template <typename Ptr, typename Trow, typename Tcount = int32_t>
+auto makeRowStridedIterator(Ptr ptr, Trow width, Trow row_stride) {
   return thrust::make_permutation_iterator(
-      ptr, makeRowStridedIndexIterator(width, row_stride));
+      ptr, makeRowStridedIndexIterator<Trow, Tcount>(width, row_stride));
 }
 
 /**
@@ -761,13 +782,15 @@ auto makeRowStridedIterator(Ptr ptr, T width, T row_stride) {
  * 0 0
  * 1 1
  *
- * @tparam T Type used for indices
+ * @tparam Trow   Integer type; choose type that can hold max rows/columns
+ * @tparam Tcount Integer type; choose type that can hold max elements
  */
-template <typename T> struct ReverseIndexToRowFunctor {
-  T width;
-  T total; // height * width of image
+template <typename Trow, typename Tcount = int32_t>
+struct ReverseIndexToRowFunctor {
+  Trow width;
+  Tcount total; // height * width of image
 
-  __host__ __device__ __forceinline__ T operator()(T i) const {
+  __host__ __device__ __forceinline__ Trow operator()(Tcount i) const {
     return (total - 1 - i) / width;
   }
 };
