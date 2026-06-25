@@ -51,3 +51,31 @@ TEST(ContainersCubwHelpers, StridedRowIndexIterator) {
   ASSERT_EQ(iter[20], 80);
   ASSERT_EQ(iter[29], 89);
 }
+
+TEST(ContainersCubwHelpers, ReverseRowIndexIterator) {
+  // width=2, total=6 (3 rows × 2 cols); reversed element at i is (total-1-i),
+  // its row is (total-1-i) / width → 2 2 1 1 0 0
+  const int width = 2, total = 6;
+  auto iter = cubw::helpers::makeReverseRowIndexIterator<int>(width, total);
+
+  ASSERT_EQ(iter[0], 2);
+  ASSERT_EQ(iter[1], 2);
+  ASSERT_EQ(iter[2], 1);
+  ASSERT_EQ(iter[3], 1);
+  ASSERT_EQ(iter[4], 0);
+  ASSERT_EQ(iter[5], 0);
+}
+
+TEST(ContainersCubwHelpers, ReverseColIndexIterator) {
+  // width=2, total=6 (3 rows × 2 cols); reversed element at i is (total-1-i),
+  // its column is (total-1-i) % width → 1 0 1 0 1 0
+  const int width = 2, total = 6;
+  auto iter = cubw::helpers::makeReverseColIndexIterator<int>(width, total);
+
+  ASSERT_EQ(iter[0], 1);
+  ASSERT_EQ(iter[1], 0);
+  ASSERT_EQ(iter[2], 1);
+  ASSERT_EQ(iter[3], 0);
+  ASSERT_EQ(iter[4], 1);
+  ASSERT_EQ(iter[5], 0);
+}

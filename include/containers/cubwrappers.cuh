@@ -772,21 +772,25 @@ auto makeRowStridedIterator(Ptr ptr, Trow width, Trow row_stride) {
  * @brief Common transform functor to turn a counting iterator into a reversed
  * row index based on a width. Useful for segmented calls like
  * InclusiveScanByKey, but backwards (speed is equivalent to forwards scan since
- * still coalesced). Intended to be used with a thrust::make_transform_iterator.
+ * still coalesced). Intended to be used with a thrust::make_transform_iterator,
+ * see makeReverseRowIndexIterator.
  *
  * @example
- * For a 2x2 image, a counting_iterator
+ * For a 2x2 image, a counting_iterator (showing in reverse)
  * 3 2
  * 1 0
  * becomes
  * 0 0
  * 1 1
  *
+ * Together with the IndexToReverseColFunctor/makeReverseColIndexIterator,
+ * one can transform a pointer to an image, iterating values in reverse.
+ *
  * @tparam Trow   Integer type; choose type that can hold max rows/columns
  * @tparam Tcount Integer type; choose type that can hold max elements
  */
 template <typename Trow, typename Tcount = int32_t>
-struct ReverseIndexToRowFunctor {
+struct IndexToReverseRowFunctor {
   Trow width;
   Tcount total; // height * width of image
 
@@ -794,6 +798,71 @@ struct ReverseIndexToRowFunctor {
     return (total - 1 - i) / width;
   }
 };
+
+/**
+ * @brief Returns a transform_iterator that turns a standard counting iterator
+ * into a reversed row index iterator, suitable as the key iterator for
+ * segmented CUB/Thrust calls.
+ *
+ * @tparam Tcol   Integer type; choose type that can hold max columns
+ * @tparam Tcount Integer type; choose type that can hold max elements
+ * @param width Width of image
+ * @param total Total number of elements (height * width)
+ */
+template <typename Tcol, typename Tcount = int32_t>
+auto makeReverseRowIndexIterator(Tcol width, Tcount total) {
+  return thrust::make_transform_iterator(
+      thrust::make_counting_iterator<Tcount>(0),
+      IndexToReverseRowFunctor<Tcol, Tcount>{width, total});
+}
+
+/**
+ * @brief Common transform functor to turn a counting iterator into a reversed
+ * column index based on a width. Useful for segmented calls like
+ * InclusiveScanByKey, but backwards along columns (speed is equivalent to
+ * forwards scan since still coalesced). Intended to be used with a
+ * thrust::make_transform_iterator, see makeReverseColIndexIterator.
+ *
+ * @example
+ * For a 2x2 image (width=2, total=4), a counting_iterator (showing in reverse)
+ * 3 2
+ * 1 0
+ * becomes col keys
+ * 0 1
+ * 0 1
+ *
+ * Together with the IndexToReverseRowFunctor/makeReverseRowIndexIterator,
+ * one can transform a pointer to an image, iterating values in reverse.
+ *
+ * @tparam Tcol   Integer type; choose type that can hold max columns
+ * @tparam Tcount Integer type; choose type that can hold max elements
+ */
+template <typename Tcol, typename Tcount = int32_t>
+struct IndexToReverseColFunctor {
+  Tcol width;
+  Tcount total; // height * width of image
+
+  __host__ __device__ __forceinline__ Tcol operator()(Tcount i) const {
+    return (total - 1 - i) % width;
+  }
+};
+
+/**
+ * @brief Returns a transform_iterator that maps flat element indices to
+ * reversed column keys, suitable to index a values pointer for segmented
+ * CUB/Thrust calls scanning columns in reverse.
+ *
+ * @tparam Tcol   Integer type; choose type that can hold max columns
+ * @tparam Tcount Integer type; choose type that can hold max elements
+ * @param width Width of the image
+ * @param total Total number of elements (height * width)
+ */
+template <typename Tcol, typename Tcount = int32_t>
+auto makeReverseColIndexIterator(Tcol width, Tcount total) {
+  return thrust::make_transform_iterator(
+      thrust::make_counting_iterator<Tcount>(0),
+      IndexToReverseColFunctor<Tcol, Tcount>{width, total});
+}
 
 } // namespace helpers
 

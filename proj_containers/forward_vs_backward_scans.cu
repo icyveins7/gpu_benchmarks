@@ -22,11 +22,11 @@ was likely noise).
 #include <containers/cubwrappers.cuh>
 
 using IndexToRowFunctor = cubw::helpers::IndexToRowFunctor<int>;
-using ReverseIndexToRowFunctor = cubw::helpers::ReverseIndexToRowFunctor<int>;
+using IndexToReverseRowFunctor = cubw::helpers::IndexToReverseRowFunctor<int>;
 
 using FwdKeyIter = thrust::transform_iterator<IndexToRowFunctor,
                                               thrust::counting_iterator<int>>;
-using RevKeyIter = thrust::transform_iterator<ReverseIndexToRowFunctor,
+using RevKeyIter = thrust::transform_iterator<IndexToReverseRowFunctor,
                                               thrust::counting_iterator<int>>;
 
 int main(int argc, char *argv[]) {
@@ -73,7 +73,7 @@ int main(int argc, char *argv[]) {
   // --- Backward scan (right-to-left within each row) ---
   auto revKeyIter = thrust::make_transform_iterator(
       thrust::make_counting_iterator(0),
-      ReverseIndexToRowFunctor{cols, totalSize});
+      IndexToReverseRowFunctor{cols, totalSize});
 
   const DataT *d_vals_ptr = d_values.data().get();
   DataT *d_out_bwd_ptr = d_out_bwd.data().get();
