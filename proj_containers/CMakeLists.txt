@@ -196,4 +196,9 @@ if (GTEST_FOUND)
   add_executable(test_cubwrappers_conveniencefunctors test_cubwrappers_conveniencefunctors.cu)
   target_link_libraries(test_cubwrappers_conveniencefunctors GTest::gtest_main)
   gtest_discover_tests(test_cubwrappers_conveniencefunctors)
+
+  # --------------------
+  add_executable(test_pinnedbuffer test_pinnedbuffer.cu)
+  target_link_libraries(test_pinnedbuffer GTest::gtest_main)
+  gtest_discover_tests(test_pinnedbuffer)
 endif()

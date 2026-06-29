@@ -46,3 +46,4 @@ build/
 *.nsys-rep
 __pycache__/
 *.png
+.codegraph/
