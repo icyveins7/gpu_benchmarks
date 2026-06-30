@@ -45,7 +45,26 @@ struct PackedScanOp {
   // }
 };
 
-int main(int argc, char *argv[]) {
+struct PackedScanTransform {
+  __device__ uint32_t operator()(uint32_t a) {
+    // extract all bytes from b
+    int8_t a0 = (a & 0x000000FF);
+    int8_t a1 = (a & 0x0000FF00) >> 8;
+    int8_t a2 = (a & 0x00FF0000) >> 16;
+    int8_t a3 = (a & 0xFF000000) >> 24;
+
+    int8_t r0 = a0;
+    int8_t r1 = a1 < r0 ? a1 : r0;
+    int8_t r2 = a2 < r1 ? a2 : r1;
+    int8_t r3 = a3 < r2 ? a3 : r2;
+
+    printf("%d->%d %d->%d %d->%d %d->%d\n", a0, r0, a1, r1, a2, r2, a3, r3);
+    return (uint32_t)(r3 << 24) | (uint32_t)(r2 << 16) | (uint32_t)(r1 << 8) |
+           (uint32_t)r0;
+  }
+};
+
+int main(int argc, char* argv[]) {
   printf("Maximising scan speed\n");
 
   int width = 16384, height = 16384;
@@ -59,7 +78,7 @@ int main(int argc, char *argv[]) {
   for (int i = 0; i < width * height; ++i) {
     h_in.vec[i] = std::rand() % 8;
   }
-  if (width <= 8 && height <= 8) {
+  if (width <= 12 && height <= 8) {
     auto in = h_in.cimage();
     for (int i = 0; i < height; ++i) {
       for (int j = 0; j < width; ++j) {
@@ -80,13 +99,13 @@ int main(int argc, char *argv[]) {
     auto rowKeys = thrust::make_transform_iterator(
         thrust::make_counting_iterator(0),
         cubw::helpers::IndexToRowFunctor<Tidx>{(Tidx)width});
-    cubw::DeviceScan::InclusiveScanByKey<decltype(rowKeys), int8_t *, int8_t *,
+    cubw::DeviceScan::InclusiveScanByKey<decltype(rowKeys), int8_t*, int8_t*,
                                          NaiveScanOp>
         scan(width * height);
     scan.exec(rowKeys, d_in.vec.data().get(), d_out.vec.data().get(),
               NaiveScanOp{}, width * height);
 
-    if (width <= 8 && height <= 8) {
+    if (width <= 12 && height <= 8) {
       d_out.toHost(h_in);
       cudaDeviceSynchronize();
       auto out = h_in.cimage();
@@ -106,13 +125,15 @@ int main(int argc, char *argv[]) {
     auto rowKeys = thrust::make_transform_iterator(
         thrust::make_counting_iterator(0),
         cubw::helpers::IndexToRowFunctor<Tidx>{(Tidx)(packedWidth)});
-    cubw::DeviceScan::InclusiveScanByKey<decltype(rowKeys), Tpacked *, int8_t *,
-                                         PackedScanOp>
+    auto input = thrust::make_transform_iterator(
+        (Tpacked*)d_in.vec.data().get(), PackedScanTransform{});
+    cubw::DeviceScan::InclusiveScanByKey<decltype(rowKeys), decltype(input),
+                                         int8_t*, PackedScanOp>
         scan(packedWidth * height);
-    scan.exec(rowKeys, (Tpacked *)d_in.vec.data().get(), d_out.vec.data().get(),
-              PackedScanOp{}, packedWidth * height);
+    scan.exec(rowKeys, input, d_out.vec.data().get(), PackedScanOp{},
+              packedWidth * height);
 
-    if (width <= 8 && height <= 8) {
+    if (width <= 12 && height <= 8) {
       d_out.toHost(h_in);
       cudaDeviceSynchronize();
       auto out = h_in.cimage();
