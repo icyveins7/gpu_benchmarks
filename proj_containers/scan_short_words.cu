@@ -4,10 +4,13 @@
  *
  */
 
+#include "RowWisePackedInclusiveScan.cuh"
 #include "containers/cubwrappers.cuh"
 #include "containers/image.cuh"
 #include <cstdint>
 #include <cstdlib>
+#include <cub/thread/thread_operators.cuh>
+#include <cuda_runtime_api.h>
 #include <iostream>
 
 struct NaiveScanOp {
@@ -75,14 +78,16 @@ int main(int argc, char* argv[]) {
   printf("width: %d, height: %d\n", width, height);
 
   containers::PinnedHostImageStorage<int8_t> h_in(width, height);
+  containers::PinnedHostImageStorage<int8_t> h_outGroundtruth(width, height);
   for (int i = 0; i < width * height; ++i) {
-    h_in.vec[i] = std::rand() % 8;
+    // h_in.vec[i] = std::rand() % 100;
+    h_in.vec[i] = std::rand() % 3 - 1; // to use for addition
   }
-  if (width <= 12 && height <= 8) {
+  if (width <= 32 && height <= 8) {
     auto in = h_in.cimage();
     for (int i = 0; i < height; ++i) {
       for (int j = 0; j < width; ++j) {
-        printf("%hhd ", in.at(i, j));
+        printf("%3hhd ", in.at(i, j));
       }
       printf("\n");
     }
@@ -100,18 +105,20 @@ int main(int argc, char* argv[]) {
         thrust::make_counting_iterator(0),
         cubw::helpers::IndexToRowFunctor<Tidx>{(Tidx)width});
     cubw::DeviceScan::InclusiveScanByKey<decltype(rowKeys), int8_t*, int8_t*,
-                                         NaiveScanOp>
+                                         // NaiveScanOp>
+                                         cuda::std::plus<int8_t>>
         scan(width * height);
     scan.exec(rowKeys, d_in.vec.data().get(), d_out.vec.data().get(),
-              NaiveScanOp{}, width * height);
+              // NaiveScanOp{}, width * height);
+              cuda::std::plus<int8_t>{}, width * height);
 
-    if (width <= 12 && height <= 8) {
-      d_out.toHost(h_in);
-      cudaDeviceSynchronize();
-      auto out = h_in.cimage();
+    d_out.toHost(h_outGroundtruth);
+    cudaDeviceSynchronize();
+    if (width <= 32 && height <= 8) {
+      auto out = h_outGroundtruth.cimage();
       for (int i = 0; i < height; ++i) {
         for (int j = 0; j < width; ++j) {
-          printf("%hhd ", out.at(i, j));
+          printf("%3hhd ", out.at(i, j));
         }
         printf("\n");
       }
@@ -119,31 +126,68 @@ int main(int argc, char* argv[]) {
     }
   }
 
+  // // TODO: this is still wrong.
+  // {
+  //   using Tpacked = uint32_t;
+  //   Tidx packedWidth = width / 4;
+  //   auto rowKeys = thrust::make_transform_iterator(
+  //       thrust::make_counting_iterator(0),
+  //       cubw::helpers::IndexToRowFunctor<Tidx>{(Tidx)(packedWidth)});
+  //   auto input = thrust::make_transform_iterator(
+  //       (Tpacked*)d_in.vec.data().get(), PackedScanTransform{});
+  //   cubw::DeviceScan::InclusiveScanByKey<decltype(rowKeys), decltype(input),
+  //                                        int8_t*, PackedScanOp>
+  //       scan(packedWidth * height);
+  //   scan.exec(rowKeys, input, d_out.vec.data().get(), PackedScanOp{},
+  //             packedWidth * height);
+  //
+  //   if (width <= 32 && height <= 8) {
+  //     d_out.toHost(h_in);
+  //     cudaDeviceSynchronize();
+  //     auto out = h_in.cimage();
+  //     for (int i = 0; i < height; ++i) {
+  //       for (int j = 0; j < width; ++j) {
+  //         printf("%3hhd ", out.at(i, j));
+  //       }
+  //       printf("\n");
+  //     }
+  //     printf("----------\n");
+  //   }
+  // }
+  //
+
+  // Custom kernel for packed row-wise scan
   {
     using Tpacked = uint32_t;
-    Tidx packedWidth = width / 4;
-    auto rowKeys = thrust::make_transform_iterator(
-        thrust::make_counting_iterator(0),
-        cubw::helpers::IndexToRowFunctor<Tidx>{(Tidx)(packedWidth)});
-    auto input = thrust::make_transform_iterator(
-        (Tpacked*)d_in.vec.data().get(), PackedScanTransform{});
-    cubw::DeviceScan::InclusiveScanByKey<decltype(rowKeys), decltype(input),
-                                         int8_t*, PackedScanOp>
-        scan(packedWidth * height);
-    scan.exec(rowKeys, input, d_out.vec.data().get(), PackedScanOp{},
-              packedWidth * height);
-
-    if (width <= 12 && height <= 8) {
+    constexpr int NUM_THREADS = 256;
+    int blks = d_in.height;
+    packedwords_rowwise_inclusive_scan_kernel<int8_t, Tpacked, NUM_THREADS>
+        <<<blks, NUM_THREADS>>>(d_in.cimage(), d_out.image(),
+                                // cuda::minimum<int8_t>{});
+                                cuda::std::plus<int8_t>{});
+    if (width <= 32 && height <= 8) {
       d_out.toHost(h_in);
       cudaDeviceSynchronize();
       auto out = h_in.cimage();
       for (int i = 0; i < height; ++i) {
         for (int j = 0; j < width; ++j) {
-          printf("%hhd ", out.at(i, j));
+          printf("%3hhd ", out.at(i, j));
         }
         printf("\n");
       }
       printf("----------\n");
+    }
+
+    // Custom check
+    d_out.toHost(h_in);
+    cudaDeviceSynchronize();
+    printf("Checking results..\n");
+    for (int i = 0; i < d_out.width * d_out.height; ++i) {
+      if (h_in.vec[i] != h_outGroundtruth.vec[i]) {
+        printf("ERROR: at index %d, expected %3hhd, got %3hhd\n", i,
+               h_outGroundtruth.vec[i], h_in.vec[i]);
+        return 1;
+      }
     }
   }
 
