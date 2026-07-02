@@ -161,7 +161,13 @@ int main(int argc, char* argv[]) {
     using Tpacked = uint32_t;
     constexpr int NUM_THREADS = 256;
     int blks = d_in.height;
-    packedwords_rowwise_inclusive_scan_kernel<int8_t, Tpacked, NUM_THREADS>
+    // packedwords_rowwise_inclusive_scan_kernel<int8_t, Tpacked, NUM_THREADS>
+    // packedwords_rowwise_inclusive_scan_pipelined_kernel<int8_t, Tpacked,
+    //                                                     NUM_THREADS>
+    // packedwords_rowwise_inclusive_scan_barrier_kernel<int8_t, Tpacked,
+    //                                                   NUM_THREADS>
+    packedwords_rowwise_inclusive_scan_cpipelineprimitive_kernel<
+        int8_t, Tpacked, NUM_THREADS>
         <<<blks, NUM_THREADS>>>(d_in.cimage(), d_out.image(),
                                 // cuda::minimum<int8_t>{});
                                 cuda::std::plus<int8_t>{});
