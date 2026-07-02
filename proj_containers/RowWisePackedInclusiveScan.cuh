@@ -12,11 +12,20 @@
 #include "containers/image.cuh"
 #include "cub/cub.cuh"
 
+#include <cuda/std/version>
+// For older CUDA versions before 12.9(?)
+#if CUDA_VERSION < 12090
+#include <thrust/functional.h>
+template <typename T> using MaxOp = thrust::maximum<T>;
+#else
+template <typename T> using MaxOp = ::cuda::maximum<T>;
+#endif
+
 template <typename T, typename Tpacked, int NUM_THREADS,
-          typename ScanOp = cuda::maximum<T>>
+          typename ScanOp = MaxOp<T>>
 __global__ void packedwords_rowwise_inclusive_scan_kernel(
     const containers::Image<const T> input, containers::Image<T> output,
-    ScanOp op = cuda::maximum<T>{}) {
+    ScanOp op = MaxOp<T>{}) {
   constexpr int PACKSIZE = sizeof(Tpacked) / sizeof(T);
 
   // Each block handles one row
