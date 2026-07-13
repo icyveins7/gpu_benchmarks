@@ -94,7 +94,8 @@ TEST(PinnedHostBuffer, FlagsDefaultUnallocated) {
 
 // Note: cudaHostAllocDefault (0) cannot be directly verified via flags()
 // because CUDA always reports cudaHostAllocMapped (2) regardless of whether
-// it was explicitly requested. Even cudaHostAllocPortable appears to return 2.
+// it was explicitly requested. Using Portable (1) returns 3 due to CUDA's
+// internal OR-ing of the two flags.
 TEST(PinnedHostBuffer, FlagsPortablePrint) {
   containers::PinnedHostBuffer<int> buf(4, cudaHostAllocPortable);
   printf("[  INFO    ] flags() with cudaHostAllocPortable = %u\n", buf.flags());
