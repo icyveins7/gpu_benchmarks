@@ -1,5 +1,6 @@
 #include "containers/pinnedbuffer.cuh"
 #include "gtest/gtest.h"
+#include <cuda.h>
 
 TEST(PinnedHostBuffer, DefaultConstructor) {
   containers::PinnedHostBuffer<int> buf;
@@ -181,6 +182,75 @@ TEST(PinnedHostBuffer, MappedKernelWrite) {
 
   for (int i = 0; i < N; ++i)
     EXPECT_EQ(42, buf.data()[i]);
+}
+
+// Verifies that cudaHostAllocPortable memory is genuinely accessible from a
+// second device. Requires >= 2 devices; skips otherwise.
+// Large allocation (4 MB) is intentional: small allocations may share a page
+// with a prior default-registered allocation and silently lose the portable
+// flag (see flags() docstring). We verify the flag stuck before proceeding.
+TEST(PinnedHostBuffer, PortableKernelWriteFromSecondDevice) {
+  int ndevices = 0;
+  ASSERT_EQ(cudaSuccess, cudaGetDeviceCount(&ndevices));
+  if (ndevices < 2) {
+    printf("[  WARNING ] fewer than 2 devices; skipping portable test\n");
+    return;
+  }
+
+  // Set cudaDeviceMapHost for device 1 before its context is initialised.
+  // cudaSetDeviceFlags is best-effort: it may fail if the context already
+  // exists. Either way, check the flags afterwards to decide whether to
+  // proceed.
+  ASSERT_EQ(cudaSuccess, cudaSetDevice(1));
+  cudaSetDeviceFlags(cudaDeviceMapHost);
+  unsigned int dev1flags = 0;
+  ASSERT_EQ(cudaSuccess, cudaGetDeviceFlags(&dev1flags));
+  if (!(dev1flags & cudaDeviceMapHost)) {
+    printf("[  WARNING ] cudaDeviceMapHost not set for device 1; skipping\n");
+    cudaSetDevice(0);
+    return;
+  }
+  ASSERT_EQ(cudaSuccess, cudaSetDevice(0));
+
+  // Large enough allocation to land on its own page so the portable flag
+  // sticks.
+  const size_t N = 1024 * 1024; // 4 MB
+  containers::PinnedHostBuffer<int> buf(N, cudaHostAllocPortable |
+                                               cudaHostAllocMapped);
+  if (!(buf.flags() & cudaHostAllocPortable)) {
+    printf(
+        "[  WARNING ] portable flag did not stick (page sharing); skipping\n");
+    return;
+  }
+
+  // cudaFree(nullptr) is a no-op but guarantees device 0's context exists
+  // so cuCtxGetCurrent returns a valid handle.
+  ASSERT_EQ(cudaSuccess, cudaFree(nullptr));
+  CUcontext ctx0 = nullptr;
+  cuCtxGetCurrent(&ctx0);
+
+  ASSERT_EQ(cudaSuccess, cudaSetDevice(1));
+  CUcontext ctx1 = nullptr;
+  cuCtxGetCurrent(&ctx1);
+  // CUcontext is an opaque pointer (typedef struct CUctx_st*). The driver owns
+  // the context object and always returns the same pointer for the same context,
+  // so pointer equality is the correct and sufficient identity check — there is
+  // no aliasing or copying of the underlying struct.
+  ASSERT_NE(ctx0, ctx1) << "device 0 and device 1 must have distinct contexts";
+
+  // Write from device 1 via its own device pointer for the portable buffer.
+  int* d_ptr = nullptr;
+  ASSERT_EQ(cudaSuccess, cudaHostGetDevicePointer(&d_ptr, buf.data(), 0));
+  fill_kernel<<<(N + 255) / 256, 256>>>(d_ptr, (int)N, 99);
+  ASSERT_EQ(cudaSuccess, cudaDeviceSynchronize());
+
+  ASSERT_EQ(cudaSuccess, cudaSetDevice(0));
+  CUcontext ctx0_restored = nullptr;
+  cuCtxGetCurrent(&ctx0_restored);
+  ASSERT_EQ(ctx0, ctx0_restored);
+
+  for (size_t i = 0; i < N; ++i)
+    EXPECT_EQ(99, buf.data()[i]);
 }
 
 // Same as MappedKernelWrite but the buffer starts default-constructed and

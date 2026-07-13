@@ -199,6 +199,6 @@ if (GTEST_FOUND)
 
   # --------------------
   add_executable(test_pinnedbuffer test_pinnedbuffer.cu)
-  target_link_libraries(test_pinnedbuffer GTest::gtest_main)
+  target_link_libraries(test_pinnedbuffer GTest::gtest_main CUDA::cuda_driver)
   gtest_discover_tests(test_pinnedbuffer)
 endif()
