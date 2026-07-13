@@ -7,16 +7,16 @@ DESCRIPTION "Basic operations"
 
 # --------------------
 set_source_files_properties(basicops.cu PROPERTIES LANGUAGE CUDA)
-add_executable(basicops)
 
-target_include_directories(basicops
-                           PRIVATE ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
-                           )
+foreach(_type int float double cuComplex)
+  string(TOLOWER "${_type}" _suffix)
+  add_executable(basicops_${_suffix})
+  target_include_directories(basicops_${_suffix}
+                             PRIVATE ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES})
+  target_sources(basicops_${_suffix} PRIVATE ${PROJECT_SOURCE_DIR}/basicops.cu)
+  target_compile_options(basicops_${_suffix} PRIVATE -DBASICOPS_TYPE=${_type})
+endforeach()
 
-target_sources(
-  basicops PRIVATE
-  ${PROJECT_SOURCE_DIR}/basicops.cu
-)
 # --------------------
 set_source_files_properties(inflate.cu PROPERTIES LANGUAGE CUDA)
 add_executable(inflate)

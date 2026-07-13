@@ -1,11 +1,36 @@
 #include <iostream>
 
+#include <thrust/copy.h>
 #include <thrust/device_vector.h>
+#include <thrust/fill.h>
+#include <thrust/functional.h>
 #include <thrust/host_vector.h>
+#include <thrust/transform.h>
 
+#include <cuComplex.h>
 #include <nvtx3/nvToolsExt.h>
 
-int main(int argc, char *argv[]) {
+#ifndef BASICOPS_TYPE
+#define BASICOPS_TYPE int
+#endif
+
+// cuComplex arithmetic operators so thrust::plus/multiplies work with it
+__host__ __device__ inline cuComplex operator+(cuComplex a, cuComplex b) {
+  return cuCaddf(a, b);
+}
+__host__ __device__ inline cuComplex operator*(cuComplex a, cuComplex b) {
+  return cuCmulf(a, b);
+}
+
+// -1 fill value, specialised for types that can't be constructed from int
+template <typename T> T minus_one() { return T(-1); }
+template <> inline cuComplex minus_one<cuComplex>() {
+  return make_cuComplex(-1.0f, 0.0f);
+}
+
+int main(int argc, char* argv[]) {
+  using T = BASICOPS_TYPE;
+
   size_t cols = 0, rows = 0;
 
   if (argc == 2) {
@@ -31,26 +56,26 @@ int main(int argc, char *argv[]) {
   }
 
   // Setup
-  thrust::host_vector<int> h_a(rows * cols);
-  thrust::device_vector<int> d_a(rows * cols);
-  thrust::host_vector<int> h_b(rows * cols);
-  thrust::device_vector<int> d_b(rows * cols);
-  thrust::host_vector<int> h_c(rows * cols);
-  thrust::device_vector<int> d_c(rows * cols);
+  thrust::host_vector<T> h_a(rows * cols);
+  thrust::device_vector<T> d_a(rows * cols);
+  thrust::host_vector<T> h_b(rows * cols);
+  thrust::device_vector<T> d_b(rows * cols);
+  thrust::host_vector<T> h_c(rows * cols);
+  thrust::device_vector<T> d_c(rows * cols);
 
   for (int i = 0; i < 3; ++i) {
     // 1a. Fill with 0s with cudaMemset
     nvtxRangePushA("cudaMemset");
-    cudaMemset(d_a.data().get(), 0, rows * cols * sizeof(int));
+    cudaMemset(d_a.data().get(), 0, rows * cols * sizeof(T));
     nvtxRangePop();
     // 1b. Fill with 0s using thrust fill
     nvtxRangePushA("thrust_fill_0");
-    thrust::fill(d_a.begin(), d_a.end(), 0);
+    thrust::fill(d_a.begin(), d_a.end(), T{});
     nvtxRangePop();
     // 2. Fill with -1 values using thrust fill
     // (cannot do this via memset since not byte-valued)
     nvtxRangePushA("thrust_fill_minus1");
-    thrust::fill(d_b.begin(), d_b.end(), -1);
+    thrust::fill(d_b.begin(), d_b.end(), minus_one<T>());
     nvtxRangePop();
 
     // 3a. Copy from a to b via thrust
@@ -59,30 +84,30 @@ int main(int argc, char *argv[]) {
     nvtxRangePop();
     // 3b. Copy from a to b via cudaMemcpy
     nvtxRangePushA("cudaMemcpyDtoD");
-    cudaMemcpy(d_b.data().get(), d_a.data().get(), rows * cols * sizeof(int),
+    cudaMemcpy(d_b.data().get(), d_a.data().get(), rows * cols * sizeof(T),
                cudaMemcpyDeviceToDevice);
     nvtxRangePop();
 
     // 4a. Add A and B in-place
     nvtxRangePushA("thrust_transform_add_inplace");
     thrust::transform(d_a.begin(), d_a.end(), d_b.begin(), d_a.begin(),
-                      thrust::plus<int>());
+                      thrust::plus<T>());
     nvtxRangePop();
     // 4b. Add A and B out-of-place
     nvtxRangePushA("thrust_transform_add_outofplace");
     thrust::transform(d_a.begin(), d_a.end(), d_b.begin(), d_c.begin(),
-                      thrust::plus<int>());
+                      thrust::plus<T>());
     nvtxRangePop();
 
     // 5a. Multiply A and B in-place
     nvtxRangePushA("thrust_transform_mul_inplace");
     thrust::transform(d_a.begin(), d_a.end(), d_b.begin(), d_a.begin(),
-                      thrust::multiplies<int>());
+                      thrust::multiplies<T>());
     nvtxRangePop();
     // 5b. Multiply A and B out-of-place
     nvtxRangePushA("thrust_transform_mul_outofplace");
     thrust::transform(d_a.begin(), d_a.end(), d_b.begin(), d_c.begin(),
-                      thrust::multiplies<int>());
+                      thrust::multiplies<T>());
     nvtxRangePop();
 
     // End. copy out to prevent possible optimizations away
