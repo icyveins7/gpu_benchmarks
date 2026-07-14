@@ -1,5 +1,18 @@
 cmake_minimum_required(VERSION 3.24)
 
+# For windows, we use vcpkg for things like GTest,
+# and there's a lot of issues with the default (which is dynamic linking)
+if (WIN32)
+  message("Using vcpkg from $ENV{VCPKG_ROOT}. If this is incorrect, please set it just before calling cmake.")
+  # Need to convert it otherwise it complains about the backslashes
+  cmake_path(SET VCPKG_TOOLCHAIN_FILE $ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake)
+  message("VCPKG_TOOLCHAIN_FILE: ${VCPKG_TOOLCHAIN_FILE}")
+  set(CMAKE_TOOLCHAIN_FILE ${VCPKG_TOOLCHAIN_FILE})
+#   set(VCPKG_TARGET_TRIPLET "x64-windows-static" CACHE STRING "Force static build for windows targets")
+#   set(VCPKG_HOST_TRIPLET "x64-windows-static" CACHE STRING "Force static build for host tools")
+#   message("x64-windows-static is enforced for vcpkg - used for GTest. You must install gtest:x64-windows-static in order to properly build the tests on Windows.")
+endif()
+#
 project(
   "gpu_benchmarks"
   DESCRIPTION "A bunch of personal task-specific tests to measure GPU speedups"
@@ -85,6 +98,14 @@ if(GTEST_FOUND)
   enable_testing()
   message(STATUS "GoogleTest found, enabling tests")
   include_directories(${GTEST_INCLUDE_DIRS})
+
+  # Save the absolute path to the generic main file in a variable
+  set(GENERIC_TEST_MAIN "${CMAKE_CURRENT_SOURCE_DIR}/test/test_main_generic.cu" CACHE INTERNAL "")
+  if (WIN32)
+    # A lot of nonsense warnings from gtest on windows..
+    add_compile_options($<$<COMPILE_LANGUAGE:CUDA>:--diag-suppress=1394>)
+    add_compile_options($<$<COMPILE_LANGUAGE:CUDA>:--diag-suppress=1388>)
+  endif()
 else()
   message(STATUS "GoogleTest not found, disabling tests")
 endif()

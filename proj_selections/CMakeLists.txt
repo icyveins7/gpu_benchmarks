@@ -36,12 +36,12 @@ if (GTEST_FOUND)
 
   # --------------------
   set_source_files_properties(test_conditioned_selections.cu PROPERTIES LANGUAGE CUDA)
-  add_executable(test_conditioned_selections test_conditioned_selections.cu)
-  target_link_libraries(test_conditioned_selections GTest::gtest_main)
+  add_executable(test_conditioned_selections test_conditioned_selections.cu ${GENERIC_TEST_MAIN})
+  target_link_libraries(test_conditioned_selections GTest::gtest)
   gtest_discover_tests(test_conditioned_selections)
   # --------------------
   set_source_files_properties(test_accessors.cu PROPERTIES LANGUAGE CUDA)
-  add_executable(test_accessors test_accessors.cu)
-  target_link_libraries(test_accessors GTest::gtest_main)
+  add_executable(test_accessors test_accessors.cu ${GENERIC_TEST_MAIN})
+  target_link_libraries(test_accessors GTest::gtest)
   gtest_discover_tests(test_accessors)
 endif()

@@ -23,7 +23,7 @@ if (GTEST_FOUND)
   message("Enabling tests for proj_fmamat")
 
   # --------------------
-  add_executable(test_fmamat test_fmamat.cu)
-  target_link_libraries(test_fmamat GTest::gtest_main)
+  add_executable(test_fmamat test_fmamat.cu ${GENERIC_TEST_MAIN})
+  target_link_libraries(test_fmamat GTest::gtest)
   gtest_discover_tests(test_fmamat)
 endif()

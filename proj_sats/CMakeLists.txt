@@ -32,11 +32,11 @@ if (GTEST_FOUND)
   message("Enabling tests for proj_sats")
 
   # --------------------
-  add_executable(test_satstructs test_satstructs.cu)
-  target_link_libraries(test_satstructs GTest::gtest_main)
+  add_executable(test_satstructs test_satstructs.cu ${GENERIC_TEST_MAIN})
+  target_link_libraries(test_satstructs GTest::gtest)
   gtest_discover_tests(test_satstructs)
   # --------------------
-  add_executable(test_satconvolve test_satconvolve.cu ${CMAKE_SOURCE_DIR}/src/containers/streams.cu)
-  target_link_libraries(test_satconvolve GTest::gtest_main)
+  add_executable(test_satconvolve test_satconvolve.cu ${CMAKE_SOURCE_DIR}/src/containers/streams.cu ${GENERIC_TEST_MAIN})
+  target_link_libraries(test_satconvolve GTest::gtest)
   gtest_discover_tests(test_satconvolve)
 endif()

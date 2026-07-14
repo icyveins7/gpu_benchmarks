@@ -104,7 +104,7 @@ if (GTEST_FOUND)
   message("Enabling tests for proj_remap")
 
   # --------------------
-  add_executable(test_remap test_remap.cu)
-  target_link_libraries(test_remap ${CUDA_nppc_LIBRARY} ${CUDA_nppig_LIBRARY} GTest::gtest_main)
+  add_executable(test_remap test_remap.cu ${GENERIC_TEST_MAIN})
+  target_link_libraries(test_remap ${CUDA_nppc_LIBRARY} ${CUDA_nppig_LIBRARY} GTest::gtest)
   gtest_discover_tests(test_remap)
 endif()

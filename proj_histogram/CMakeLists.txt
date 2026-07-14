@@ -33,7 +33,6 @@ if (GTEST_FOUND)
     target_link_libraries(test_hist PRIVATE GTest::gtest)
     py2cpptest_add_gtest(test_hist)
     py2cpptest_add_py(test_hist test_hist.py)
+    gtest_discover_tests(test_hist)
   endif()
-
-  gtest_discover_tests(test_hist)
 endif()

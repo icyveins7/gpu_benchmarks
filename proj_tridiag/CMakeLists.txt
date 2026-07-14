@@ -32,7 +32,8 @@ if (GTEST_FOUND)
 
   add_executable(test_tridiag
     ${CMAKE_CURRENT_SOURCE_DIR}/test_tridiag.cu
+    ${GENERIC_TEST_MAIN}
   )
-  target_link_libraries(test_tridiag GTest::gtest_main)
+  target_link_libraries(test_tridiag GTest::gtest)
   gtest_discover_tests(test_tridiag)
 endif()

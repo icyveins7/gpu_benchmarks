@@ -158,47 +158,47 @@ if (GTEST_FOUND)
   message("Enabling tests for proj_containers")
 
   # --------------------
-  add_executable(test_bitset test_bitset.cu)
-  target_link_libraries(test_bitset GTest::gtest_main)
+  add_executable(test_bitset test_bitset.cu ${GENERIC_TEST_MAIN})
+  target_link_libraries(test_bitset GTest::gtest)
   gtest_discover_tests(test_bitset)
 
   # --------------------
-  add_executable(test_image test_image.cu ${CMAKE_SOURCE_DIR}/src/containers/streams.cu)
-  target_link_libraries(test_image GTest::gtest_main)
+  add_executable(test_image test_image.cu ${CMAKE_SOURCE_DIR}/src/containers/streams.cu ${GENERIC_TEST_MAIN})
+  target_link_libraries(test_image GTest::gtest)
   gtest_discover_tests(test_image)
 
   # --------------------
-  add_executable(test_stream_ordered_storage test_stream_ordered_storage.cu ${CMAKE_SOURCE_DIR}/src/containers/streams.cu)
-  target_link_libraries(test_stream_ordered_storage GTest::gtest_main)
+  add_executable(test_stream_ordered_storage test_stream_ordered_storage.cu ${CMAKE_SOURCE_DIR}/src/containers/streams.cu ${GENERIC_TEST_MAIN})
+  target_link_libraries(test_stream_ordered_storage GTest::gtest)
   gtest_discover_tests(test_stream_ordered_storage)
 
   # --------------------
-  add_executable(test_cubwrappers_devicesegmentedreduce test_cubwrappers_devicesegmentedreduce.cu)
-  target_link_libraries(test_cubwrappers_devicesegmentedreduce GTest::gtest_main)
+  add_executable(test_cubwrappers_devicesegmentedreduce test_cubwrappers_devicesegmentedreduce.cu ${GENERIC_TEST_MAIN})
+  target_link_libraries(test_cubwrappers_devicesegmentedreduce GTest::gtest)
   gtest_discover_tests(test_cubwrappers_devicesegmentedreduce)
 
   # --------------------
-  add_executable(test_cubwrappers_devicerunlengthencode test_cubwrappers_devicerunlengthencode.cu)
-  target_link_libraries(test_cubwrappers_devicerunlengthencode GTest::gtest_main)
+  add_executable(test_cubwrappers_devicerunlengthencode test_cubwrappers_devicerunlengthencode.cu ${GENERIC_TEST_MAIN})
+  target_link_libraries(test_cubwrappers_devicerunlengthencode GTest::gtest)
   gtest_discover_tests(test_cubwrappers_devicerunlengthencode)
 
   # --------------------
-  add_executable(test_cubwrappers_devicescan test_cubwrappers_devicescan.cu)
-  target_link_libraries(test_cubwrappers_devicescan GTest::gtest_main)
+  add_executable(test_cubwrappers_devicescan test_cubwrappers_devicescan.cu ${GENERIC_TEST_MAIN})
+  target_link_libraries(test_cubwrappers_devicescan GTest::gtest)
   gtest_discover_tests(test_cubwrappers_devicescan)
 
   # --------------------
-  add_executable(test_cubwrappers_streamorderedstorage test_cubwrappers_streamorderedstorage.cu ${CMAKE_SOURCE_DIR}/src/containers/streams.cu)
-  target_link_libraries(test_cubwrappers_streamorderedstorage GTest::gtest_main)
+  add_executable(test_cubwrappers_streamorderedstorage test_cubwrappers_streamorderedstorage.cu ${CMAKE_SOURCE_DIR}/src/containers/streams.cu ${GENERIC_TEST_MAIN})
+  target_link_libraries(test_cubwrappers_streamorderedstorage GTest::gtest)
   gtest_discover_tests(test_cubwrappers_streamorderedstorage)
 
   # --------------------
-  add_executable(test_cubwrappers_conveniencefunctors test_cubwrappers_conveniencefunctors.cu)
-  target_link_libraries(test_cubwrappers_conveniencefunctors GTest::gtest_main)
+  add_executable(test_cubwrappers_conveniencefunctors test_cubwrappers_conveniencefunctors.cu ${GENERIC_TEST_MAIN})
+  target_link_libraries(test_cubwrappers_conveniencefunctors GTest::gtest)
   gtest_discover_tests(test_cubwrappers_conveniencefunctors)
 
   # --------------------
-  add_executable(test_pinnedbuffer test_pinnedbuffer.cu)
-  target_link_libraries(test_pinnedbuffer GTest::gtest_main CUDA::cuda_driver)
+  add_executable(test_pinnedbuffer test_pinnedbuffer.cu ${GENERIC_TEST_MAIN})
+  target_link_libraries(test_pinnedbuffer GTest::gtest CUDA::cuda_driver)
   gtest_discover_tests(test_pinnedbuffer)
 endif()
