@@ -91,12 +91,16 @@ endif()
 
 # -------------------- Add some automatic detection of virtualenv's pybind11
 execute_process(
-  COMMAND python -c "import site; import os; print(os.path.join(site.getsitepackages()[0], 'pybind11', 'share', 'cmake', 'pybind11'))"
+  COMMAND python -c "import pybind11; print(pybind11.get_cmake_dir())"
   OUTPUT_VARIABLE pybind11_DIR
   OUTPUT_STRIP_TRAILING_WHITESPACE
+  RESULT_VARIABLE pybind11_python_result
 )
+if(NOT pybind11_python_result EQUAL 0)
+  message(STATUS "Could not determine pybind11_DIR from Python (pybind11 may not be installed)")
+  unset(pybind11_DIR)
+endif()
 message(STATUS "Automatically detected pybind11_DIR: ${pybind11_DIR}")
-message(STATUS "If the above directory is incorrect, please specify it yourself.")
 set(PYBIND11_FINDPYTHON ON)
 find_package(pybind11 CONFIG)
 if (pybind11_FOUND)
