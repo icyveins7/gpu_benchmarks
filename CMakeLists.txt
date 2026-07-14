@@ -97,6 +97,13 @@ execute_process(
 )
 message(STATUS "Automatically detected pybind11_DIR: ${pybind11_DIR}")
 message(STATUS "If the above directory is incorrect, please specify it yourself.")
+set(PYBIND11_FINDPYTHON ON)
+find_package(pybind11 CONFIG)
+if (pybind11_FOUND)
+  message(STATUS "pybind11 found, enabling pybind11-dependent targets")
+else()
+  message(STATUS "pybind11 not found, disabling pybind11-dependent targets")
+endif()
 
 # -------------------- Include individual project directories
 add_subdirectory(proj_grid_polynomials)

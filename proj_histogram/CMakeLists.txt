@@ -23,11 +23,10 @@ target_sources(
 if (GTEST_FOUND)
   message("Enabling tests for proj_histogram")
 
-  if (DEFINED pybind11_DIR)
+  if (pybind11_FOUND)
     include(${CMAKE_CURRENT_SOURCE_DIR}/../py2cpptest/unittest.cmake)
 
     # --------------------
-    include(${CMAKE_CURRENT_SOURCE_DIR}/../py2cpptest/unittest.cmake)
     set_source_files_properties(test_hist.cpp PROPERTIES LANGUAGE CUDA)
     add_executable(test_hist test_hist.cpp)
     target_include_directories(test_hist PRIVATE ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES})
