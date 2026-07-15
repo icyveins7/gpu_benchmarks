@@ -41,6 +41,9 @@ __global__ void packedwords_rowwise_inclusive_scan_kernel(
   __shared__ typename BlockScan::TempStorage tempStorage;
   __shared__ Tpacked s_data[NUM_THREADS]; // +1 in case of incomplete word
   T* s_data_small = (T*)s_data;
+  // NOTE: only used if you do the single-BlockScan variant
+  // __shared__ T s_prefix[NUM_THREADS]; // block-inclusive values for
+  //                                     // single-BlockScan variant
 
   int offset = 0;
   T aggregate = 0; // initial value aggregate
@@ -70,9 +73,11 @@ __global__ void packedwords_rowwise_inclusive_scan_kernel(
     __syncthreads();
 
     // Perform inclusive scan repeatedly as unpacked values
-    // NOTE: the aggregate on the final scan is not correct if it the iteration
-    // does not fully utilize the entire shared memory length, but this isn't
-    // important anyway since the aggregate would no longer be needed after.
+    // NOTE: the aggregate on the final scan is
+    // not correct if it the iteration
+    // does not fully utilize the entire shared memory length, but this
+    // isn't important anyway since the aggregate would no longer be needed
+    // after.
     int numRepeatScans =
         numThisIter / NUM_THREADS + (numThisIter % NUM_THREADS == 0 ? 0 : 1);
     for (int i = 0; i < numRepeatScans; i++) {
@@ -87,6 +92,64 @@ __global__ void packedwords_rowwise_inclusive_scan_kernel(
       }
       __syncthreads(); // for reuse of tempStorage
     }
+
+    // NOTE: there is effectively no performance difference using this
+    // compared to the simpler loop over (wordsize*numwords) above.
+    // // Single-BlockScan variant: each thread locally scans its
+    // PACKSIZE-element
+    // // word (no barrier needed; threads are independent), then one BlockScan
+    // // aggregates across threads, and finally each thread applies the
+    // // block-level prefix to its per-word local scan results.
+    // //
+    // // Data layout: thread i owns s_data_small[i*PACKSIZE ..
+    // // i*PACKSIZE+PACKSIZE-1]. s_data_small[0] was already seeded with
+    // // 'aggregate' by the load block above (lines 67-69), so thread 0 needs
+    // no
+    // // special handling here.
+    // {
+    //   int base = threadIdx.x * PACKSIZE;
+    //   int my_count = max(0, min(PACKSIZE, numThisIter - base));
+    //
+    //   // Step 1: per-word local inclusive scan.
+    //   // Each thread only touches s_data_small[base .. base+PACKSIZE-1]; no
+    //   // __syncthreads() is required.
+    //   T running = s_data_small[base];
+    //   for (int k = 1; k < my_count; k++) {
+    //     running = op(running, s_data_small[base + k]);
+    //     s_data_small[base + k] = running;
+    //   }
+    //   T word_agg = running; // aggregate over this thread's word
+    //
+    //   // Step 2: single BlockScan over all per-word aggregates.
+    //   // CUB's BlockScan calls __syncthreads() internally, so all Step 1
+    //   writes
+    //   // to s_data_small are visible to all threads upon return.
+    //   T block_inc;
+    //   BlockScan(tempStorage).InclusiveScan(word_agg, block_inc, op,
+    //   aggregate);
+    //
+    //   // Step 3: broadcast each thread's block-inclusive value via shared
+    //   memory
+    //   // so that thread i can read thread i-1's value in Step 4.
+    //   s_prefix[threadIdx.x] = block_inc;
+    //   __syncthreads();
+    //
+    //   // Step 4: apply the block-level prefix from the preceding thread's
+    //   word.
+    //   // Thread 0 is already correct: its local scan already incorporates
+    //   // 'aggregate' (seeded into s_data_small[0] by the load block above).
+    //   if (threadIdx.x > 0) {
+    //     T prev = s_prefix[threadIdx.x - 1];
+    //     for (int k = 0; k < my_count; k++) {
+    //       s_data_small[base + k] = op(prev, s_data_small[base + k]);
+    //     }
+    //   }
+    // }
+    // // Make Step 4 writes visible before write-out.  For the packed path each
+    // // thread reads only its own s_data_small slice so this is not strictly
+    // // needed there, but the scalar path reads across thread boundaries and
+    // // requires it.
+    // __syncthreads();
 
     // Write out
     if (numThisIter % PACKSIZE == 0) {
