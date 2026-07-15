@@ -90,6 +90,14 @@ else()
   message(STATUS "Not building MatX projects, enable via -DBUILD_MATX_PROJECTS=ON")
 endif()
 
+# Enable timing reports
+if (CMAKE_CUDA_COMPILER_VERSION VERSION_GREATER_EQUAL 12.8)
+  message(STATUS "Enabling --fdevice-time-trace")
+  set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --fdevice-time-trace=-")
+  add_compile_options($<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=-ftime-report>)
+endif()
+
+
 # -------------------- Add check for GoogleTest to see if it exists
 find_package(GTest)
 # If GTest found then enable tests, otherwise disable them
