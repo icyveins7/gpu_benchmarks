@@ -90,11 +90,15 @@ else()
   message(STATUS "Not building MatX projects, enable via -DBUILD_MATX_PROJECTS=ON")
 endif()
 
+option(TRACE_BUILD_TIME "Emit per-device compile timing via --fdevice-time-trace and -ftime-report" OFF)
+
 # Enable timing reports
-if (CMAKE_CUDA_COMPILER_VERSION VERSION_GREATER_EQUAL 12.8)
+if (CMAKE_CUDA_COMPILER_VERSION VERSION_GREATER_EQUAL 12.8 AND TRACE_BUILD_TIME)
   message(STATUS "Enabling --fdevice-time-trace")
   set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --fdevice-time-trace=-")
   add_compile_options($<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=-ftime-report>)
+else()
+  message(STATUS "Build time tracing disabled. Pass -DTRACE_BUILD_TIME=ON to enable.")
 endif()
 
 
