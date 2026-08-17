@@ -59,6 +59,7 @@ So even after combining b and c into {0,2}, idx=0>=0 still signals a reset:
 #include "thrust/iterator/transform_iterator.h"
 #include "thrust/iterator/transform_output_iterator.h"
 #include "thrust/iterator/zip_iterator.h"
+#include <thrust/tuple.h>
 
 template <typename Tflag> struct FlagAndIndex {
   int idx;
@@ -206,6 +207,12 @@ template <typename Tflag, bool AllowWraparound = false> struct SelectOp {
         return false;
       }
     }
+
+    // If we reach here in the AllowWraparound case, a left boundary exists
+    // (idx >= 0) but no '2' has been seen since it (prevColFlag != 2), and
+    // the unknown-open/wraparound case (idx < 0) was already handled above.
+    // The segment is therefore invalid.
+    return false;
   }
 };
 

@@ -4,6 +4,7 @@
 #include "thrust/host_vector.h"
 #include "thrust/iterator/discard_iterator.h"
 #include "thrust/reduce.h"
+#include <thrust/tuple.h>
 
 #include <algorithm>
 #include <cuda/std/cmath>
