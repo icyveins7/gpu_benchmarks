@@ -483,7 +483,7 @@ struct ExclusiveSumInPlace : public CubWrapper<StreamOrdered> {
     size_t temp_storage_bytes = 0;
     // Default-construct all types; pointers automatically become nullptrs
     IteratorT inout{};
-    cub::DeviceScan::ExclusiveSum(nullptr, temp_storage_bytes, inout,
+    cub::DeviceScan::ExclusiveSum(nullptr, temp_storage_bytes, inout, inout,
                                   num_items);
     return temp_storage_bytes;
   }
@@ -492,7 +492,7 @@ struct ExclusiveSumInPlace : public CubWrapper<StreamOrdered> {
                    cudaStream_t stream = 0) {
     size_t temp_storage_bytes = this->d_temp_storage.size();
     return cub::DeviceScan::ExclusiveSum(this->storagePtr(), temp_storage_bytes,
-                                         d_inout, num_items, stream);
+                                         d_inout, d_inout, num_items, stream);
   }
 };
 
