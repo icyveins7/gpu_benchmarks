@@ -36,8 +36,8 @@ __global__ void transposeKernel(Tout *odata, const Tin *idata, const int rows,
 
   for (int j = 0; j < TILE_DIM; j += blockDim.y)
     // Write only in range
-    if (x < cols && y + j < rows)
-      odata[(y + j) * cols + x] = tile[threadIdx.x][threadIdx.y + j];
+    if (x < rows && y + j < cols)
+      odata[(y + j) * rows + x] = tile[threadIdx.x][threadIdx.y + j];
 }
 
 template <typename Tin, typename Tout, int TILE_DIM = 32>

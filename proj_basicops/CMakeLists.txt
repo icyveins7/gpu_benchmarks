@@ -117,6 +117,13 @@ target_sources(
 )
 target_compile_options(gather_vs_custom2 PRIVATE -DGATHER_TWO_ARRAYS)
 
+# -------------------- Tests
+if (GTEST_FOUND)
+  add_executable(test_transpose test_transpose.cu ${GENERIC_TEST_MAIN})
+  target_link_libraries(test_transpose GTest::gtest)
+  gtest_discover_tests(test_transpose)
+endif()
+
 # --------------------
 set_source_files_properties(events_vs_nvtx.cu PROPERTIES LANGUAGE CUDA)
 add_executable(events_vs_nvtx)
