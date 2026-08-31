@@ -75,6 +75,10 @@ target_include_directories(cub_using_device_length
 
 # Turn this on, otherwise CDP doesn't work with CUB
 set_property(TARGET cub_using_device_length PROPERTY CUDA_SEPARABLE_COMPILATION ON)
+# Avoid linking an older system libcudadevrt, which causes undefined __cudaCDP2* symbols.
+find_library(CUDA_DEVICE_RUNTIME_LIBRARY NAMES cudadevrt
+             PATHS ${CUDAToolkit_LIBRARY_DIR} NO_DEFAULT_PATH REQUIRED NO_CACHE)
+target_link_libraries(cub_using_device_length PRIVATE ${CUDA_DEVICE_RUNTIME_LIBRARY})
 
 target_sources(
   cub_using_device_length PRIVATE
