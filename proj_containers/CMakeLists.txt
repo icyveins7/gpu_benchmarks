@@ -117,6 +117,17 @@ target_sources(
 )
 
 # --------------------
+add_executable(pinned_host_zeroing)
+target_include_directories(pinned_host_zeroing
+                           PRIVATE ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
+                           )
+target_sources(
+  pinned_host_zeroing PRIVATE
+  ${PROJECT_SOURCE_DIR}/pinned_host_zeroing.cu
+  ${CMAKE_SOURCE_DIR}/src/containers/streams.cu
+)
+
+# --------------------
 set_source_files_properties(${PROJECT_SOURCE_DIR}/forward_vs_backward_scans.cu PROPERTIES LANGUAGE CUDA)
 add_executable(forward_vs_backward_scans)
 
