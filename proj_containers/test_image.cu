@@ -24,6 +24,25 @@ TEST(ContainersDeviceImageStorage, BasicChecks) {
   EXPECT_EQ(img.vec.capacity(), 20 * 20);
 }
 
+TEST(ThrustPinnedHostVector, ResizeDownDoesNotReallocate) {
+  thrust::pinned_host_vector<int> vec(20 * 20);
+  EXPECT_EQ(vec.size(), 20 * 20);
+  EXPECT_EQ(vec.capacity(), 20 * 20);
+  int *origPtr = vec.data().get();
+
+  // Shrinking must not reallocate, just like std::vector.
+  vec.resize(10 * 10);
+  EXPECT_EQ(vec.size(), 10 * 10);
+  EXPECT_EQ(vec.capacity(), 20 * 20);
+  EXPECT_EQ(vec.data().get(), origPtr);
+
+  // Growing back within the original capacity also must not reallocate.
+  vec.resize(20 * 20);
+  EXPECT_EQ(vec.size(), 20 * 20);
+  EXPECT_EQ(vec.capacity(), 20 * 20);
+  EXPECT_EQ(vec.data().get(), origPtr);
+}
+
 TEST(ContainersImage, LargeImage) {
   // For 8-byte words like doubles, this constitutes a 2^3 factor in
   // the pointer calculation. This means that it may be dangerous for
