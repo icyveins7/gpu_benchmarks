@@ -128,6 +128,16 @@ target_sources(
 )
 
 # --------------------
+add_executable(gpu_singleton_example)
+target_include_directories(gpu_singleton_example
+                           PRIVATE ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
+                           )
+target_sources(
+  gpu_singleton_example PRIVATE
+  ${PROJECT_SOURCE_DIR}/gpu_singleton_example.cu
+)
+
+# --------------------
 set_source_files_properties(${PROJECT_SOURCE_DIR}/forward_vs_backward_scans.cu PROPERTIES LANGUAGE CUDA)
 add_executable(forward_vs_backward_scans)
 
