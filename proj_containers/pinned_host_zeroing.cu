@@ -53,6 +53,11 @@
 // On this machine that crossover measured out to roughly 150-256 MiB -- this
 // is hardware- and buffer-size-specific, so re-run this benchmark at your
 // actual production sizes rather than assuming the same threshold elsewhere.
+//
+// The same L3 spillover pattern was measured on a 2-socket Intel Xeon Gold
+// 6338T server (24 cores/socket, 1.25 MiB L2/core, 36 MiB L3/socket) with an
+// NVIDIA L4 on PCIe 4.0 x16. The crossover was roughly 36-40 MiB; at 4096x4096
+// floats (64 MiB), host memset took ~4.04 ms versus ~2.75 ms for GPU+copy.
 // ---------------------------------------------------------------------------
 #include "containers/image.cuh"
 #include "containers/streams.cuh"
