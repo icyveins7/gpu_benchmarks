@@ -18,6 +18,8 @@
 
 #include <cstdio>
 
+#include "cxxopts.hpp"
+
 using namespace nvcuda;
 using namespace nvcuda::wmma;
 
@@ -34,16 +36,21 @@ __global__ void burn(float* out, int n, int iters) {
   out[i] = acc;
 }
 
-// Kernel 2: tensor-core only. One warp per block computes one 16x16 C tile.
+// Kernel 2: tensor-core only. Each warp computes one 16x16 C tile.
 typedef wmma::fragment<matrix_a, 16, 16, 16, __half, row_major> frag_a;
 typedef wmma::fragment<matrix_b, 16, 16, 16, __half, col_major> frag_b;
 typedef wmma::fragment<accumulator, 16, 16, 16, float> frag_c;
 
 __global__ void wmma_kernel(const __half* A, const __half* B, float* C, int M,
                             int N, int K, int iters) {
+  const int warpsPerBlock = blockDim.x / warpSize;
+  const int tile = blockIdx.x * warpsPerBlock + threadIdx.x / warpSize;
   const int tilesPerRow = N / 16;
-  const int mt = blockIdx.x / tilesPerRow;
-  const int nt = blockIdx.x % tilesPerRow;
+  const int totalTiles = (M / 16) * tilesPerRow;
+  if (tile >= totalTiles)
+    return;
+  const int mt = tile / tilesPerRow;
+  const int nt = tile % tilesPerRow;
 
   frag_a af;
   frag_b bf;
@@ -51,7 +58,7 @@ __global__ void wmma_kernel(const __half* A, const __half* B, float* C, int M,
   wmma::fill_fragment(cf, 0.0f);
 
   wmma::load_matrix_sync(af, A + mt * 16 * K, K);
-  wmma::load_matrix_sync(bf, B + nt * 16, N);
+  wmma::load_matrix_sync(bf, B + nt * 16 * K, K);
 
   for (int i = 0; i < iters; ++i) {
     wmma::mma_sync(cf, af, bf, cf);
@@ -61,14 +68,30 @@ __global__ void wmma_kernel(const __half* A, const __half* B, float* C, int M,
                           wmma::mem_row_major);
 }
 
-int main() {
-  // ---- knobs (edit these to tune) ----
-  const int burnBlockSize = 128;            // threads per burn block
-  const int burnIters = 300000000;          // tune so t_burn ~= t_wmma
-  const int wmmaIters = 150000000;          // tune so t_wmma ~= t_burn
-  const int M = 64, N = 64, K = 64;         // 4x4 = 16 tiles of 16x16
-  const int wmmaBlock = 32;                 // 1 warp per block
-  const int wmmaGrid = (M / 16) * (N / 16); // 16 blocks
+int main(int argc, char** argv) {
+  cxxopts::Options options(
+      "no_wmma_when_saturated",
+      "Demonstrate SM saturation preventing concurrent WMMA execution");
+  options.add_options()("burn-grid-multiplier", "Burn grid size multiplier",
+                        cxxopts::value<int>()->default_value("10"))(
+      "burn-iters", "Iterations per burn thread",
+      cxxopts::value<int>()->default_value("30000000"))(
+      "wmma-iters", "WMMA operations per warp",
+      cxxopts::value<int>()->default_value("5000000"))("h,help", "Print usage");
+
+  auto result = options.parse(argc, argv);
+  if (result.count("help")) {
+    printf("%s\n", options.help().c_str());
+    return 0;
+  }
+
+  const int burnGridMultiplier = result["burn-grid-multiplier"].as<int>();
+  const int burnIters = result["burn-iters"].as<int>();
+  const int wmmaIters = result["wmma-iters"].as<int>();
+  const int burnBlockSize = 128;
+  const int wmmaBlock = 128;
+  const int wmmaWarpsPerBlock = wmmaBlock / 32;
+  const int K = 64;
 
   int device = 0;
   cudaGetDevice(&device);
@@ -82,11 +105,18 @@ int main() {
   int maxBlocksPerSM = 0;
   cudaOccupancyMaxActiveBlocksPerMultiprocessor(&maxBlocksPerSM, burn,
                                                 burnBlockSize, 0);
-  int burnGrid = maxBlocksPerSM * numSMs * 10; // * big number for good measure
+  int burnGrid = maxBlocksPerSM * numSMs * burnGridMultiplier;
   int burnTotalThreads = burnGrid * burnBlockSize;
 
-  printf("device=%d  numSMs=%d  maxBlocksPerSM=%d  burnGrid=%d\n", device,
-         numSMs, maxBlocksPerSM, burnGrid);
+  const int M = numSMs * 16;
+  const int N = maxBlocksPerSM * burnGridMultiplier * wmmaWarpsPerBlock * 16;
+  const int wmmaTiles = (M / 16) * (N / 16);
+  const int wmmaGrid = (wmmaTiles + wmmaWarpsPerBlock - 1) / wmmaWarpsPerBlock;
+
+  printf("burnGridMultiplier=%d  burnIters=%d  wmmaIters=%d\n",
+         burnGridMultiplier, burnIters, wmmaIters);
+  printf("device=%d  numSMs=%d  maxBlocksPerSM=%d  burnGrid=%d  wmmaGrid=%d\n",
+         device, numSMs, maxBlocksPerSM, burnGrid, wmmaGrid);
 
   __half* d_A = nullptr;
   __half* d_B = nullptr;
@@ -129,6 +159,7 @@ int main() {
                                               wmmaIters);
   cudaDeviceSynchronize();
   cudaEventRecord(eEnd, s1);
+  cudaEventSynchronize(eEnd);
   cudaEventElapsedTime(&t_both, eStart, eEnd);
 
   printf("t_burn          = %.3f ms\n", t_burn);
