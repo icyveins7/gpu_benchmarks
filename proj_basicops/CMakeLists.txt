@@ -143,16 +143,23 @@ target_sources(
 
 # --------------------
 set_source_files_properties(profile_sections_example.cu PROPERTIES LANGUAGE CUDA)
-add_executable(profile_sections_example)
+foreach(_target IN ITEMS
+    profile_sections_example
+    profile_sections_example_nvtx
+    profile_sections_example_cudaProfilerApi)
+  add_executable(${_target})
+  target_include_directories(${_target}
+                             PRIVATE ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES})
+  target_sources(${_target} PRIVATE
+                 ${PROJECT_SOURCE_DIR}/profile_sections_example.cu)
+endforeach()
 
-target_include_directories(profile_sections_example
-                           PRIVATE ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
-                           )
-
-target_sources(
-  profile_sections_example PRIVATE
-  ${PROJECT_SOURCE_DIR}/profile_sections_example.cu
-)
+target_compile_definitions(profile_sections_example
+                           PRIVATE PROFILE_SECTIONS_CONTINUOUS)
+target_compile_definitions(profile_sections_example_nvtx
+                           PRIVATE PROFILE_SECTIONS_NVTX)
+target_compile_definitions(profile_sections_example_cudaProfilerApi
+                           PRIVATE PROFILE_SECTIONS_CUDA_PROFILER_API)
 
 # --------------------
 set_source_files_properties(basic_stream_compaction.cu PROPERTIES LANGUAGE CUDA)
