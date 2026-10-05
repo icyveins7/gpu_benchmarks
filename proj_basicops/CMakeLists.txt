@@ -142,6 +142,19 @@ target_sources(
 )
 
 # --------------------
+set_source_files_properties(profile_sections_example.cu PROPERTIES LANGUAGE CUDA)
+add_executable(profile_sections_example)
+
+target_include_directories(profile_sections_example
+                           PRIVATE ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
+                           )
+
+target_sources(
+  profile_sections_example PRIVATE
+  ${PROJECT_SOURCE_DIR}/profile_sections_example.cu
+)
+
+# --------------------
 set_source_files_properties(basic_stream_compaction.cu PROPERTIES LANGUAGE CUDA)
 add_executable(basic_stream_compaction)
 
