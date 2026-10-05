@@ -6,11 +6,45 @@
 
 #include <thrust/device_vector.h>
 #include <thrust/host_vector.h>
+#include <thrust/version.h>
 
 #include "pinnedalloc.cuh"
 #include "stream_ordered_storage.cuh"
 
 namespace containers {
+
+#if THRUST_VERSION >= 300100
+using no_init_t = thrust::no_init_t;
+inline constexpr no_init_t no_init = thrust::no_init;
+
+template <typename Vector> using NoInitVector = Vector;
+#else
+struct no_init_t {};
+inline constexpr no_init_t no_init{};
+
+template <typename Vector> class NoInitVector : public Vector {
+public:
+  using Vector::Vector;
+  using Vector::operator=;
+  using Vector::resize;
+  using typename Vector::size_type;
+  using value_type = typename Vector::value_type;
+
+  void resize(size_type newSize, no_init_t) {
+    static_assert(std::is_trivially_default_constructible_v<value_type>);
+    static_assert(std::is_trivially_destructible_v<value_type>);
+
+    if (newSize <= this->size()) {
+      Vector::resize(newSize);
+      return;
+    }
+    if (newSize > this->capacity())
+      throw std::length_error("no-init resize exceeds existing capacity");
+
+    this->m_size = newSize;
+  }
+};
+#endif
 
 /**
  * @brief Container to hold an image pointer to data and its width/height,
@@ -353,7 +387,7 @@ struct ImageTile : Image<Tdata, Tidx> {
  * @param height Image height in pixels
  */
 template <typename Tdata, typename Tidx = int> struct DeviceImageStorage {
-  thrust::device_vector<Tdata> vec;
+  NoInitVector<thrust::device_vector<Tdata>> vec;
   Tidx width;
   Tidx height;
 
@@ -388,8 +422,8 @@ template <typename Tdata, typename Tidx = int> struct DeviceImageStorage {
    * @param _width New width
    * @param _height New height
    */
-  void resize(const Tidx _width, const Tidx _height, thrust::no_init_t) {
-    vec.resize(_width * _height, thrust::no_init);
+  void resize(const Tidx _width, const Tidx _height, no_init_t) {
+    vec.resize(_width * _height, no_init);
     width = _width;
     height = _height;
   }
@@ -618,7 +652,7 @@ struct StreamOrderedDeviceImageStorage
 };
 
 template <typename Tdata, typename Tidx = int> struct PinnedHostImageStorage {
-  thrust::pinned_host_vector<Tdata> vec;
+  NoInitVector<thrust::pinned_host_vector<Tdata>> vec;
   Tidx width;
   Tidx height;
 
@@ -653,8 +687,8 @@ template <typename Tdata, typename Tidx = int> struct PinnedHostImageStorage {
    * @param _width New width
    * @param _height New height
    */
-  void resize(const Tidx _width, const Tidx _height, thrust::no_init_t) {
-    vec.resize(_width * _height, thrust::no_init);
+  void resize(const Tidx _width, const Tidx _height, no_init_t) {
+    vec.resize(_width * _height, no_init);
     width = _width;
     height = _height;
   }

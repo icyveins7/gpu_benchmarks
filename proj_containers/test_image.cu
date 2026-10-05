@@ -31,7 +31,7 @@ TEST(ContainersDeviceImageStorage, NoInitResizePreservesRegrownRange) {
   const size_t originalCapacity = img.vec.capacity();
 
   img.resize(10, 10);
-  img.resize(20, 20, thrust::no_init);
+  img.resize(20, 20, containers::no_init);
 
   EXPECT_EQ(img.width, 20);
   EXPECT_EQ(img.height, 20);
@@ -95,7 +95,7 @@ TEST(ContainersPinnedHostImageStorage, NoInitResizePreservesRegrownRange) {
   const size_t originalCapacity = img.vec.capacity();
 
   img.resize(10, 10);
-  img.resize(20, 20, thrust::no_init);
+  img.resize(20, 20, containers::no_init);
 
   EXPECT_EQ(img.width, 20);
   EXPECT_EQ(img.height, 20);
