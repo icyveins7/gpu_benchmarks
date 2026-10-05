@@ -24,6 +24,27 @@ TEST(ContainersDeviceImageStorage, BasicChecks) {
   EXPECT_EQ(img.vec.capacity(), 20 * 20);
 }
 
+TEST(ContainersDeviceImageStorage, NoInitResizePreservesRegrownRange) {
+  containers::DeviceImageStorage<int> img(20, 20);
+  thrust::sequence(img.vec.begin(), img.vec.end());
+  int *originalPointer = img.vec.data().get();
+  const size_t originalCapacity = img.vec.capacity();
+
+  img.resize(10, 10);
+  img.resize(20, 20, thrust::no_init);
+
+  EXPECT_EQ(img.width, 20);
+  EXPECT_EQ(img.height, 20);
+  EXPECT_EQ(img.vec.size(), 20 * 20);
+  EXPECT_EQ(img.vec.capacity(), originalCapacity);
+  EXPECT_EQ(img.vec.data().get(), originalPointer);
+
+  thrust::host_vector<int> values = img.vec;
+  for (size_t i = 10 * 10; i < 20 * 20; ++i) {
+    EXPECT_EQ(values[i], i) << "Mismatch at index " << i;
+  }
+}
+
 TEST(ThrustPinnedHostVector, ResizeDownDoesNotReallocate) {
   thrust::pinned_host_vector<int> vec(20 * 20);
   EXPECT_EQ(vec.size(), 20 * 20);
@@ -41,6 +62,50 @@ TEST(ThrustPinnedHostVector, ResizeDownDoesNotReallocate) {
   EXPECT_EQ(vec.size(), 20 * 20);
   EXPECT_EQ(vec.capacity(), 20 * 20);
   EXPECT_EQ(vec.data().get(), origPtr);
+}
+
+TEST(ContainersPinnedHostImageStorage, ResizeValueInitializesRegrownRange) {
+  containers::PinnedHostImageStorage<int> img(20, 20);
+  for (auto &value : img.vec) {
+    value = 42;
+  }
+  int *originalPointer = img.vec.data().get();
+  const size_t originalCapacity = img.vec.capacity();
+
+  img.resize(10, 10);
+  img.resize(20, 20);
+
+  EXPECT_EQ(img.width, 20);
+  EXPECT_EQ(img.height, 20);
+  EXPECT_EQ(img.vec.size(), 20 * 20);
+  EXPECT_EQ(img.vec.capacity(), originalCapacity);
+  EXPECT_EQ(img.vec.data().get(), originalPointer);
+  for (size_t i = 10 * 10; i < 20 * 20; ++i) {
+    // Regrown area is reset to 0
+    EXPECT_EQ(img.vec[i], 0) << "Mismatch at index " << i;
+  }
+}
+
+TEST(ContainersPinnedHostImageStorage, NoInitResizePreservesRegrownRange) {
+  containers::PinnedHostImageStorage<int> img(20, 20);
+  for (auto &value : img.vec) {
+    value = 42;
+  }
+  int *originalPointer = img.vec.data().get();
+  const size_t originalCapacity = img.vec.capacity();
+
+  img.resize(10, 10);
+  img.resize(20, 20, thrust::no_init);
+
+  EXPECT_EQ(img.width, 20);
+  EXPECT_EQ(img.height, 20);
+  EXPECT_EQ(img.vec.size(), 20 * 20);
+  EXPECT_EQ(img.vec.capacity(), originalCapacity);
+  EXPECT_EQ(img.vec.data().get(), originalPointer);
+  for (size_t i = 10 * 10; i < 20 * 20; ++i) {
+    // We should see the marked value again everywhere
+    EXPECT_EQ(img.vec[i], 42) << "Mismatch at index " << i;
+  }
 }
 
 TEST(ContainersImage, LargeImage) {

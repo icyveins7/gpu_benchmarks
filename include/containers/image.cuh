@@ -376,6 +376,25 @@ template <typename Tdata, typename Tidx = int> struct DeviceImageStorage {
   }
 
   /**
+   * @brief Resizes the underlying device_vector to the specified dimensions and
+   * updates the internal width/height tracking; implicitly calls the .resize()
+   * so its effects are identical, but uses the no_init overload, which
+   * specifically *does not zero the tail of the 1D vector*.
+   *
+   * @detail Since the tail of the 1D vector and its contents depends on the
+   * resized dimensions for most uses you would need to re-zero everything
+   * anyway, so this overload should be preferred!
+   *
+   * @param _width New width
+   * @param _height New height
+   */
+  void resize(const Tidx _width, const Tidx _height, thrust::no_init_t) {
+    vec.resize(_width * _height, thrust::no_init);
+    width = _width;
+    height = _height;
+  }
+
+  /**
    * @brief Primary useful method. Returns a new Image struct that encloses the
    * pointer alone, allowing it to be passed to a kernel by value.
    *
@@ -617,6 +636,25 @@ template <typename Tdata, typename Tidx = int> struct PinnedHostImageStorage {
    */
   void resize(const Tidx _width, const Tidx _height) {
     vec.resize(_width * _height);
+    width = _width;
+    height = _height;
+  }
+
+  /**
+   * @brief Resizes the underlying pinned_host_vector to the specified
+   * dimensions and updates the internal width/height tracking; implicitly calls
+   * the .resize() so its effects are identical, but uses the no_init overload,
+   * which specifically *does not zero the tail of the 1D vector*.
+   *
+   * @detail Since the tail of the 1D vector and its contents depends on the
+   * resized dimensions for most uses you would need to re-zero everything
+   * anyway, so this overload should be preferred!
+   *
+   * @param _width New width
+   * @param _height New height
+   */
+  void resize(const Tidx _width, const Tidx _height, thrust::no_init_t) {
+    vec.resize(_width * _height, thrust::no_init);
     width = _width;
     height = _height;
   }
