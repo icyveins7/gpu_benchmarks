@@ -74,5 +74,49 @@ int main(int argc, char* argv[]) {
     nvtxRangePop();
   }
 
-  return 0;
+  // Verify that thrust::no_init changes only the logical size when capacity is
+  // already sufficient. The marker makes writes obvious: ordinary resize()
+  // should zero the regrown tail, while no_init should leave its bytes alone.
+  const size_t testLen = len < 4 ? 10 : len;
+  const size_t shrunkLen = testLen / 2;
+  constexpr int marker = 0x5a5a5a5a;
+  thrust::pinned_host_vector<int> values(testLen, marker);
+  const size_t originalCapacity = values.capacity();
+  const int* const originalPointer = values.data().get();
+
+  values.resize(shrunkLen);
+  values.resize(testLen);
+  size_t ordinaryZeroCount = 0;
+  for (size_t i = shrunkLen; i < testLen; ++i) {
+    ordinaryZeroCount += values[i] == 0;
+  }
+  const bool ordinaryReused = values.capacity() == originalCapacity &&
+                              values.data().get() == originalPointer;
+
+  for (size_t i = 0; i < testLen; ++i) {
+    values[i] = marker;
+  }
+  values.resize(shrunkLen);
+  values.resize(testLen, thrust::no_init);
+  size_t noInitMarkerCount = 0;
+  for (size_t i = shrunkLen; i < testLen; ++i) {
+    noInitMarkerCount += values[i] == marker;
+  }
+  const bool noInitReused = values.capacity() == originalCapacity &&
+                            values.data().get() == originalPointer;
+  const size_t regrownCount = testLen - shrunkLen;
+
+  printf("\nPinned vector shrink/regrow test (%zu -> %zu -> %zu elements)\n",
+         testLen, shrunkLen, testLen);
+  printf("ordinary resize: reused allocation=%s, zeroed regrown elements=%zu/%zu\n",
+         ordinaryReused ? "YES" : "NO", ordinaryZeroCount, regrownCount);
+  printf("no_init resize:  reused allocation=%s, preserved marker elements=%zu/%zu\n",
+         noInitReused ? "YES" : "NO", noInitMarkerCount, regrownCount);
+
+  const bool passed = ordinaryReused && noInitReused &&
+                      ordinaryZeroCount == regrownCount &&
+                      noInitMarkerCount == regrownCount;
+  printf("RESULT: thrust::no_init %s initialization of the regrown range\n",
+         passed ? "SKIPPED" : "DID NOT SKIP");
+  return passed ? 0 : 1;
 }
