@@ -4,6 +4,7 @@
 #include <type_traits>
 
 #include <cuda/std/cmath>
+#include <cuda/std/limits>
 
 #include "block_and_grid_sizing.cuh"
 #include "containers/image.cuh"
@@ -106,10 +107,10 @@ __global__ void oversampleBilerpAndCombineKernel(
     const OversampleKernelParams<Tcalc> params,
     // NOTE: Surprisingly, ncu says computing numOutBlocks stalls a lot, and in
     // fact just passing this in directly speeds up about 4%
-    const int2 numOutBlocks, const RotationParams<Tcalc> rotParams
+    const int2 numOutBlocks, const RotationParams<Tcalc> rotParams,
     // NOTE: the mere existence of the parameters appears to slow down the
     // kernel, even if it is not used; maybe templatize this
-) {
+    const int minWeight) {
   static_assert(std::is_floating_point<Tcalc>::value,
                 "Tcalc must be a floating point type");
 
@@ -127,6 +128,8 @@ __global__ void oversampleBilerpAndCombineKernel(
 
       // Define final output to aggregate over
       Tcalc value = 0;
+      // Define count of valid interpolated pixels
+      int weight = 0;
 
       if constexpr (useSharedMem) {
         // TODO: shmem method is harder to reason about for rotated points
@@ -182,8 +185,15 @@ __global__ void oversampleBilerpAndCombineKernel(
             Tin botLeft = stile.at(iy + 1, ix);
             Tin botRight = stile.at(iy + 1, ix + 1);
 
-            Tcalc interpolated = bilinearInterpolate<Tin, Tcalc>(
-                topLeft, topRight, botLeft, botRight, sx, sy);
+            Tcalc interpolated = 0;
+            if (topLeft != cuda::std::numeric_limits<Tin>::max() &&
+                topRight != cuda::std::numeric_limits<Tin>::max() &&
+                botLeft != cuda::std::numeric_limits<Tin>::max() &&
+                botRight != cuda::std::numeric_limits<Tin>::max()) {
+              interpolated = bilinearInterpolate<Tin, Tcalc>(
+                  topLeft, topRight, botLeft, botRight, sx, sy);
+              ++weight;
+            }
 
             value += interpolated;
           }
@@ -212,14 +222,25 @@ __global__ void oversampleBilerpAndCombineKernel(
 
             // Extract the 4 corners of data
             // Here is where you would include logic to handle pixel reading
-            // For now we just read simply and default to 0 if it doesn't exist
-            Tin topLeft = in.atWithDefault(iy, ix);
-            Tin topRight = in.atWithDefault(iy, ix + 1);
-            Tin botLeft = in.atWithDefault(iy + 1, ix);
-            Tin botRight = in.atWithDefault(iy + 1, ix + 1);
+            // For now we default to the invalid sentinel if it doesn't exist
+            Tin topLeft =
+                in.atWithDefault(iy, ix, cuda::std::numeric_limits<Tin>::max());
+            Tin topRight = in.atWithDefault(
+                iy, ix + 1, cuda::std::numeric_limits<Tin>::max());
+            Tin botLeft = in.atWithDefault(
+                iy + 1, ix, cuda::std::numeric_limits<Tin>::max());
+            Tin botRight = in.atWithDefault(
+                iy + 1, ix + 1, cuda::std::numeric_limits<Tin>::max());
 
-            Tcalc interpolated = bilinearInterpolate<Tin, Tcalc>(
-                topLeft, topRight, botLeft, botRight, sx, sy);
+            Tcalc interpolated = 0;
+            if (topLeft != cuda::std::numeric_limits<Tin>::max() &&
+                topRight != cuda::std::numeric_limits<Tin>::max() &&
+                botLeft != cuda::std::numeric_limits<Tin>::max() &&
+                botRight != cuda::std::numeric_limits<Tin>::max()) {
+              interpolated = bilinearInterpolate<Tin, Tcalc>(
+                  topLeft, topRight, botLeft, botRight, sx, sy);
+              ++weight;
+            }
 
             value += interpolated;
           }
@@ -229,11 +250,177 @@ __global__ void oversampleBilerpAndCombineKernel(
       // Write out final output
       int outRow = i * blockDim.y + threadIdx.y;
       int outCol = j * blockDim.x + threadIdx.x;
-      if (out.rowIsValid(outRow) && out.colIsValid(outCol))
-        out.at(outRow, outCol) =
-            (Tout)(value / (oversampleFactor.x * oversampleFactor.y));
+      if (out.rowIsValid(outRow) && out.colIsValid(outCol)) {
+        if (weight >= minWeight) {
+          if constexpr (std::is_integral<Tout>::value)
+            out.at(outRow, outCol) = (Tout)cuda::std::round(value / weight);
+          else
+            out.at(outRow, outCol) = value / weight;
+        } else {
+          out.at(outRow, outCol) = cuda::std::numeric_limits<Tout>::max();
+        }
+      }
     }
   }
+}
+
+template <typename T>
+__device__ T cubicConvolutionCoefficient(T value) {
+  T distance = cuda::std::abs(value);
+  if (distance < 1)
+    return (1.5 * distance - 2.5) * distance * distance + 1;
+  if (distance < 2)
+    return ((-0.5 * distance + 2.5) * distance - 4) * distance + 2;
+  return 0;
+}
+
+template <typename Tin, typename Tout, typename Tcalc = float>
+__global__ void oversampleBicubicAndCombineKernel(
+    containers::Image<const Tin> in, containers::Image<Tout> out,
+    const int2 oversampleFactor, const OversampleKernelParams<Tcalc> params,
+    const RotationParams<Tcalc> rotParams, const int minWeight) {
+  int outRow = blockIdx.y * blockDim.y + threadIdx.y;
+  int outCol = blockIdx.x * blockDim.x + threadIdx.x;
+  if (!out.rowIsValid(outRow) || !out.colIsValid(outCol))
+    return;
+
+  Tcalc value = 0;
+  int weight = 0;
+  for (int oy = 0; oy < oversampleFactor.y; ++oy) {
+    for (int ox = 0; ox < oversampleFactor.x; ++ox) {
+      Tcalc sy = (outRow * oversampleFactor.y + oy) * params.overSampStepY +
+                 params.overSampStartY;
+      Tcalc sx = (outCol * oversampleFactor.x + ox) * params.overSampStepX +
+                 params.overSampStartX;
+      if (rotParams.used) {
+        cuda_vec2_t<Tcalc> rotated = rotParams.rotate(sx, sy);
+        sx = rotated.x;
+        sy = rotated.y;
+      }
+
+      int xInt = static_cast<int>(cuda::std::round(sx));
+      int yInt = static_cast<int>(cuda::std::round(sy));
+      if (!in.colIsValid(xInt) || !in.rowIsValid(yInt))
+        continue;
+
+      bool xNearInteger = cuda::std::abs(sx - xInt) < Tcalc(0.001);
+      bool yNearInteger = cuda::std::abs(sy - yInt) < Tcalc(0.001);
+      Tcalc interpolated = 0;
+      bool valid = true;
+      if (xNearInteger && yNearInteger) {
+        for (int y = -1; y <= 1 && valid; ++y) {
+          for (int x = -1; x <= 1; ++x) {
+            if (!in.rowIsValid(yInt + y) || !in.colIsValid(xInt + x) ||
+                in.at(yInt + y, xInt + x) ==
+                    cuda::std::numeric_limits<Tin>::max()) {
+              valid = false;
+              break;
+            }
+          }
+        }
+        if (valid)
+          interpolated = in.at(yInt, xInt);
+      } else {
+        int ix = static_cast<int>(sx);
+        int iy = static_cast<int>(sy);
+        if (ix < 1 || iy < 1 || ix >= in.width - 2 || iy >= in.height - 2)
+          continue;
+
+        Tcalc xCoefficients[4];
+        Tcalc yCoefficients[4];
+        Tcalc fracX = sx - ix;
+        Tcalc fracY = sy - iy;
+        for (int i = 0; i < 4; ++i) {
+          xCoefficients[i] = cubicConvolutionCoefficient<Tcalc>(i - 1 - fracX);
+          yCoefficients[i] = cubicConvolutionCoefficient<Tcalc>(i - 1 - fracY);
+        }
+
+        if (yNearInteger) {
+          for (int x = 0; x < 4; ++x) {
+            Tin pixel = in.at(yInt, ix + x - 1);
+            if (pixel == cuda::std::numeric_limits<Tin>::max()) {
+              valid = false;
+              break;
+            }
+            interpolated += static_cast<Tcalc>(pixel) * xCoefficients[x];
+          }
+        } else if (xNearInteger) {
+          for (int y = 0; y < 4; ++y) {
+            Tin pixel = in.at(iy + y - 1, xInt);
+            if (pixel == cuda::std::numeric_limits<Tin>::max()) {
+              valid = false;
+              break;
+            }
+            interpolated += static_cast<Tcalc>(pixel) * yCoefficients[y];
+          }
+        } else {
+          Tcalc rows[4] = {};
+          for (int y = 0; y < 4 && valid; ++y) {
+            for (int x = 0; x < 4; ++x) {
+              Tin pixel = in.at(iy + y - 1, ix + x - 1);
+              if (pixel == cuda::std::numeric_limits<Tin>::max()) {
+                valid = false;
+                break;
+              }
+              rows[y] += static_cast<Tcalc>(pixel) * xCoefficients[x];
+            }
+          }
+          if (valid) {
+            for (int y = 0; y < 4; ++y)
+              interpolated += rows[y] * yCoefficients[y];
+          }
+        }
+      }
+      if (valid) {
+        value += interpolated;
+        ++weight;
+      }
+    }
+  }
+
+  if (weight >= minWeight) {
+    if constexpr (std::is_integral<Tout>::value)
+      out.at(outRow, outCol) = static_cast<Tout>(cuda::std::round(value / weight));
+    else
+      out.at(outRow, outCol) = value / weight;
+  } else {
+    out.at(outRow, outCol) = cuda::std::numeric_limits<Tout>::max();
+  }
+}
+
+template <typename Tin, typename Tout, typename Tcalc = float>
+void oversampleBicubicAndCombine(
+    containers::Image<const Tin> in, containers::Image<Tout> out,
+    const int2 oversampleFactor, const cuda_vec2_t<Tcalc> outOffset,
+    const cuda_vec2_t<Tcalc> outStep, const dim3 tpb,
+    const Tcalc angleRadians = 0,
+    const cuda_vec2_t<Tcalc> *inRotationCentre = nullptr,
+    int minWeight = 1, cudaStream_t stream = 0) {
+  if (oversampleFactor.x < 1 || oversampleFactor.y < 1 ||
+      oversampleFactor.x % 2 == 0 || oversampleFactor.y % 2 == 0)
+    throw std::runtime_error("oversampleFactor must be positive and odd in both dimensions");
+  if (minWeight > oversampleFactor.x * oversampleFactor.y) {
+    throw std::runtime_error(
+        "minWeight can only be up to product of oversampleFactors");
+  } else if (minWeight < 0) {
+    minWeight = oversampleFactor.x * oversampleFactor.y;
+  }
+
+  OversampleKernelParams<Tcalc> params(oversampleFactor, outStep, outOffset);
+  RotationParams<Tcalc> rotParams;
+  if (angleRadians != 0) {
+    Tcalc xCentre = inRotationCentre ? inRotationCentre->x
+                                     : in.width / 2 - (in.width % 2 == 0 ? 0.5 : 0);
+    Tcalc yCentre = inRotationCentre ? inRotationCentre->y
+                                     : in.height / 2 - (in.height % 2 == 0 ? 0.5 : 0);
+    rotParams = RotationParams<Tcalc>(xCentre, yCentre, angleRadians);
+  }
+
+  dim3 blocks(justEnoughBlocks(tpb.x, static_cast<unsigned int>(out.width)),
+              justEnoughBlocks(tpb.y, static_cast<unsigned int>(out.height)));
+  oversampleBicubicAndCombineKernel<Tin, Tout, Tcalc>
+      <<<blocks, tpb, 0, stream>>>(in, out, oversampleFactor, params, rotParams,
+                                  minWeight);
 }
 
 template <typename Tin, typename Tout, typename Tcalc = float,
@@ -244,10 +431,17 @@ void oversampleBilerpAndCombine(containers::Image<const Tin> in,
                                 const cuda_vec2_t<Tcalc> outOffset,
                                 const cuda_vec2_t<Tcalc> outStep,
                                 const dim3 tpb, const Tcalc angleRadians = 0,
-                                cudaStream_t stream = 0) {
+                                const cuda_vec2_t<Tcalc> *inRotationCentre = nullptr,
+                                int minWeight = 1, cudaStream_t stream = 0) {
   // Throw if not odd oversample
   if (oversampleFactor.x % 2 == 0 || oversampleFactor.y % 2 == 0) {
     throw std::runtime_error("oversampleFactor must be odd in both dimensions");
+  }
+  if (minWeight > oversampleFactor.x * oversampleFactor.y) {
+    throw std::runtime_error(
+        "minWeight can only be up to product of oversampleFactors");
+  } else if (minWeight < 0) {
+    minWeight = oversampleFactor.x * oversampleFactor.y;
   }
 
   // Compute oversample kernel parameters externally
@@ -256,8 +450,10 @@ void oversampleBilerpAndCombine(containers::Image<const Tin> in,
   // Compute rotation parameters
   RotationParams<Tcalc> rotParams; // defaults to unused
   if (angleRadians != 0) {
-    Tcalc xCentre = in.width / 2 - (in.width % 2 == 0 ? 0.5 : 0);
-    Tcalc yCentre = in.height / 2 - (in.height % 2 == 0 ? 0.5 : 0);
+    Tcalc xCentre = inRotationCentre ? inRotationCentre->x
+                                     : in.width / 2 - (in.width % 2 == 0 ? 0.5 : 0);
+    Tcalc yCentre = inRotationCentre ? inRotationCentre->y
+                                     : in.height / 2 - (in.height % 2 == 0 ? 0.5 : 0);
     printf("centre is at %f, %f\n", xCentre, yCentre);
     rotParams = RotationParams<Tcalc>(xCentre, yCentre, angleRadians);
     printf("%12.8f %12.8f\n%12.8f %12.8f\n", rotParams.rotmat[0][0],
@@ -292,5 +488,5 @@ void oversampleBilerpAndCombine(containers::Image<const Tin> in,
   oversampleBilerpAndCombineKernel<Tin, Tout, Tcalc, useSharedMem>
       <<<blks, tpb, shmem, stream>>>(in, out, oversampleFactor, params,
                                      int2{(int)outblks.x, (int)outblks.y},
-                                     rotParams);
+                                     rotParams, minWeight);
 }
