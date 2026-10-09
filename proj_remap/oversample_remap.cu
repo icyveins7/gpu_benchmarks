@@ -31,6 +31,7 @@ int main(int argc, char *argv[]) {
     ("outwidth", "Output width", cxxopts::value<int>()->default_value("5"))
     ("f,factor", "Oversample factor", cxxopts::value<int>()->default_value("3"))
     ("minweight", "Minimum valid samples", cxxopts::value<int>()->default_value("1"))
+    ("kernel", "Interpolation kernel", cxxopts::value<std::string>()->default_value("bicubic"))
     ("xoffset", "Output x offset", cxxopts::value<Tcalc>()->default_value("0"))
     ("yoffset", "Output y offset", cxxopts::value<Tcalc>()->default_value("0"))
     ("xstep", "Output x step", cxxopts::value<Tcalc>()->default_value("0.8"))
@@ -99,9 +100,18 @@ int main(int argc, char *argv[]) {
     cuda_vec2_t<Tcalc> outStep{outputPixelSize / inputPixelSize,
                                outputPixelSize / inputPixelSize};
     Tcalc angleRadians = -result["inputangle"].as<Tcalc>() / Tcalc(180) * M_PI;
-    oversampleBicubicAndCombine<int, int, Tcalc>(
-        dumpInput.cimage(), dumpOutput.image(), oversampleFactor, outOffset,
-        outStep, dim3(32, 4), angleRadians, &inputCenter, minWeight);
+    std::string kernel = result["kernel"].as<std::string>();
+    if (kernel == "bilinear") {
+      oversampleBilerpAndCombine<int, int, Tcalc, false>(
+          dumpInput.cimage(), dumpOutput.image(), oversampleFactor, outOffset,
+          outStep, dim3(32, 4), angleRadians, &inputCenter, minWeight);
+    } else if (kernel == "bicubic") {
+      oversampleBicubicAndCombine<int, int, Tcalc>(
+          dumpInput.cimage(), dumpOutput.image(), oversampleFactor, outOffset,
+          outStep, dim3(32, 4), angleRadians, &inputCenter, minWeight);
+    } else {
+      throw std::runtime_error("kernel must be bilinear or bicubic");
+    }
     cudaError_t status = cudaDeviceSynchronize();
     if (status != cudaSuccess)
       throw std::runtime_error(cudaGetErrorString(status));
