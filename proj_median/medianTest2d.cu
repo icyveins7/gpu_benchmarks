@@ -71,7 +71,7 @@ TEST(Median2d, MatchesNthElementWithZeroPadding) {
                  outputInitialValue);
     const size_t sharedMemoryBytes =
         tpb.x * tpb.y * windowDims.x * windowDims.y * sizeof(T);
-    median2d_kernel<T><<<blocks, tpb, sharedMemoryBytes>>>(
+    median2d_naive_kernel<T><<<blocks, tpb, sharedMemoryBytes>>>(
         deviceInput.cimage(), deviceOutput.image(), windowDims);
     deviceOutput.toHost(hostOutput);
     ASSERT_EQ(cudaSuccess, cudaDeviceSynchronize());
@@ -108,7 +108,7 @@ TEST(Median2d, InvalidWindowDimensionsLeaveOutputUnchanged) {
                                  uint2{3, 2}}) {
     const size_t sharedMemoryBytes =
         tpb.x * tpb.y * windowDims.x * windowDims.y * sizeof(T);
-    median2d_kernel<T><<<blocks, tpb, sharedMemoryBytes>>>(
+    median2d_naive_kernel<T><<<blocks, tpb, sharedMemoryBytes>>>(
         deviceInput.cimage(), deviceOutput.image(), windowDims);
     ASSERT_EQ(cudaSuccess, cudaDeviceSynchronize());
   }

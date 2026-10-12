@@ -7,10 +7,26 @@
 #include "containers/image.cuh"
 #include "sharedmem.cuh"
 
+/**
+ * @brief Applies a naive zero-padded 2D median filter.
+ *
+ * @details Each thread processes output pixels using a 2D grid-stride loop and
+ * stores one complete window in its own row of dynamic shared memory. The
+ * median is found with an intentionally slow insertion sort. For a window with
+ * N = windowDims.x * windowDims.y elements, sorting each pixel is O(N^2).
+ * Both window dimensions must be nonzero and odd; otherwise the kernel returns
+ * without writing output. The launch must provide at least
+ * blockDim.x * blockDim.y * N * sizeof(T) bytes of dynamic shared memory.
+ *
+ * @tparam T Input and output element type.
+ * @param input Input image.
+ * @param output Output image.
+ * @param windowDims Median window width in x and height in y.
+ */
 template <typename T = int32_t>
-__global__ void median2d_kernel(const containers::Image<const T> input,
-                                containers::Image<T> output,
-                                const uint2 windowDims) {
+__global__ void median2d_naive_kernel(const containers::Image<const T> input,
+                                      containers::Image<T> output,
+                                      const uint2 windowDims) {
   if (windowDims.x == 0 || windowDims.y == 0 || windowDims.x % 2 == 0 ||
       windowDims.y % 2 == 0)
     return;

@@ -19,6 +19,8 @@ target_sources(
   medianExample PRIVATE
   ${PROJECT_SOURCE_DIR}/medianExample.cu
 )
+
+add_executable(medianExample2d medianExample2d.cu)
 endif()
 
 # -------------------- Tests
