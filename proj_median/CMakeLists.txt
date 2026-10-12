@@ -22,11 +22,10 @@ target_sources(
 endif()
 
 # -------------------- Tests
-# if (GTEST_FOUND)
-#   message("Enabling tests for proj_rng")
-#
-#   # --------------------
-#   add_executable(test_remap test_remap.cu)
-#   target_link_libraries(test_remap ${CUDA_nppc_LIBRARY} ${CUDA_nppig_LIBRARY} GTest::gtest_main)
-#   gtest_discover_tests(test_remap)
-# endif()
+if (GTEST_FOUND)
+  message("Enabling tests for proj_median")
+
+  add_executable(medianTest2d medianTest2d.cu ${GENERIC_TEST_MAIN})
+  target_link_libraries(medianTest2d GTest::gtest)
+  gtest_discover_tests(medianTest2d)
+endif()
