@@ -21,11 +21,16 @@ target_sources(
 )
 
 add_executable(medianExample2d medianExample2d.cu)
+add_executable(medianRowsExample medianRowsExample.cu)
 endif()
 
 # -------------------- Tests
 if (GTEST_FOUND)
   message("Enabling tests for proj_median")
+
+  add_executable(medianTest1d medianTest1d.cu ${GENERIC_TEST_MAIN})
+  target_link_libraries(medianTest1d GTest::gtest)
+  gtest_discover_tests(medianTest1d)
 
   add_executable(medianTest2d medianTest2d.cu ${GENERIC_TEST_MAIN})
   target_link_libraries(medianTest2d GTest::gtest)
