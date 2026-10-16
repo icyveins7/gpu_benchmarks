@@ -1,3 +1,22 @@
+/*
+ * NVIDIA L40S profiling reference for int32_t data and window length 55.
+ *
+ * Best tested shared-memory column parameters:
+ *   outLenPerThread = 32
+ *   threadsPerBlock = 64
+ *   block = (64, 1, 1)
+ *   grid = (ceil(cols / 64), ceil(rows / 32), 1)
+ *   dynamic shared memory = 17,600 bytes/block
+ *
+ * Nsight Systems measurements used 10 launches and discarded the first:
+ *   5000 x 5000:   3.541 ms median, 7.060 Goutput/s
+ *   10000 x 10000: 13.853 ms median, 7.219 Goutput/s
+ *   15000 x 15000: 31.244 ms median, 7.201 Goutput/s
+ *
+ * These results use medianColsShmemExample, built from this source with
+ * MEDIAN_COLS_USE_SHMEM defined.
+ */
+
 #include "median.cuh"
 
 #include "block_and_grid_sizing.cuh"

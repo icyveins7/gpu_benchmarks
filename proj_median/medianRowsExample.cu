@@ -1,3 +1,22 @@
+/*
+ * NVIDIA L40S profiling reference for int32_t data and window length 55.
+ *
+ * Selected row-wise parameters from hyperparameter tuning:
+ *   outLenPerWarp = 160
+ *   warpsPerBlock = 2
+ *   block = (32, 2, 1)
+ *   grid = (ceil(cols / 160), ceil(rows / 2), 1)
+ *   dynamic shared memory = 1,840 bytes/block
+ *
+ * Nsight Systems measurements used 10 launches and discarded the first:
+ *   5000 x 5000:   2.971 ms median, 8.414 Goutput/s
+ *   10000 x 10000: 12.766 ms median, 7.833 Goutput/s
+ *   15000 x 15000: 28.991 ms median, 7.761 Goutput/s
+ *
+ * These parameters were selected during row tuning and retained after moving
+ * the warp rank arrays from local memory to shared uint8_t storage.
+ */
+
 #include "median.cuh"
 
 #include "block_and_grid_sizing.cuh"
