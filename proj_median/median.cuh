@@ -251,13 +251,15 @@ __global__ void blockwise_quickselect_kernel(const T* d_input, int numRows,
  * @brief Warp-distributed rank state for a sliding median window.
  *
  * @details One instance exists per lane, and the 32 lane-local instances
- * cooperate as one logical rank structure. Each rank remains attached to a
- * fixed ring slot. Window values remain in shared memory; `head` and the
- * current window pointer recover the shared-memory value belonging to any
- * ring slot. All methods must be called convergently by a complete warp.
+ * cooperate over one shared rank array. Each rank remains attached to a fixed
+ * ring slot. Window values remain in shared memory; `head` and the current
+ * window pointer recover the shared-memory value belonging to any ring slot.
+ * All methods must be called convergently by a complete warp.
  *
- * `Tplane` must be large enough that `Tplane * 32 >= windowLen`. The kernel
- * checks this requirement before creating the structure.
+ * `Tplane` must be large enough that `Tplane * 32 >= windowLen`. The physical
+ * ring spans all `Tplane * 32` slots so that its shared-memory mapping wraps
+ * on a multiple of the warp size. The kernel checks this capacity before
+ * creating the structure.
  *
  * @tparam T Input and output element type.
  * @tparam Tidx Rank storage type.
@@ -267,19 +269,23 @@ template <typename T, typename Tidx = uint8_t, int Tplane = 2>
 struct MedianRankWarp {
   static constexpr unsigned int FULL_WARP_MASK = 0xffffffffu;
   static constexpr int WARP_SIZE = 32;
+  static constexpr int RING_CAPACITY = Tplane * WARP_SIZE;
 
-  Tidx rank[Tplane];
+  Tidx* s_rank;
   uint16_t head;
 
   /**
    * @brief Initializes ranks for the first window and returns its median.
    *
    * @param s_window Pointer to the first element of the shared-memory window.
+   * @param s_rankStorage Pointer to this warp's shared rank storage.
    * @param windowLen Number of elements in the odd-length median window.
    * @return Median value of the initialized window.
    */
-  __device__ T initialize(const T* s_window, const uint16_t windowLen) {
+  __device__ T initialize(const T* s_window, Tidx* s_rankStorage,
+                          const uint16_t windowLen) {
     const int lane = threadIdx.x;
+    s_rank = s_rankStorage;
     head = 0;
 
     for (int plane = 0; plane < Tplane; ++plane) {
@@ -300,7 +306,7 @@ struct MedianRankWarp {
           ++laneRank;
       }
 
-      rank[plane] = laneRank;
+      s_rank[ringSlot] = laneRank;
     }
 
     return getMedian(s_window, windowLen);
@@ -309,10 +315,11 @@ struct MedianRankWarp {
   /**
    * @brief Advances the rank structure by one element and returns the median.
    *
-   * @details `s_window` advances by one element on every call. The outgoing
-   * ring slot is reused for the new final element. Existing values are read
-   * directly from shared memory by mapping their fixed ring slots through the
-   * updated `head`; no input values are copied into this structure.
+   * @details `s_window` advances by one element on every call. `head` advances
+   * across all `Tplane * 32` physical ring slots, so unused slots after the
+   * logical window become incoming slots before the ring wraps. Existing
+   * values are read directly from shared memory; no values are copied into
+   * this structure.
    *
    * @param s_window Pointer to the first element of the new shared-memory
    * window.
@@ -323,50 +330,49 @@ struct MedianRankWarp {
     const int lane = threadIdx.x;
     const uint16_t outgoingSlot = head;
     const int outgoingLane = outgoingSlot % WARP_SIZE;
-    const int outgoingPlane = outgoingSlot / WARP_SIZE;
 
     Tidx outgoingRank = 0;
     if (lane == outgoingLane)
-      outgoingRank = rank[outgoingPlane];
+      outgoingRank = s_rank[outgoingSlot];
     outgoingRank = __shfl_sync(FULL_WARP_MASK, outgoingRank, outgoingLane);
 
     ++head;
-    if (head == windowLen)
+    if (head == RING_CAPACITY)
       head = 0;
+    int incomingSlot = head + windowLen - 1;
+    if (incomingSlot >= RING_CAPACITY)
+      incomingSlot -= RING_CAPACITY;
+    const int incomingLane = incomingSlot % WARP_SIZE;
 
     const T incomingValue = s_window[windowLen - 1];
     int incomingRank = 0;
 
     for (int plane = 0; plane < Tplane; ++plane) {
       const int ringSlot = plane * WARP_SIZE + lane;
-      const bool valid = ringSlot < windowLen;
-      const bool existing = valid && ringSlot != outgoingSlot;
-      T laneValue{};
-      if (existing) {
-        int relative = ringSlot - head;
-        if (relative < 0)
-          relative += windowLen;
-        laneValue = s_window[relative];
-      }
+      int relative = ringSlot - head;
+      if (relative < 0)
+        relative += RING_CAPACITY;
+      const bool existing = relative < windowLen - 1;
+      const T laneValue = existing ? s_window[relative] : T{};
 
       const bool laneValueIsLess =
           existing && (laneValue < incomingValue ||
-                       (laneValue == incomingValue && ringSlot < outgoingSlot));
+                       (laneValue == incomingValue && ringSlot < incomingSlot));
       incomingRank += __popc(__ballot_sync(FULL_WARP_MASK, laneValueIsLess));
 
       if (existing) {
-        Tidx updatedRank = rank[plane];
+        Tidx updatedRank = s_rank[ringSlot];
         if (updatedRank > outgoingRank)
           --updatedRank;
         if (incomingValue < laneValue ||
-            (incomingValue == laneValue && outgoingSlot < ringSlot))
+            (incomingValue == laneValue && incomingSlot < ringSlot))
           ++updatedRank;
-        rank[plane] = updatedRank;
+        s_rank[ringSlot] = updatedRank;
       }
     }
 
-    if (lane == outgoingLane)
-      rank[outgoingPlane] = static_cast<Tidx>(incomingRank);
+    if (lane == incomingLane)
+      s_rank[incomingSlot] = static_cast<Tidx>(incomingRank);
 
     return getMedian(s_window, windowLen);
   }
@@ -388,10 +394,10 @@ private:
 
     for (int plane = 0; plane < Tplane; ++plane) {
       const int ringSlot = plane * WARP_SIZE + lane;
-      if (ringSlot < windowLen && rank[plane] == medianRank) {
-        int relative = ringSlot - head;
-        if (relative < 0)
-          relative += windowLen;
+      int relative = ringSlot - head;
+      if (relative < 0)
+        relative += RING_CAPACITY;
+      if (relative < windowLen && s_rank[ringSlot] == medianRank) {
         laneMedian = s_window[relative];
         laneHasMedian = true;
       }
@@ -418,8 +424,8 @@ private:
  * coalesced to the output image. Input and output images must not alias.
  *
  * The launch must use `dim3(32, warpsPerBlock)` threads and provide
- * `warpsPerBlock * (outLenPerWarp + windowLen - 1) * sizeof(T)` bytes of
- * dynamic shared memory.
+ * `warpsPerBlock * ((outLenPerWarp + windowLen - 1) * sizeof(T) +
+ * Tplane * 32 * sizeof(Tidx))` bytes of dynamic shared memory.
  *
  * @tparam T Input and output element type supported by `SharedMemory`.
  * @tparam Tidx Rank storage type.
@@ -448,7 +454,12 @@ __global__ void rowwise_median_rank_kernel(
     return;
 
   SharedMemory<T> s_sharedMemory;
-  T* s_warpData = s_sharedMemory.getPointer() + warpInBlock * workspaceLen;
+  T* s_blockData = s_sharedMemory.getPointer();
+  T* s_warpData = s_blockData + warpInBlock * workspaceLen;
+  Tidx* s_blockRank = reinterpret_cast<Tidx*>(
+      s_blockData + blockDim.y * workspaceLen);
+  Tidx* s_warpRank =
+      s_blockRank + warpInBlock * MedianRankWarp<T, Tidx, Tplane>::RING_CAPACITY;
   const int validOutCount = outputStart + outLenPerWarp < d_output.width
                                 ? outLenPerWarp
                                 : d_output.width - outputStart;
@@ -468,9 +479,10 @@ __global__ void rowwise_median_rank_kernel(
     MedianRankWarp<T, Tidx, Tplane> d_medianRank;
     for (int outputIndex = 0; outputIndex < validOutCount; ++outputIndex) {
       const T* s_window = s_warpData + outputIndex;
-      const T median = outputIndex == 0
-                           ? d_medianRank.initialize(s_window, windowLen)
-                           : d_medianRank.update(s_window, windowLen);
+      const T median =
+          outputIndex == 0
+              ? d_medianRank.initialize(s_window, s_warpRank, windowLen)
+              : d_medianRank.update(s_window, windowLen);
       if (lane == 0)
         s_warpData[outputIndex] = median;
     }

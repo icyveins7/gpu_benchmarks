@@ -64,7 +64,9 @@ void testRowwiseMedianRank(const int numRows) {
                        static_cast<unsigned int>(width)),
       justEnoughBlocks(threads.y, static_cast<unsigned int>(numRows)));
   constexpr size_t sharedMemoryBytes =
-      WARPS_PER_BLOCK * (OUT_LEN_PER_WARP + windowLen - 1) * sizeof(T);
+      WARPS_PER_BLOCK *
+      ((OUT_LEN_PER_WARP + windowLen - 1) * sizeof(T) +
+       MedianRankWarp<T, uint8_t, 2>::RING_CAPACITY * sizeof(uint8_t));
 
   rowwise_median_rank_kernel<T, uint8_t, 2>
       <<<blocks, threads, sharedMemoryBytes>>>(

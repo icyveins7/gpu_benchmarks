@@ -81,7 +81,8 @@ int main(int argc, char *argv[]) {
       justEnoughBlocks(threads.y, static_cast<unsigned int>(rows)));
   const size_t sharedMemoryBytes =
       static_cast<size_t>(warpsPerBlock) *
-      (outLenPerWarp + windowLen - 1) * sizeof(T);
+      ((outLenPerWarp + windowLen - 1) * sizeof(T) +
+       MedianRankWarp<T, uint8_t, 2>::RING_CAPACITY * sizeof(uint8_t));
 
   int device = 0;
   int maxSharedMemory = 0;
