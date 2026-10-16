@@ -1,11 +1,15 @@
 #pragma once
 
+#include <cstdint>
+
 #include <cub/block/block_load.cuh>
 #include <cub/block/block_radix_sort.cuh>
 #include <cuda/std/limits>
 
 #include "atomic_extensions.cuh"
 #include "sharedmem.cuh"
+
+#include "containers/image.cuh"
 
 /**
  * @brief Performs a row-wise median of a 2D input array, with one block
@@ -243,10 +247,6 @@ __global__ void blockwise_quickselect_kernel(const T* d_input, int numRows,
 // =============================================
 // =============================================
 
-#include <cstdint>
-
-#include "containers/image.cuh"
-
 /**
  * @brief Warp-distributed rank state for a sliding median window.
  *
@@ -278,7 +278,7 @@ struct MedianRankWarp {
    * @param windowLen Number of elements in the odd-length median window.
    * @return Median value of the initialized window.
    */
-  __device__ T initialize(const T *s_window, const uint16_t windowLen) {
+  __device__ T initialize(const T* s_window, const uint16_t windowLen) {
     const int lane = threadIdx.x;
     head = 0;
 
@@ -295,9 +295,8 @@ struct MedianRankWarp {
           sourceValue = s_window[sourceSlot];
         sourceValue = __shfl_sync(FULL_WARP_MASK, sourceValue, sourceLane);
 
-        if (valid &&
-            (sourceValue < laneValue ||
-             (sourceValue == laneValue && sourceSlot < ringSlot)))
+        if (valid && (sourceValue < laneValue ||
+                      (sourceValue == laneValue && sourceSlot < ringSlot)))
           ++laneRank;
       }
 
@@ -320,7 +319,7 @@ struct MedianRankWarp {
    * @param windowLen Number of elements in the odd-length median window.
    * @return Median value of the updated window.
    */
-  __device__ T update(const T *s_window, const uint16_t windowLen) {
+  __device__ T update(const T* s_window, const uint16_t windowLen) {
     const int lane = threadIdx.x;
     const uint16_t outgoingSlot = head;
     const int outgoingLane = outgoingSlot % WARP_SIZE;
@@ -329,8 +328,7 @@ struct MedianRankWarp {
     Tidx outgoingRank = 0;
     if (lane == outgoingLane)
       outgoingRank = rank[outgoingPlane];
-    outgoingRank =
-        __shfl_sync(FULL_WARP_MASK, outgoingRank, outgoingLane);
+    outgoingRank = __shfl_sync(FULL_WARP_MASK, outgoingRank, outgoingLane);
 
     ++head;
     if (head == windowLen)
@@ -352,11 +350,9 @@ struct MedianRankWarp {
       }
 
       const bool laneValueIsLess =
-          existing &&
-          (laneValue < incomingValue ||
-           (laneValue == incomingValue && ringSlot < outgoingSlot));
-      incomingRank +=
-          __popc(__ballot_sync(FULL_WARP_MASK, laneValueIsLess));
+          existing && (laneValue < incomingValue ||
+                       (laneValue == incomingValue && ringSlot < outgoingSlot));
+      incomingRank += __popc(__ballot_sync(FULL_WARP_MASK, laneValueIsLess));
 
       if (existing) {
         Tidx updatedRank = rank[plane];
@@ -384,7 +380,7 @@ private:
    * @param windowLen Number of elements in the odd-length median window.
    * @return Median value, broadcast to every lane in the warp.
    */
-  __device__ T getMedian(const T *s_window, const uint16_t windowLen) const {
+  __device__ T getMedian(const T* s_window, const uint16_t windowLen) const {
     const int lane = threadIdx.x;
     const Tidx medianRank = static_cast<Tidx>(windowLen / 2);
     bool laneHasMedian = false;
@@ -435,9 +431,8 @@ private:
  */
 template <typename T, typename Tidx = uint8_t, int Tplane = 2>
 __global__ void rowwise_median_rank_kernel(
-    const containers::Image<const T> d_input,
-    containers::Image<T> d_output, const uint16_t windowLen,
-    const uint16_t outLenPerWarp) {
+    const containers::Image<const T> d_input, containers::Image<T> d_output,
+    const uint16_t windowLen, const uint16_t outLenPerWarp) {
   if (blockDim.x != 32 || blockDim.z != 1 || windowLen == 0 ||
       windowLen % 2 == 0 || outLenPerWarp == 0 ||
       windowLen > Tplane * MedianRankWarp<T, Tidx, Tplane>::WARP_SIZE ||
@@ -453,29 +448,26 @@ __global__ void rowwise_median_rank_kernel(
     return;
 
   SharedMemory<T> s_sharedMemory;
-  T *s_warpData =
-      s_sharedMemory.getPointer() + warpInBlock * workspaceLen;
-  const int validOutCount =
-      outputStart + outLenPerWarp < d_output.width
-          ? outLenPerWarp
-          : d_output.width - outputStart;
+  T* s_warpData = s_sharedMemory.getPointer() + warpInBlock * workspaceLen;
+  const int validOutCount = outputStart + outLenPerWarp < d_output.width
+                                ? outLenPerWarp
+                                : d_output.width - outputStart;
   const int radius = windowLen / 2;
 
-  for (int row = blockIdx.y * blockDim.y + warpInBlock;
-       row < d_output.height; row += gridDim.y * blockDim.y) {
+  for (int row = blockIdx.y * blockDim.y + warpInBlock; row < d_output.height;
+       row += gridDim.y * blockDim.y) {
     for (int workspaceIndex = lane; workspaceIndex < workspaceLen;
          workspaceIndex += MedianRankWarp<T, Tidx, Tplane>::WARP_SIZE) {
       const int inputCol = outputStart - radius + workspaceIndex;
       // Zero padding is assumed for out-of-range input columns for now.
-      s_warpData[workspaceIndex] = d_input.colIsValid(inputCol)
-                                       ? d_input.at(row, inputCol)
-                                       : T{0};
+      s_warpData[workspaceIndex] =
+          d_input.colIsValid(inputCol) ? d_input.at(row, inputCol) : T{0};
     }
     __syncwarp();
 
     MedianRankWarp<T, Tidx, Tplane> d_medianRank;
     for (int outputIndex = 0; outputIndex < validOutCount; ++outputIndex) {
-      const T *s_window = s_warpData + outputIndex;
+      const T* s_window = s_warpData + outputIndex;
       const T median = outputIndex == 0
                            ? d_medianRank.initialize(s_window, windowLen)
                            : d_medianRank.update(s_window, windowLen);
@@ -486,8 +478,7 @@ __global__ void rowwise_median_rank_kernel(
 
     for (int outputIndex = lane; outputIndex < validOutCount;
          outputIndex += MedianRankWarp<T, Tidx, Tplane>::WARP_SIZE)
-      d_output.at(row, outputStart + outputIndex) =
-          s_warpData[outputIndex];
+      d_output.at(row, outputStart + outputIndex) = s_warpData[outputIndex];
     __syncwarp();
   }
 }
@@ -535,17 +526,15 @@ struct MedianRankThread {
     const int radius = windowLen / 2;
     for (int ringSlot = 0; ringSlot < windowLen; ++ringSlot) {
       const int inputRow = outputStart - radius + ringSlot;
-      value[ringSlot] = d_input.rowIsValid(inputRow)
-                            ? d_input.at(inputRow, col)
-                            : T{0};
+      value[ringSlot] =
+          d_input.rowIsValid(inputRow) ? d_input.at(inputRow, col) : T{0};
     }
 
     for (int ringSlot = 0; ringSlot < windowLen; ++ringSlot) {
       Tidx slotRank = 0;
       for (int sourceSlot = 0; sourceSlot < windowLen; ++sourceSlot) {
         if (value[sourceSlot] < value[ringSlot] ||
-            (value[sourceSlot] == value[ringSlot] &&
-             sourceSlot < ringSlot))
+            (value[sourceSlot] == value[ringSlot] && sourceSlot < ringSlot))
           ++slotRank;
       }
       rank[ringSlot] = slotRank;
@@ -631,9 +620,8 @@ private:
  */
 template <typename T, typename Tidx = uint8_t, int Tcapacity = 64>
 __global__ void columnwise_median_rank_kernel(
-    const containers::Image<const T> d_input,
-    containers::Image<T> d_output, const uint16_t windowLen,
-    const uint16_t outLenPerThread) {
+    const containers::Image<const T> d_input, containers::Image<T> d_output,
+    const uint16_t windowLen, const uint16_t outLenPerThread) {
   if (blockDim.x < 64 || blockDim.x % 32 != 0 || blockDim.y != 1 ||
       blockDim.z != 1 || windowLen == 0 || windowLen % 2 == 0 ||
       windowLen > Tcapacity || outLenPerThread == 0 ||
@@ -647,10 +635,9 @@ __global__ void columnwise_median_rank_kernel(
   if (!d_output.colIsValid(col) || !d_output.rowIsValid(outputStart))
     return;
 
-  const int validOutCount =
-      outputStart + outLenPerThread < d_output.height
-          ? outLenPerThread
-          : d_output.height - outputStart;
+  const int validOutCount = outputStart + outLenPerThread < d_output.height
+                                ? outLenPerThread
+                                : d_output.height - outputStart;
   MedianRankThread<T, Tidx, Tcapacity> d_medianRank;
   d_output.at(outputStart, col) =
       d_medianRank.initialize(d_input, col, outputStart, windowLen);
@@ -660,11 +647,9 @@ __global__ void columnwise_median_rank_kernel(
     const int outputRow = outputStart + outputOffset;
     const int inputRow = outputRow + radius;
     // Zero padding is assumed for out-of-range input rows for now.
-    const T incomingValue = d_input.rowIsValid(inputRow)
-                                ? d_input.at(inputRow, col)
-                                : T{0};
-    d_output.at(outputRow, col) =
-        d_medianRank.update(incomingValue, windowLen);
+    const T incomingValue =
+        d_input.rowIsValid(inputRow) ? d_input.at(inputRow, col) : T{0};
+    d_output.at(outputRow, col) = d_medianRank.update(incomingValue, windowLen);
   }
 }
 
@@ -686,8 +671,8 @@ __global__ void columnwise_median_rank_kernel(
  */
 template <typename T, typename Tidx = uint8_t, int Tcapacity = 64>
 struct MedianRankThreadShmem {
-  T *s_value;
-  Tidx *s_rank;
+  T* s_value;
+  Tidx* s_rank;
   int stride;
   uint16_t head;
 
@@ -703,7 +688,7 @@ struct MedianRankThreadShmem {
    * @param windowLen Number of elements in the odd-length median window.
    * @return Median value of the initial window.
    */
-  __device__ T initialize(T *s_valueStorage, Tidx *s_rankStorage,
+  __device__ T initialize(T* s_valueStorage, Tidx* s_rankStorage,
                           const int storageStride,
                           const containers::Image<const T> d_input,
                           const int col, const int outputStart,
@@ -717,9 +702,8 @@ struct MedianRankThreadShmem {
     for (int ringSlot = 0; ringSlot < windowLen; ++ringSlot) {
       const int inputRow = outputStart - radius + ringSlot;
       const int storageIndex = ringSlot * stride + threadIdx.x;
-      s_value[storageIndex] = d_input.rowIsValid(inputRow)
-                                  ? d_input.at(inputRow, col)
-                                  : T{0};
+      s_value[storageIndex] =
+          d_input.rowIsValid(inputRow) ? d_input.at(inputRow, col) : T{0};
     }
 
     for (int ringSlot = 0; ringSlot < windowLen; ++ringSlot) {
@@ -757,16 +741,14 @@ struct MedianRankThreadShmem {
 
       const int storageIndex = ringSlot * stride + threadIdx.x;
       if (s_value[storageIndex] < incomingValue ||
-          (s_value[storageIndex] == incomingValue &&
-           ringSlot < outgoingSlot))
+          (s_value[storageIndex] == incomingValue && ringSlot < outgoingSlot))
         ++incomingRank;
 
       Tidx updatedRank = s_rank[storageIndex];
       if (updatedRank > outgoingRank)
         --updatedRank;
       if (incomingValue < s_value[storageIndex] ||
-          (incomingValue == s_value[storageIndex] &&
-           outgoingSlot < ringSlot))
+          (incomingValue == s_value[storageIndex] && outgoingSlot < ringSlot))
         ++updatedRank;
       s_rank[storageIndex] = updatedRank;
     }
@@ -816,9 +798,8 @@ private:
  */
 template <typename T, typename Tidx = uint8_t, int Tcapacity = 64>
 __global__ void columnwise_median_rank_shmem_kernel(
-    const containers::Image<const T> d_input,
-    containers::Image<T> d_output, const uint16_t windowLen,
-    const uint16_t outLenPerThread) {
+    const containers::Image<const T> d_input, containers::Image<T> d_output,
+    const uint16_t windowLen, const uint16_t outLenPerThread) {
   if (blockDim.x < 64 || blockDim.x % 32 != 0 || blockDim.y != 1 ||
       blockDim.z != 1 || windowLen == 0 || windowLen % 2 == 0 ||
       windowLen > Tcapacity || outLenPerThread == 0 ||
@@ -834,13 +815,12 @@ __global__ void columnwise_median_rank_shmem_kernel(
 
   extern __shared__ __align__(16) unsigned char s_storage[];
   const size_t slotCount = static_cast<size_t>(blockDim.x) * windowLen;
-  T *s_value = reinterpret_cast<T *>(s_storage);
-  Tidx *s_rank = reinterpret_cast<Tidx *>(s_value + slotCount);
+  T* s_value = reinterpret_cast<T*>(s_storage);
+  Tidx* s_rank = reinterpret_cast<Tidx*>(s_value + slotCount);
 
-  const int validOutCount =
-      outputStart + outLenPerThread < d_output.height
-          ? outLenPerThread
-          : d_output.height - outputStart;
+  const int validOutCount = outputStart + outLenPerThread < d_output.height
+                                ? outLenPerThread
+                                : d_output.height - outputStart;
   MedianRankThreadShmem<T, Tidx, Tcapacity> d_medianRank;
   d_output.at(outputStart, col) = d_medianRank.initialize(
       s_value, s_rank, blockDim.x, d_input, col, outputStart, windowLen);
@@ -850,10 +830,8 @@ __global__ void columnwise_median_rank_shmem_kernel(
     const int outputRow = outputStart + outputOffset;
     const int inputRow = outputRow + radius;
     // Zero padding is assumed for out-of-range input rows for now.
-    const T incomingValue = d_input.rowIsValid(inputRow)
-                                ? d_input.at(inputRow, col)
-                                : T{0};
-    d_output.at(outputRow, col) =
-        d_medianRank.update(incomingValue, windowLen);
+    const T incomingValue =
+        d_input.rowIsValid(inputRow) ? d_input.at(inputRow, col) : T{0};
+    d_output.at(outputRow, col) = d_medianRank.update(incomingValue, windowLen);
   }
 }
