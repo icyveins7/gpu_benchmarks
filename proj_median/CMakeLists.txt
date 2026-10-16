@@ -22,6 +22,10 @@ target_sources(
 
 add_executable(medianExample2d medianExample2d.cu)
 add_executable(medianRowsExample medianRowsExample.cu)
+add_executable(medianColsExample medianColsExample.cu)
+add_executable(medianColsShmemExample medianColsExample.cu)
+target_compile_definitions(medianColsShmemExample
+                           PRIVATE MEDIAN_COLS_USE_SHMEM)
 endif()
 
 # -------------------- Tests

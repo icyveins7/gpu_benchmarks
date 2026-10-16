@@ -491,3 +491,369 @@ __global__ void rowwise_median_rank_kernel(
     __syncwarp();
   }
 }
+
+// =============================================
+// =============================================
+// ====== COLUMN-WISE 1D MEDIAN FILTER =========
+// =============================================
+// =============================================
+
+/**
+ * @brief Thread-local rank state for a sliding median window.
+ *
+ * @details One thread owns one vertical column segment. Values remain in fixed
+ * ring slots, and `head` identifies the slot replaced by the next incoming
+ * value. Ranks use ring-slot order to distinguish duplicate values.
+ *
+ * @tparam T Input and output element type.
+ * @tparam Tidx Rank storage type.
+ * @tparam Tcapacity Maximum supported window length.
+ */
+template <typename T, typename Tidx = uint8_t, int Tcapacity = 64>
+struct MedianRankThread {
+  T value[Tcapacity];
+  Tidx rank[Tcapacity];
+  uint16_t head;
+
+  /**
+   * @brief Loads and ranks the initial centered window for one column.
+   *
+   * @details Threads in a block request the same input row at each iteration,
+   * so neighboring column reads are globally coalesced. Input rows above or
+   * below the image are assumed to contain zero for now.
+   *
+   * @param d_input Input image.
+   * @param col Column owned by this thread.
+   * @param outputStart First output row in this thread's segment.
+   * @param windowLen Number of elements in the odd-length median window.
+   * @return Median value of the initial window.
+   */
+  __device__ T initialize(const containers::Image<const T> d_input,
+                          const int col, const int outputStart,
+                          const uint16_t windowLen) {
+    head = 0;
+    const int radius = windowLen / 2;
+    for (int ringSlot = 0; ringSlot < windowLen; ++ringSlot) {
+      const int inputRow = outputStart - radius + ringSlot;
+      value[ringSlot] = d_input.rowIsValid(inputRow)
+                            ? d_input.at(inputRow, col)
+                            : T{0};
+    }
+
+    for (int ringSlot = 0; ringSlot < windowLen; ++ringSlot) {
+      Tidx slotRank = 0;
+      for (int sourceSlot = 0; sourceSlot < windowLen; ++sourceSlot) {
+        if (value[sourceSlot] < value[ringSlot] ||
+            (value[sourceSlot] == value[ringSlot] &&
+             sourceSlot < ringSlot))
+          ++slotRank;
+      }
+      rank[ringSlot] = slotRank;
+    }
+
+    return getMedian(windowLen);
+  }
+
+  /**
+   * @brief Replaces the outgoing ring value and returns the updated median.
+   *
+   * @param incomingValue New value entering the final position of the window.
+   * @param windowLen Number of elements in the odd-length median window.
+   * @return Median value after the sliding update.
+   */
+  __device__ T update(const T incomingValue, const uint16_t windowLen) {
+    const uint16_t outgoingSlot = head;
+    const Tidx outgoingRank = rank[outgoingSlot];
+    int incomingRank = 0;
+
+    for (int ringSlot = 0; ringSlot < windowLen; ++ringSlot) {
+      if (ringSlot == outgoingSlot)
+        continue;
+
+      if (value[ringSlot] < incomingValue ||
+          (value[ringSlot] == incomingValue && ringSlot < outgoingSlot))
+        ++incomingRank;
+
+      Tidx updatedRank = rank[ringSlot];
+      if (updatedRank > outgoingRank)
+        --updatedRank;
+      if (incomingValue < value[ringSlot] ||
+          (incomingValue == value[ringSlot] && outgoingSlot < ringSlot))
+        ++updatedRank;
+      rank[ringSlot] = updatedRank;
+    }
+
+    value[outgoingSlot] = incomingValue;
+    rank[outgoingSlot] = static_cast<Tidx>(incomingRank);
+    ++head;
+    if (head == windowLen)
+      head = 0;
+
+    return getMedian(windowLen);
+  }
+
+private:
+  /**
+   * @brief Returns the value currently carrying the median rank.
+   *
+   * @param windowLen Number of elements in the odd-length median window.
+   * @return Median value of the current ring contents.
+   */
+  __device__ T getMedian(const uint16_t windowLen) const {
+    const Tidx medianRank = static_cast<Tidx>(windowLen / 2);
+    for (int ringSlot = 0; ringSlot < windowLen; ++ringSlot) {
+      if (rank[ringSlot] == medianRank)
+        return value[ringSlot];
+    }
+    return T{};
+  }
+};
+
+/**
+ * @brief Applies an odd-length sliding median filter independently to columns.
+ *
+ * @details Each thread processes one contiguous vertical output segment. At
+ * every input and output row, neighboring threads access neighboring columns,
+ * keeping global reads and writes coalesced without transposing the image.
+ * `blockIdx.y` selects the vertical segment.
+ *
+ * Input rows outside the image are assumed to contain zero for now. Input and
+ * output images must not alias. Launch with a one-dimensional thread block
+ * containing a multiple of 32 threads and at least 64 threads.
+ *
+ * @tparam T Input and output element type.
+ * @tparam Tidx Rank storage type.
+ * @tparam Tcapacity Maximum supported window length.
+ * @param d_input Input image containing equal-length columns.
+ * @param d_output Output image with the same dimensions as `d_input`.
+ * @param windowLen Odd median-window length.
+ * @param outLenPerThread Maximum number of output rows produced by one thread.
+ */
+template <typename T, typename Tidx = uint8_t, int Tcapacity = 64>
+__global__ void columnwise_median_rank_kernel(
+    const containers::Image<const T> d_input,
+    containers::Image<T> d_output, const uint16_t windowLen,
+    const uint16_t outLenPerThread) {
+  if (blockDim.x < 64 || blockDim.x % 32 != 0 || blockDim.y != 1 ||
+      blockDim.z != 1 || windowLen == 0 || windowLen % 2 == 0 ||
+      windowLen > Tcapacity || outLenPerThread == 0 ||
+      windowLen - 1 > cuda::std::numeric_limits<Tidx>::max() ||
+      d_input.width != d_output.width || d_input.height != d_output.height ||
+      d_input.width <= 0 || d_input.height <= 0)
+    return;
+
+  const int col = blockIdx.x * blockDim.x + threadIdx.x;
+  const int outputStart = blockIdx.y * outLenPerThread;
+  if (!d_output.colIsValid(col) || !d_output.rowIsValid(outputStart))
+    return;
+
+  const int validOutCount =
+      outputStart + outLenPerThread < d_output.height
+          ? outLenPerThread
+          : d_output.height - outputStart;
+  MedianRankThread<T, Tidx, Tcapacity> d_medianRank;
+  d_output.at(outputStart, col) =
+      d_medianRank.initialize(d_input, col, outputStart, windowLen);
+
+  const int radius = windowLen / 2;
+  for (int outputOffset = 1; outputOffset < validOutCount; ++outputOffset) {
+    const int outputRow = outputStart + outputOffset;
+    const int inputRow = outputRow + radius;
+    // Zero padding is assumed for out-of-range input rows for now.
+    const T incomingValue = d_input.rowIsValid(inputRow)
+                                ? d_input.at(inputRow, col)
+                                : T{0};
+    d_output.at(outputRow, col) =
+        d_medianRank.update(incomingValue, windowLen);
+  }
+}
+
+// =============================================
+// ====== SHARED-MEMORY COLUMN MEDIAN ===========
+// =============================================
+
+/**
+ * @brief Shared-memory-backed rank state for one column segment.
+ *
+ * @details One instance exists per thread. Values and ranks occupy slot-major
+ * shared-memory arrays owned by the block, while `head` remains thread-local.
+ * For a given ring slot, neighboring threads access neighboring shared-memory
+ * locations.
+ *
+ * @tparam T Input and output element type.
+ * @tparam Tidx Rank storage type.
+ * @tparam Tcapacity Maximum supported window length.
+ */
+template <typename T, typename Tidx = uint8_t, int Tcapacity = 64>
+struct MedianRankThreadShmem {
+  T *s_value;
+  Tidx *s_rank;
+  int stride;
+  uint16_t head;
+
+  /**
+   * @brief Loads and ranks the initial centered window for one column segment.
+   *
+   * @param s_valueStorage Shared value storage for the complete block.
+   * @param s_rankStorage Shared rank storage for the complete block.
+   * @param storageStride Number of threads represented by each ring slot.
+   * @param d_input Input image.
+   * @param col Column owned by this thread.
+   * @param outputStart First output row in this thread's segment.
+   * @param windowLen Number of elements in the odd-length median window.
+   * @return Median value of the initial window.
+   */
+  __device__ T initialize(T *s_valueStorage, Tidx *s_rankStorage,
+                          const int storageStride,
+                          const containers::Image<const T> d_input,
+                          const int col, const int outputStart,
+                          const uint16_t windowLen) {
+    s_value = s_valueStorage;
+    s_rank = s_rankStorage;
+    stride = storageStride;
+    head = 0;
+
+    const int radius = windowLen / 2;
+    for (int ringSlot = 0; ringSlot < windowLen; ++ringSlot) {
+      const int inputRow = outputStart - radius + ringSlot;
+      const int storageIndex = ringSlot * stride + threadIdx.x;
+      s_value[storageIndex] = d_input.rowIsValid(inputRow)
+                                  ? d_input.at(inputRow, col)
+                                  : T{0};
+    }
+
+    for (int ringSlot = 0; ringSlot < windowLen; ++ringSlot) {
+      const int storageIndex = ringSlot * stride + threadIdx.x;
+      Tidx slotRank = 0;
+      for (int sourceSlot = 0; sourceSlot < windowLen; ++sourceSlot) {
+        const int sourceIndex = sourceSlot * stride + threadIdx.x;
+        if (s_value[sourceIndex] < s_value[storageIndex] ||
+            (s_value[sourceIndex] == s_value[storageIndex] &&
+             sourceSlot < ringSlot))
+          ++slotRank;
+      }
+      s_rank[storageIndex] = slotRank;
+    }
+
+    return getMedian(windowLen);
+  }
+
+  /**
+   * @brief Replaces the outgoing shared ring value and returns the median.
+   *
+   * @param incomingValue New value entering the final position of the window.
+   * @param windowLen Number of elements in the odd-length median window.
+   * @return Median value after the sliding update.
+   */
+  __device__ T update(const T incomingValue, const uint16_t windowLen) {
+    const uint16_t outgoingSlot = head;
+    const int outgoingIndex = outgoingSlot * stride + threadIdx.x;
+    const Tidx outgoingRank = s_rank[outgoingIndex];
+    int incomingRank = 0;
+
+    for (int ringSlot = 0; ringSlot < windowLen; ++ringSlot) {
+      if (ringSlot == outgoingSlot)
+        continue;
+
+      const int storageIndex = ringSlot * stride + threadIdx.x;
+      if (s_value[storageIndex] < incomingValue ||
+          (s_value[storageIndex] == incomingValue &&
+           ringSlot < outgoingSlot))
+        ++incomingRank;
+
+      Tidx updatedRank = s_rank[storageIndex];
+      if (updatedRank > outgoingRank)
+        --updatedRank;
+      if (incomingValue < s_value[storageIndex] ||
+          (incomingValue == s_value[storageIndex] &&
+           outgoingSlot < ringSlot))
+        ++updatedRank;
+      s_rank[storageIndex] = updatedRank;
+    }
+
+    s_value[outgoingIndex] = incomingValue;
+    s_rank[outgoingIndex] = static_cast<Tidx>(incomingRank);
+    ++head;
+    if (head == windowLen)
+      head = 0;
+
+    return getMedian(windowLen);
+  }
+
+private:
+  /**
+   * @brief Returns the shared ring value carrying the median rank.
+   *
+   * @param windowLen Number of elements in the odd-length median window.
+   * @return Median value of the current ring contents.
+   */
+  __device__ T getMedian(const uint16_t windowLen) const {
+    const Tidx medianRank = static_cast<Tidx>(windowLen / 2);
+    for (int ringSlot = 0; ringSlot < windowLen; ++ringSlot) {
+      const int storageIndex = ringSlot * stride + threadIdx.x;
+      if (s_rank[storageIndex] == medianRank)
+        return s_value[storageIndex];
+    }
+    return T{};
+  }
+};
+
+/**
+ * @brief Applies the column-wise sliding median using shared ring storage.
+ *
+ * @details The output mapping and filtering behavior match
+ * `columnwise_median_rank_kernel`. The launch must provide
+ * `blockDim.x * windowLen * (sizeof(T) + sizeof(Tidx))` bytes of dynamic
+ * shared memory. Input and output images must not alias.
+ *
+ * @tparam T Input and output element type.
+ * @tparam Tidx Rank storage type.
+ * @tparam Tcapacity Maximum supported window length.
+ * @param d_input Input image containing equal-length columns.
+ * @param d_output Output image with the same dimensions as `d_input`.
+ * @param windowLen Odd median-window length.
+ * @param outLenPerThread Maximum number of output rows produced by one thread.
+ */
+template <typename T, typename Tidx = uint8_t, int Tcapacity = 64>
+__global__ void columnwise_median_rank_shmem_kernel(
+    const containers::Image<const T> d_input,
+    containers::Image<T> d_output, const uint16_t windowLen,
+    const uint16_t outLenPerThread) {
+  if (blockDim.x < 64 || blockDim.x % 32 != 0 || blockDim.y != 1 ||
+      blockDim.z != 1 || windowLen == 0 || windowLen % 2 == 0 ||
+      windowLen > Tcapacity || outLenPerThread == 0 ||
+      windowLen - 1 > cuda::std::numeric_limits<Tidx>::max() ||
+      d_input.width != d_output.width || d_input.height != d_output.height ||
+      d_input.width <= 0 || d_input.height <= 0)
+    return;
+
+  const int col = blockIdx.x * blockDim.x + threadIdx.x;
+  const int outputStart = blockIdx.y * outLenPerThread;
+  if (!d_output.colIsValid(col) || !d_output.rowIsValid(outputStart))
+    return;
+
+  extern __shared__ __align__(16) unsigned char s_storage[];
+  const size_t slotCount = static_cast<size_t>(blockDim.x) * windowLen;
+  T *s_value = reinterpret_cast<T *>(s_storage);
+  Tidx *s_rank = reinterpret_cast<Tidx *>(s_value + slotCount);
+
+  const int validOutCount =
+      outputStart + outLenPerThread < d_output.height
+          ? outLenPerThread
+          : d_output.height - outputStart;
+  MedianRankThreadShmem<T, Tidx, Tcapacity> d_medianRank;
+  d_output.at(outputStart, col) = d_medianRank.initialize(
+      s_value, s_rank, blockDim.x, d_input, col, outputStart, windowLen);
+
+  const int radius = windowLen / 2;
+  for (int outputOffset = 1; outputOffset < validOutCount; ++outputOffset) {
+    const int outputRow = outputStart + outputOffset;
+    const int inputRow = outputRow + radius;
+    // Zero padding is assumed for out-of-range input rows for now.
+    const T incomingValue = d_input.rowIsValid(inputRow)
+                                ? d_input.at(inputRow, col)
+                                : T{0};
+    d_output.at(outputRow, col) =
+        d_medianRank.update(incomingValue, windowLen);
+  }
+}
