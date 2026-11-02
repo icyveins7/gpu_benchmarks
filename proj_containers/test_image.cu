@@ -108,6 +108,16 @@ TEST(ContainersPinnedHostImageStorage, NoInitResizePreservesRegrownRange) {
   }
 }
 
+TEST(ContainersPinnedHostImageStorage, NoInitResizeCanAllocate) {
+  containers::PinnedHostImageStorage<int> img;
+
+  EXPECT_NO_THROW(img.resize(20, 20, containers::no_init));
+  EXPECT_EQ(img.width, 20);
+  EXPECT_EQ(img.height, 20);
+  EXPECT_EQ(img.vec.size(), 20 * 20);
+  EXPECT_GE(img.vec.capacity(), 20 * 20);
+}
+
 TEST(ContainersImage, LargeImage) {
   // For 8-byte words like doubles, this constitutes a 2^3 factor in
   // the pointer calculation. This means that it may be dangerous for

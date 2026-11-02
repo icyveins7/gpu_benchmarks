@@ -98,6 +98,10 @@ target_sources(
   ${PROJECT_SOURCE_DIR}/oversample_remap.cu
 )
 
+add_executable(overlap_remap overlap_remap.cu)
+target_include_directories(overlap_remap
+                           PRIVATE ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
+                           )
 
 # -------------------- Tests
 if (GTEST_FOUND)

@@ -39,7 +39,7 @@ public:
       return;
     }
     if (newSize > this->capacity())
-      throw std::length_error("no-init resize exceeds existing capacity");
+      Vector::reserve(newSize);
 
     this->m_size = newSize;
   }

@@ -1,4 +1,5 @@
 #include "kernels.h"
+#include "overlapKernels.cuh"
 #include <gtest/gtest.h>
 #include <limits>
 #include <npp.h>
@@ -441,4 +442,147 @@ TEST(NaiveRemapWraparound, uint16_t_25x25_123x123) {
 }
 TEST(NaiveRemapWraparound, uint16_t_edgecase) {
   test_remap_wraparound_edgecases<uint16_t, NaiveRemapWraparound>();
+}
+
+/**
+ * @brief Four complete input pixels contribute equally to one output pixel.
+ *
+ * A 2x2 input containing 10, 20, 30, 40 lies entirely inside one output
+ * pixel twice as wide, so each contributes weight 0.25 and the result is 25.
+ * Invalidating 40 leaves weight 0.75 and mean 20: this passes 0.45 but fails
+ * a threshold of 0.75 because the validity comparison is strictly greater.
+ */
+TEST(OverlapRemap, AreaWeightsAndStrictThreshold) {
+  containers::DeviceImageStorage<float> input(2, 2);
+  thrust::host_vector<float> values(4);
+  values[0] = 10;
+  values[1] = 20;
+  values[2] = 30;
+  values[3] = 40;
+  input.vec = values;
+  containers::DeviceImageStorage<float> output(1, 1);
+  const overlap::OutputToInput<float> transform{{2, 0}, {0, 2}, {0.5, 0.5}};
+  overlap::remapOverlap(input.cimage(), output.image(), transform, 0.45f);
+  ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
+  thrust::host_vector<float> result = output.vec;
+  EXPECT_FLOAT_EQ(result[0], 25.0f);
+
+  values[3] = std::numeric_limits<float>::max();
+  input.vec = values;
+  overlap::remapOverlap(input.cimage(), output.image(), transform, 0.45f);
+  ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
+  result = output.vec;
+  EXPECT_FLOAT_EQ(result[0], 20.0f);
+
+  overlap::remapOverlap(input.cimage(), output.image(), transform, 0.75f);
+  ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
+  result = output.vec;
+  EXPECT_EQ(result[0], std::numeric_limits<float>::max());
+}
+
+/**
+ * @brief A 45-degree output square overlaps four equal input quadrants.
+ *
+ * The first output pixel is centred at (0.5, 0.5) and rotated 45 degrees.
+ * It covers equal areas of input values 10, 20, 30, 40, giving mean 25 and
+ * total weight 1. At threshold 0.95 it is valid; at 1.01 it is invalid.
+ * Other output columns have insufficient overlap (or none) and are invalid.
+ */
+TEST(OverlapRemap, RotatedOutput) {
+  containers::DeviceImageStorage<float> input(2, 2);
+  thrust::host_vector<float> values(4);
+  values[0] = 10;
+  values[1] = 20;
+  values[2] = 30;
+  values[3] = 40;
+  input.vec = values;
+  containers::DeviceImageStorage<float> output(35, 1);
+  const double c = std::sqrt(0.5);
+  const overlap::OutputToInput<double> transform{
+      {c, c}, {-c, c}, {0.5, 0.5}};
+  overlap::remapOverlap(input.cimage(), output.image(), transform, 0.95,
+                 overlap::AreaAccumulator<double>{}, dim3(1, 1), dim3(8, 2));
+  ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
+  thrust::host_vector<float> result = output.vec;
+  EXPECT_NEAR(result[0], 25.0f, 1e-5f);
+  for (int i = 1; i < output.width; ++i)
+    EXPECT_EQ(result[i], std::numeric_limits<float>::max());
+
+  overlap::remapOverlap(input.cimage(), output.image(), transform, 1.01,
+                 overlap::AreaAccumulator<double>{}, dim3(1, 1), dim3(8, 2));
+  ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
+  result = output.vec;
+  EXPECT_EQ(result[0], std::numeric_limits<float>::max());
+}
+
+/**
+ * @brief An identity remap must fill every pixel with either launch shape.
+ *
+ * A 35x9 input and output share pixel centres, so every output must exactly
+ * match its corresponding input value. The default 32x4 block gets an
+ * automatically sized 2x3 grid. A single 8x2 block then has to stride in
+ * both X and Y to produce the same complete 35x9 result.
+ */
+TEST(OverlapRemap, GridStrideBothAxes) {
+  containers::DeviceImageStorage<float> input(35, 9);
+  thrust::host_vector<float> values(input.vec.size());
+  for (size_t i = 0; i < values.size(); ++i)
+    values[i] = static_cast<float>(i + 1);
+  input.vec = values;
+  containers::DeviceImageStorage<float> output(35, 9);
+  const overlap::OutputToInput<double> transform{{1, 0}, {0, 1}, {0, 0}};
+  overlap::remapOverlap(input.cimage(), output.image(), transform, 0.45);
+  ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
+  thrust::host_vector<float> result = output.vec;
+  for (size_t i = 0; i < values.size(); ++i)
+    EXPECT_FLOAT_EQ(result[i], values[i]);
+
+  overlap::remapOverlap(input.cimage(), output.image(), transform, 0.45,
+                 overlap::AreaAccumulator<double>{}, dim3(1, 1), dim3(8, 2));
+  ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
+  result = output.vec;
+  for (size_t i = 0; i < values.size(); ++i)
+    EXPECT_FLOAT_EQ(result[i], values[i]);
+}
+
+/** @brief Test policy that weights the square of each input value by area. */
+struct SquaredValueAccumulator {
+  __device__ overlap::Contribution<double>
+  operator()(const cuda_vec2_t<double> (&quad)[4], int x, int y,
+             float sample, double areaScale) const {
+    const double weight = overlap::intersectionArea<double>(quad, x, y) *
+                          areaScale;
+    return {weight, weight * sample * sample};
+  }
+};
+
+/**
+ * @brief Partially covered input pixels use their intersecting areas.
+ *
+ * The output square centred at (0.25, 0.25) overlaps the 2x2 inputs by
+ * 9/16, 3/16, 3/16, and 1/16 respectively. With values 10, 20, 30, 40,
+ * ordinary area weighting gives 17.5. A replacement accumulator applying
+ * those same weights to squared values instead gives 400.
+ */
+TEST(OverlapRemap, FractionalIntersectionAndCustomAccumulator) {
+  containers::DeviceImageStorage<float> input(2, 2);
+  thrust::host_vector<float> values(4);
+  values[0] = 10;
+  values[1] = 20;
+  values[2] = 30;
+  values[3] = 40;
+  input.vec = values;
+  containers::DeviceImageStorage<float> output(1, 1);
+  const overlap::OutputToInput<double> transform{{1, 0}, {0, 1},
+                                                  {0.25, 0.25}};
+  overlap::remapOverlap(input.cimage(), output.image(), transform, 0.45);
+  ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
+  thrust::host_vector<float> result = output.vec;
+  EXPECT_FLOAT_EQ(result[0], 17.5f);
+
+  overlap::remapOverlap(input.cimage(), output.image(), transform, 0.45,
+                 SquaredValueAccumulator{});
+  ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
+  result = output.vec;
+  EXPECT_FLOAT_EQ(result[0], 400.0f);
 }
