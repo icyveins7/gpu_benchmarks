@@ -225,10 +225,10 @@ gatherOverlap(containers::Image<const Tin> in, OutputToInput<T> transform,
  * @param accumulate Functor called for each candidate input pixel.
  */
 template <typename Tin, typename Tout, typename T, typename Accumulator>
-__global__ void overlapKernel(containers::Image<const Tin> in,
-                              containers::Image<Tout> out,
-                              OutputToInput<T> transform, T minWeight,
-                              Accumulator accumulate) {
+__global__ void remapOverlapKernel(containers::Image<const Tin> in,
+                                   containers::Image<Tout> out,
+                                   OutputToInput<T> transform, T minWeight,
+                                   Accumulator accumulate) {
   static_assert(std::is_floating_point<T>::value,
                 "overlap coordinates must use float or double");
   // Every thread advances through output columns and rows independently.
@@ -277,11 +277,11 @@ __global__ void overlapKernel(containers::Image<const Tin> in,
  * @param accumulate Functor returning a candidate's weight and weighted value.
  */
 template <typename Tin, typename Tout, typename T, typename Accumulator>
-__global__ void overlapSharedPartialsKernel(containers::Image<const Tin> in,
-                                            containers::Image<Tout> out,
-                                            OutputToInput<T> transform,
-                                            T minWeight,
-                                            Accumulator accumulate) {
+__global__ void remapOverlapSharedPartialsKernel(containers::Image<const Tin> in,
+                                                 containers::Image<Tout> out,
+                                                 OutputToInput<T> transform,
+                                                 T minWeight,
+                                                 Accumulator accumulate) {
   static_assert(std::is_floating_point<T>::value,
                 "overlap coordinates must use float or double");
   SharedMemory<T> sharedMemory;
@@ -367,7 +367,7 @@ void remapOverlap(containers::Image<const Tin> in, containers::Image<Tout> out,
                : justEnoughBlocks(threads.x, static_cast<unsigned int>(out.width)),
       blocks.y ? blocks.y
                : justEnoughBlocks(threads.y, static_cast<unsigned int>(out.height)));
-  overlapKernel<<<launchBlocks, threads, 0, stream>>>(
+  remapOverlapKernel<<<launchBlocks, threads, 0, stream>>>(
       in, out, transform, minWeight, accumulator);
 }
 
@@ -413,7 +413,7 @@ void remapOverlapSharedPartials(containers::Image<const Tin> in,
       blocks.y ? blocks.y
                : justEnoughBlocks(threads.y, static_cast<unsigned int>(out.height)));
   const size_t sharedBytes = 2 * threads.x * threads.y * threads.z * sizeof(T);
-  overlapSharedPartialsKernel<<<launchBlocks, threads, sharedBytes, stream>>>(
+  remapOverlapSharedPartialsKernel<<<launchBlocks, threads, sharedBytes, stream>>>(
       in, out, transform, minWeight, accumulator);
 }
 
