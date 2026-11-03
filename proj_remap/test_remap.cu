@@ -586,3 +586,77 @@ TEST(OverlapRemap, FractionalIntersectionAndCustomAccumulator) {
   result = output.vec;
   EXPECT_FLOAT_EQ(result[0], 400.0f);
 }
+
+/**
+ * @brief Compare a four-Z-worker launch against the one-thread-per-output path.
+ *
+ * The image contains distinct values and invalid pixels. A tilted output grid
+ * has interior, partially covered, and fully outside pixels. One 32x2x4 block
+ * must stride over both output axes and safely handle incomplete edge tiles.
+ */
+void checkSharedOverlap() {
+  containers::DeviceImageStorage<float> input(32, 16);
+  thrust::host_vector<float> values(input.vec.size());
+  for (size_t i = 0; i < values.size(); ++i)
+    values[i] = static_cast<float>(i % 97 + 1);
+  values[7] = std::numeric_limits<float>::max();
+  values[36] = std::numeric_limits<float>::max();
+  input.vec = values;
+  containers::DeviceImageStorage<float> output(35, 9);
+  const overlap::OutputToInput<double> transform{
+      {1.1, 0.14}, {-0.3, 1.2}, {-0.7, 0.1}};
+
+  overlap::remapOverlap(input.cimage(), output.image(), transform, 0.45);
+  ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
+  const thrust::host_vector<float> expected = output.vec;
+
+  overlap::remapOverlapSharedPartials(
+      input.cimage(), output.image(), transform, 0.45,
+      overlap::AreaAccumulator<double>{}, dim3(1, 1), dim3(32, 2, 4));
+  ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
+  const thrust::host_vector<float> actual = output.vec;
+  bool foundValid = false, foundInvalid = false;
+  for (size_t i = 0; i < actual.size(); ++i) {
+    if (expected[i] == std::numeric_limits<float>::max()) {
+      EXPECT_EQ(actual[i], expected[i]) << "pixel " << i;
+      foundInvalid = true;
+    } else {
+      EXPECT_NEAR(actual[i], expected[i], 1e-4f) << "pixel " << i;
+      foundValid = true;
+    }
+  }
+  EXPECT_TRUE(foundValid);
+  EXPECT_TRUE(foundInvalid);
+
+  containers::DeviceImageStorage<float> smallInput(2, 2);
+  thrust::host_vector<float> smallValues(4, 1.0f);
+  smallValues[3] = std::numeric_limits<float>::max();
+  smallInput.vec = smallValues;
+  containers::DeviceImageStorage<float> smallOutput(1, 1);
+  const overlap::OutputToInput<float> scaled{{2, 0}, {0, 2}, {0.5, 0.5}};
+  overlap::remapOverlapSharedPartials(smallInput.cimage(), smallOutput.image(),
+                                      scaled, 0.75f);
+  ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
+  thrust::host_vector<float> strictResult = smallOutput.vec;
+  EXPECT_EQ(strictResult[0], std::numeric_limits<float>::max());
+
+  thrust::host_vector<float> fractionalValues(4);
+  fractionalValues[0] = 10;
+  fractionalValues[1] = 20;
+  fractionalValues[2] = 30;
+  fractionalValues[3] = 40;
+  smallInput.vec = fractionalValues;
+  const overlap::OutputToInput<double> fractional{{1, 0}, {0, 1},
+                                                    {0.25, 0.25}};
+  overlap::remapOverlapSharedPartials(smallInput.cimage(), smallOutput.image(),
+                                      fractional, 0.45,
+                                      SquaredValueAccumulator{});
+  ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
+  thrust::host_vector<float> squaredResult = smallOutput.vec;
+  EXPECT_FLOAT_EQ(squaredResult[0], 400.0f);
+}
+
+/** @brief Shared per-worker partials must agree with the baseline. */
+TEST(OverlapRemap, SharedPartialsMatchBaseline) {
+  checkSharedOverlap();
+}

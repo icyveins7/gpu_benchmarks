@@ -3,6 +3,7 @@
 #include <iostream>
 #include <limits>
 #include <stdexcept>
+#include <string>
 
 #include <thrust/fill.h>
 
@@ -46,7 +47,8 @@ int runSmoke() {
  *
  * Matrix columns (axx, axy) and (ayx, ayy) and translation (tx, ty) map
  * output-pixel centres to input-pixel coordinates. Input values are all 1,
- * so every valid output must also equal 1. A warm-up precedes timed launches.
+ * so every valid output must also equal 1. Select baseline or shared partials
+ * with --mode. A warm-up precedes timed launches.
  */
 int main(int argc, char* argv[]) {
   if (argc == 1)
@@ -66,6 +68,8 @@ int main(int argc, char* argv[]) {
       ("tx", "Input X at output centre (0,0)", cxxopts::value<double>()->default_value("0.5"))
       ("ty", "Input Y at output centre (0,0)", cxxopts::value<double>()->default_value("0.5"))
       ("minweight", "Strict minimum output-area weight", cxxopts::value<double>()->default_value("0.45"))
+      ("mode", "baseline or partials",
+       cxxopts::value<std::string>()->default_value("baseline"))
       ("iterations", "Number of timed launches after one warm-up",
        cxxopts::value<int>()->default_value("3"))
       ("h,help", "Show options");
@@ -83,6 +87,9 @@ int main(int argc, char* argv[]) {
   if (inWidth <= 0 || inHeight <= 0 || outWidth <= 0 || outHeight <= 0 ||
       iterations <= 0)
     throw std::invalid_argument("image dimensions and iterations must be positive");
+  const std::string mode = args["mode"].as<std::string>();
+  if (mode != "baseline" && mode != "partials")
+    throw std::invalid_argument("mode must be baseline or partials");
 
   const overlap::OutputToInput<double> transform{
       {args["axx"].as<double>(), args["axy"].as<double>()},
@@ -93,7 +100,11 @@ int main(int argc, char* argv[]) {
   containers::DeviceImageStorage<float> output(outWidth, outHeight);
   thrust::fill(input.vec.begin(), input.vec.end(), 1.0f);
   const auto launch = [&] {
-    overlap::remapOverlap(input.cimage(), output.image(), transform, minWeight);
+    if (mode == "partials")
+      overlap::remapOverlapSharedPartials(
+          input.cimage(), output.image(), transform, minWeight);
+    else
+      overlap::remapOverlap(input.cimage(), output.image(), transform, minWeight);
   };
 
   launch();
@@ -126,7 +137,8 @@ int main(int argc, char* argv[]) {
             << 'x' << outHeight << ", transform [[" << transform.xAxis.x << ", "
             << transform.yAxis.x << ", " << transform.origin.x << "], ["
             << transform.xAxis.y << ", " << transform.yAxis.y << ", "
-            << transform.origin.y << "]], minweight " << minWeight << '\n'
+            << transform.origin.y << "]], minweight " << minWeight
+            << ", mode " << mode << '\n'
             << "Valid outputs: " << valid << '/' << result.size() << '\n'
             << "CUDA event average: " << elapsedMs / iterations << " ms over "
             << iterations << " timed launches\n";
