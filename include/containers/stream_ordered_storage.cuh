@@ -162,7 +162,8 @@ protected:
            m_capacity * sizeof(T));
 #endif
     cudaError_t err =
-        cudaMallocAsync(&m_data, sizeof(T) * m_capacity, m_stream);
+        cudaMallocAsync(reinterpret_cast<void **>(&m_data),
+                        sizeof(T) * m_capacity, m_stream);
     if (err != cudaSuccess) {
       throw std::runtime_error(
           "cudaMallocAsync failed with size " +
@@ -172,11 +173,15 @@ protected:
   }
 
   cudaError_t dealloc() {
+    if (m_data == nullptr)
+      return cudaSuccess;
 #ifndef NDEBUG
     printf("StreamOrderedDeviceStorage: cudaFreeAsync of %zu bytes\n",
            m_capacity * sizeof(T));
 #endif
     cudaError_t err = cudaFreeAsync(m_data, m_stream);
+    if (err == cudaSuccess)
+      m_data = nullptr;
     return err;
   }
 };
